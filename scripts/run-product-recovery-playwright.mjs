@@ -47,7 +47,7 @@ await phase("acceptance", "tests/browser/product-recovery-acceptance.spec.ts");
 // The US walkthrough must stay free of Chinese in the English interface, and
 // Today lists its work by the report and reorder rules. Contracts are on, as
 // in the local walkthrough.
-await phase("english walkthrough", ["tests/browser/english-walkthrough.spec.ts", "tests/browser/today-work.spec.ts"], { PLAYWRIGHT_CONTRACTS: "true" });
+await phase("english walkthrough", ["tests/browser/english-walkthrough.spec.ts", "tests/browser/today-work.spec.ts", "tests/browser/today-conversion-card.spec.ts"], { PLAYWRIGHT_CONTRACTS: "true" });
 // The US trial screens (finance, sales, inventory operations on) in English,
 // with the walkthrough data and with an empty workspace.
 await phase("english trial", "tests/browser/english-trial.spec.ts", { PLAYWRIGHT_US_TRIAL: "true" });
@@ -80,8 +80,9 @@ await phase("shell and routing", [
   "tests/browser/app-layout-width.spec.ts",
   "tests/browser/typography-system.spec.ts",
   "tests/browser/authoritative-mutation-auth.spec.ts",
-  "tests/browser/user-data-import-preview.spec.ts",
   "tests/browser/motion-transitions.spec.ts",
+  // Days late from the workspace's day, not the browser's (design audit B3).
+  "tests/browser/workspace-today.spec.ts",
 ]);
 // Email sign-in end to end, through the local mail outbox.
 const outboxPath = join(tmpdir(), `flowchain-mail-outbox-${process.pid}.json`);

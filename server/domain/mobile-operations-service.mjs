@@ -2,6 +2,7 @@ import { isUnavailableProductRoute } from "../../shared/unavailable-product-rout
 import { randomUUID } from "node:crypto";
 import { assertAuthorized, can } from "../auth/authorization-service.mjs";
 import { resolveProvisionedActor } from "./pilot-identity.mjs";
+import { approvalAuthorIds, approverStanding, mayApprove } from "./self-approval.mjs";
 import { createReceivingPostingCommandService, ReceivingCommandError } from "./receiving-posting-command-service.mjs";
 import { createReceivingWorkbenchQueryService } from "./receiving-workbench-query-service.mjs";
 import { createReceivingDraftCommandService, RECEIVING_DRAFT_CHANNELS } from "./receiving-draft-command-service.mjs";
@@ -20,6 +21,11 @@ const decimal = (value) => receivingDecimalString(receivingDecimalUnits(value ||
 export function createMobileOperationsService({ prisma, procurementAuthority, env = process.env, idFactory = randomUUID, now = () => new Date() } = {}) {
   if (!prisma) throw new Error("prisma is required");
   const actorFor = (context) => resolveProvisionedActor(prisma, context?.identity || context);
+  // Approving an order on the phone follows the same rule as on the desktop:
+  // not one the reader created or submitted while someone else may approve
+  // it (design audit C4; self-approval.mjs).
+  const poStanding = (actor) => approverStanding(prisma, actor, (permission) => can({ actor, permission, tenantId: actor.tenantId }), ["purchase_order"]);
+  const mayApprovePo = (standing, po) => mayApprove(standing, "purchase_order", approvalAuthorIds("purchase_order", po));
   const requireProcurementAuthority = () => {
     if (!procurementAuthority) fail("PROCUREMENT_DATABASE_AUTHORITY_REQUIRED", "Mobile procurement requires the PostgreSQL command authority.", 409);
   };
@@ -36,7 +42,8 @@ export function createMobileOperationsService({ prisma, procurementAuthority, en
       requireProcurementAuthority();
       if (procurementAuthority) {
         const rows = await procurementAuthority.listPurchaseOrdersForApproval(context, { includePrices: actor.permissionCodes.has("procurement.prices.read"), includePartner: actor.permissionCodes.has("finance.partner_snapshot.read") });
-        for (const po of rows.filter((row) => row.status === PURCHASE_ORDER_STATUS.PENDING_APPROVAL)) tasks.push(task({ taskId: `purchase_order_approval:${po.id}`, taskType: "purchase_order_approval", entityType: "PurchaseOrder", entityId: po.id, title: `Purchase order ${po.orderNumber || po.id}`, summary: text(po.supplierSnapshot?.supplierName || po.supplierId), amountSummary: actor.permissionCodes.has("procurement.prices.read") ? { amount: po.totalAmount, currency: po.currency } : null, availableActions: can({ actor, permission: "mobile.procurement.approval.execute", tenantId: actor.tenantId }) && can({ actor, permission: "procurement.purchase_order.approve", tenantId: actor.tenantId }) ? ["approve", "reject", "return_for_revision"] : [], entityVersion: po.version, deepLink: `/app/mobile/purchase-orders/${encodeURIComponent(po.id)}` }, actor));
+        const standing = await poStanding(actor);
+        for (const po of rows.filter((row) => row.status === PURCHASE_ORDER_STATUS.PENDING_APPROVAL)) tasks.push(task({ taskId: `purchase_order_approval:${po.id}`, taskType: "purchase_order_approval", entityType: "PurchaseOrder", entityId: po.id, title: `Purchase order ${po.orderNumber || po.id}`, summary: text(po.supplierSnapshot?.supplierName || po.supplierId), amountSummary: actor.permissionCodes.has("procurement.prices.read") ? { amount: po.totalAmount, currency: po.currency } : null, availableActions: can({ actor, permission: "mobile.procurement.approval.execute", tenantId: actor.tenantId }) && mayApprovePo(standing, po) ? ["approve", "reject", "return_for_revision"] : [], entityVersion: po.version, deepLink: `/app/mobile/purchase-orders/${encodeURIComponent(po.id)}` }, actor));
       }
     }
     // Settlements and internal transfers belong to the frozen settlement workflow
@@ -63,7 +70,8 @@ export function createMobileOperationsService({ prisma, procurementAuthority, en
     const po = await procurementAuthority.readPurchaseOrder(text(id), context, { includePrices: actor.permissionCodes.has("procurement.prices.read"), includePartner: actor.permissionCodes.has("finance.partner_snapshot.read") });
     if (!po) fail("PURCHASE_ORDER_NOT_FOUND", "Purchase order was not found.", 404);
     const prices = actor.permissionCodes.has("procurement.prices.read"), partner = actor.permissionCodes.has("finance.partner_snapshot.read");
-    return { id: po.id, orderNumber: po.orderNumber || po.id, status: po.status, issuedAt: po.issuedAt ?? null, supplierSnapshot: partner ? po.supplierSnapshot || { id: po.supplierId } : null, lines: (po.lines || []).map((line) => ({ ...line, unitPrice: prices ? line.unitPrice : null, amount: prices ? line.amount ?? null : null, supplierOverride: line.supplierOverride ? { ...line.supplierOverride, preferredSupplierName: partner ? line.supplierOverride.preferredSupplierName ?? null : null } : null })), amountSummary: prices ? { totalAmount: po.totalAmount, currency: po.currency } : null, sourceRequestId: po.sourcePrId, sourceRfqId: po.sourceRfqId, deliveryTerms: po.deliveryTerms || null, approvalTimeline: po.auditTrailIds || [], attachments: po.attachments || [], entityVersion: po.version, availableActions: po.status === PURCHASE_ORDER_STATUS.PENDING_APPROVAL && actor.permissionCodes.has("mobile.procurement.approval.execute") && actor.permissionCodes.has("procurement.purchase_order.approve") ? ["approve", "reject", "return_for_revision"] : [], fieldVisibility: fieldVisibility(actor), limitations: [], deepLink: `/app/mobile/purchase-orders/${encodeURIComponent(po.id)}` };
+    const canApprove = po.status === PURCHASE_ORDER_STATUS.PENDING_APPROVAL && mayApprovePo(await poStanding(actor), po);
+    return { id: po.id, orderNumber: po.orderNumber || po.id, status: po.status, issuedAt: po.issuedAt ?? null, supplierSnapshot: partner ? po.supplierSnapshot || { id: po.supplierId } : null, lines: (po.lines || []).map((line) => ({ ...line, unitPrice: prices ? line.unitPrice : null, amount: prices ? line.amount ?? null : null, supplierOverride: line.supplierOverride ? { ...line.supplierOverride, preferredSupplierName: partner ? line.supplierOverride.preferredSupplierName ?? null : null } : null })), amountSummary: prices ? { totalAmount: po.totalAmount, currency: po.currency } : null, sourceRequestId: po.sourcePrId, sourceRfqId: po.sourceRfqId, deliveryTerms: po.deliveryTerms || null, approvalTimeline: po.auditTrailIds || [], attachments: po.attachments || [], entityVersion: po.version, availableActions: canApprove && actor.permissionCodes.has("mobile.procurement.approval.execute") ? ["approve", "reject", "return_for_revision"] : [], canApprove, fieldVisibility: fieldVisibility(actor), limitations: [], deepLink: `/app/mobile/purchase-orders/${encodeURIComponent(po.id)}` };
   }
   async function actOnPurchaseOrder(id, action, input, context) {
     const actor = await actorFor(context); assertAuthorized({ actor, permission: "mobile.procurement.approval.execute", tenantId: actor.tenantId }); const formalPermission = action === "approve" ? "procurement.purchase_order.approve" : action === "reject" ? "procurement.purchase_order.reject" : "procurement.purchase_order.revise"; assertAuthorized({ actor, permission: formalPermission, tenantId: actor.tenantId });

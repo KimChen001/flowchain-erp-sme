@@ -1,7 +1,7 @@
 import { escapeLikePattern } from '../persistence/like-pattern.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { validateDatabasePersistenceConfig } from '../persistence/persistence-config.mjs'
-import { findManyWithinLimit, requireTenantId } from './repository-read-scope.mjs'
+import { ALLOCATION_READ_LIMIT, findManyWithinLimit, requireTenantId } from './repository-read-scope.mjs'
 
 const text = (value, fallback = '') => String(value ?? '').trim() || fallback
 const number = (value) => {
@@ -287,12 +287,142 @@ export function createDbSalesOrderReadRepository({ env = process.env, prisma } =
     return db.salesOrder.count({ where: { tenantId: requireTenantId(filters), workflowStatus: { notIn: OPEN_DEMAND_EXCLUDED_STATUSES }, fulfillmentStatus: { not: 'fully_fulfilled' } } })
   }
 
+  // Open demand per SKU over every order of the workspace, for the allocation
+  // model (salesDemandBySku in runtime-inventory-allocation-read-model.mjs
+  // gives the same figures from listed orders): the database adds up each
+  // SKU's lines, where listOrders reads the latest 500 orders. A line counts
+  // only on an order that is not draft or cancelled. An order without lines
+  // stands for one line of nothing under its own id, as mapOrder lists it.
+  // SKUs come in the order they first appear on listOrders' orders, and each
+  // SKU's orders still to ship some of it in that order. More than
+  // ALLOCATION_READ_LIMIT SKUs is reported to onTruncated as sales_orders.
+  async function summarizeDemandBySku(filters = {}) {
+    const tenantId = requireTenantId(filters)
+    const db = await client()
+    const limit = ALLOCATION_READ_LIMIT
+    const rows = await db.$queryRaw`
+      WITH lines AS (
+        SELECT o.id AS "orderId",
+          CASE WHEN l.id IS NULL THEN trim(o.id) WHEN l.sku = '' THEN trim(l."itemId") ELSE trim(l.sku) END AS sku,
+          trim(o."workflowStatus") NOT IN ('draft', 'cancelled', 'canceled') AS open,
+          COALESCE(l."orderedQuantity", 0) AS ordered,
+          COALESCE(l."fulfilledQuantity", 0) AS fulfilled,
+          COALESCE(l."reservedQuantity", 0) AS reserved,
+          row_number() OVER (ORDER BY o."updatedAt" DESC, o.id ASC, l.id ASC NULLS FIRST) AS position
+        FROM "SalesOrder" o
+        LEFT JOIN "SalesOrderLine" l ON l."salesOrderId" = o.id
+        WHERE o."tenantId" = ${tenantId}
+      ), orders AS (
+        SELECT sku, "orderId", min(position) AS position,
+          count(*) FILTER (WHERE open) AS "openLines",
+          sum(GREATEST(ordered - fulfilled, 0)) FILTER (WHERE open) AS "openDemand",
+          sum(GREATEST(ordered - fulfilled - reserved, 0)) FILTER (WHERE open) AS "unreservedDemand",
+          sum(reserved) FILTER (WHERE open) AS reserved,
+          bool_or(open AND ordered > fulfilled) AS "toShip"
+        FROM lines
+        WHERE sku <> ''
+        GROUP BY sku, "orderId"
+      )
+      SELECT sku,
+        sum("openLines")::int AS "openLines",
+        COALESCE(sum("openDemand"), 0)::text AS "openDemand",
+        COALESCE(sum("unreservedDemand"), 0)::text AS "unreservedDemand",
+        COALESCE(sum(reserved), 0)::text AS reserved,
+        COALESCE(array_agg("orderId" ORDER BY position) FILTER (WHERE "toShip"), '{}') AS "salesOrderIds"
+      FROM orders
+      GROUP BY sku
+      ORDER BY min(position)
+      LIMIT ${limit + 1}`
+    if (rows.length > limit && typeof filters.onTruncated === 'function') filters.onTruncated({ subject: 'sales_orders', limit })
+    return rows.slice(0, limit).map((row) => ({
+      sku: text(row.sku),
+      openLines: Number(row.openLines) || 0,
+      openDemand: number(row.openDemand),
+      unreservedDemand: number(row.unreservedDemand),
+      reserved: number(row.reserved),
+      salesOrderIds: (Array.isArray(row.salesOrderIds) ? row.salesOrderIds : []).map((id) => text(id)),
+    }))
+  }
+
+  // Report figures over every order of the workspace, however many listOrders
+  // returns (it reads the latest 500 with their lines). The database groups
+  // the orders by business day in the workspace timezone (the creation day,
+  // as the report reads an order without an order date), currency, customer,
+  // the status the report shows (statusFor, with a draft or cancelled order
+  // kept as such) and its shipping progress, and totals each group's orders
+  // and amounts. An order's amount is its lines' total only while every line
+  // has one, as mapOrder reads it; orders without an amount are a group of
+  // their own, so a total is never made from part of them. Only the reports
+  // read this.
+  async function summarizeOrdersForReport(filters = {}) {
+    const tenantId = requireTenantId(filters)
+    const timeZone = text(filters.timeZone, 'UTC')
+    const db = await client()
+    const rows = await db.$queryRaw`
+      WITH lines AS (
+        SELECT l."salesOrderId" AS id,
+          count(*) AS line_count,
+          count(l.amount) AS amount_count,
+          sum(l.amount) AS amount,
+          sum(l."orderedQuantity") AS ordered,
+          sum(l."reservedQuantity") AS reserved,
+          sum(l."fulfilledQuantity") AS fulfilled,
+          bool_or(l."fulfilledQuantity" > 0) AS shipped,
+          bool_and(l."orderedQuantity" > 0 AND l."fulfilledQuantity" >= l."orderedQuantity") AS shipped_in_full
+        FROM "SalesOrderLine" l
+        JOIN "SalesOrder" o ON o.id = l."salesOrderId"
+        WHERE o."tenantId" = ${tenantId}
+        GROUP BY l."salesOrderId"
+      ), orders AS (
+        SELECT
+          to_char((o."createdAt" AT TIME ZONE 'UTC') AT TIME ZONE ${timeZone}, 'YYYY-MM-DD') AS day,
+          o.currency,
+          o."customerName" AS customer,
+          CASE
+            WHEN o."workflowStatus" IN ('draft', 'cancelled', 'canceled') THEN o."workflowStatus"
+            WHEN o."fulfillmentStatus" = 'fulfilled' OR (COALESCE(ls.ordered, 0) > 0 AND COALESCE(ls.fulfilled, 0) >= ls.ordered) THEN 'fulfilled'
+            WHEN COALESCE(ls.fulfilled, 0) > 0 THEN 'partially_fulfilled'
+            WHEN COALESCE(ls.ordered, 0) - COALESCE(ls.reserved, 0) - COALESCE(ls.fulfilled, 0) > 0 THEN 'shortage_risk'
+            WHEN COALESCE(ls.ordered, 0) > 0 AND COALESCE(ls.reserved, 0) >= ls.ordered THEN 'ready_to_ship'
+            WHEN COALESCE(ls.reserved, 0) > 0 THEN 'partially_allocated'
+            ELSE COALESCE(NULLIF(trim(o."workflowStatus"), ''), 'confirmed')
+          END AS status,
+          CASE WHEN ls.line_count > 0 AND ls.amount_count = ls.line_count THEN ls.amount END AS amount,
+          COALESCE(ls.reserved, 0) > 0 AS reserved,
+          COALESCE(ls.shipped, false) AS shipped,
+          COALESCE(ls.line_count, 0) > 0 AND COALESCE(ls.shipped_in_full, false) AS shipped_in_full
+        FROM "SalesOrder" o
+        LEFT JOIN lines ls ON ls.id = o.id
+        WHERE o."tenantId" = ${tenantId}
+      )
+      SELECT day, currency, customer, status, reserved, shipped, shipped_in_full,
+        amount IS NULL AS amount_missing,
+        count(*)::int AS orders,
+        sum(amount)::text AS amount
+      FROM orders
+      GROUP BY day, currency, customer, status, reserved, shipped, shipped_in_full, amount IS NULL`
+    return (rows || []).map((row) => ({
+      date: text(row.day),
+      currency: text(row.currency),
+      // The name the order list gives an order without a recorded customer.
+      customer: text(row.customer, '未命名客户'),
+      status: text(row.status),
+      count: Number(row.orders) || 0,
+      amount: row.amount_missing ? null : Math.round(Number(row.amount) * 10000) / 10000,
+      reserved: Boolean(row.reserved),
+      shipped: Boolean(row.shipped),
+      shippedInFull: Boolean(row.shipped_in_full),
+    })).filter((row) => row.count > 0)
+  }
+
   return {
     mode: 'database',
     adapter: 'db-sales-order-read-v1',
     listOrders,
     countOrders,
     countOrdersWithOpenDemand,
+    summarizeDemandBySku,
+    summarizeOrdersForReport,
     // One order by its id or its number, however old it is.
     async getOrder(id, filters = {}) {
       const tenantId = requireTenantId(filters)

@@ -1,4 +1,5 @@
 import { canReadProcurementDocument, maskProcurementRecord, maskProcurementSnapshot, procurementReadAccess } from "../domain/procurement-read-access.mjs";
+import { readerApprovalStanding, withCanApprove, withCanApproveOne } from "../domain/approval-rights.mjs";
 const denied = (send, res) => send(res, 403, { code: "PERMISSION_DENIED", message: "Your role cannot view these procurement records.", details: [] }) || true;
 import { createHash } from "node:crypto";
 import { createProcurementRequestCommandService } from "../services/procurement-request-command-service.mjs";
@@ -92,24 +93,31 @@ export async function handleProcurementWorkflowRoute(ctx) {
     const access = await procurementReadAccess(ctx);
     if (!canReadProcurementDocument(type, access)) return denied(send, res);
     const snapshot = await ctx.repositories.procurementRead.snapshot({ tenantId: ctx.identity.tenantId });
-    return send(res, 200, maskProcurementSnapshot(snapshot, access)[key]) || true;
+    const rows = maskProcurementSnapshot(snapshot, access)[key];
+    // Requests and orders say whether this reader may approve each (approval-rights.mjs).
+    const kind = { purchaseRequests: "purchase_request", purchaseOrders: "purchase_order" }[key];
+    return send(res, 200, kind ? withCanApprove(rows, kind, await readerApprovalStanding(ctx, [kind])) : rows) || true;
   };
   if (req.method === "GET" && url.pathname === "/api/procurement/requests") return list("purchaseRequests", "pr");
   const requestDetail = url.pathname.match(/^\/api\/procurement\/requests\/([^/]+)$/);
   if (req.method === "GET" && requestDetail)
-    return respond(ctx, 200, async () => maskProcurementRecord(await requestCommands(ctx).readPurchaseRequest(decodeURIComponent(requestDetail[1]), ctx), "pr", await procurementReadAccess(ctx)));
+    return respond(ctx, 200, async () => withCanApproveOne(maskProcurementRecord(await requestCommands(ctx).readPurchaseRequest(decodeURIComponent(requestDetail[1]), ctx), "pr", await procurementReadAccess(ctx)), "purchase_request", await readerApprovalStanding(ctx, ["purchase_request"])));
   if (req.method === "POST" && url.pathname === "/api/procurement/requests")
     return respond(ctx, 201, async () => requestCommands(ctx).createPurchaseRequest(await commandBody(ctx), ctx));
   if (req.method === "PATCH" && requestDetail)
     return respond(ctx, 200, async () => requestCommands(ctx).updatePurchaseRequestDraft(decodeURIComponent(requestDetail[1]), await commandBody(ctx), ctx));
   const action = url.pathname.match(
-    /^\/api\/procurement\/requests\/([^/]+)\/(submit|approve|reject|withdraw|cancel)$/,
+    /^\/api\/procurement\/requests\/([^/]+)\/(submit|approve|reject|withdraw|reopen|cancel)$/,
   );
   // A submitted PR waits for approval; its approvers are emailed after the
   // answer, and a replayed submit sends nothing.
   if (req.method === "POST" && action)
     return respond(ctx, 200, async () => requestCommands(ctx).transitionPurchaseRequest(decodeURIComponent(action[1]), action[2], await commandBody(ctx), ctx),
       (result) => action[2] === "submit" && notifyApprovalWaiting(ctx, result, { documentType: "purchase_request", documentId: result?.id }));
+  // What "Create purchase order" would make, before it is made (design audit L1-26).
+  const poPreview = url.pathname.match(/^\/api\/procurement\/requests\/([^/]+)\/purchase-order-preview$/);
+  if (req.method === "GET" && poPreview)
+    return respond(ctx, 200, async () => requestCommands(ctx).previewPurchaseOrdersFromPurchaseRequest(decodeURIComponent(poPreview[1]), ctx));
   const recommendation = url.pathname.match(
     /^\/api\/procurement\/requests\/([^/]+)\/path-recommendation$/,
   );

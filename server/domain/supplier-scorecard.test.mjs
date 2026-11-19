@@ -399,6 +399,15 @@ test('the rejection rate never adds quantities across SKUs', () => {
   assert.deepEqual(supplier.metrics.rejection, { rejectedQuantity: null, receivedQuantity: null, unit: null, mixedUnits: false, multipleSkus: true, rate: null, interval: null })
   // Each line keeps its own quantities for the drilldown.
   assert.deepEqual(supplier.lines.filter((row) => row.rejectedQuantity).map((row) => [row.sku, row.rejectedQuantity, row.receivedQuantity]), [['MOTOR', 5, 10]])
+  // Design audit L9-04: every UCI and M5 supplier sells more than one SKU, so
+  // the quantity rate never showed. Receipt lines with a rejection are
+  // counted instead, which needs no adding across SKUs: 1 of 5.
+  const { rejectedLines } = supplier.metrics
+  assert.deepEqual([rejectedLines.count, rejectedLines.of, rejectedLines.rate], [1, 5, 0.2])
+  assert.deepEqual([pct(rejectedLines.interval.low), pct(rejectedLines.interval.high)], [3.6, 62.4])
+  // Below the minimum sample it counts but gives no rate.
+  const [few] = suppliersOf(orders.slice(3), receipts.slice(3))
+  assert.deepEqual([few.metrics.rejectedLines.count, few.metrics.rejectedLines.of, few.metrics.rejectedLines.rate, few.metrics.rejectedLines.interval], [1, 2, null, null])
   // One SKU in one unit: a single rate with its quantities.
   const [single] = suppliersOf(orders.slice(0, 4).concat(po([line('L5', '2026-08-10', { sku: 'BOLT', orderedQuantity: 2500 })], { id: 'PO-5' })), [...receipts.slice(0, 4), grn('GRN-PO-5', '2026-08-10', ['L5'], 2495, 5)])
   assert.deepEqual([single.metrics.rejection.multipleSkus, single.metrics.rejection.rejectedQuantity, single.metrics.rejection.receivedQuantity, single.metrics.rejection.unit, pct(single.metrics.rejection.rate)], [false, 5, 12500, 'pcs', 0])
@@ -464,14 +473,14 @@ test('a PO counts as issued by its status, its transmission status or a recorded
 // A posted receipt is a fact about the PO: a delivery to a warehouse the
 // reader cannot see, fully rejected so no quantity was received, still means
 // the supplier got the order.
-test('an approved PO with a fully rejected receipt in another warehouse stays measured, not counted as not sent', async () => {
+test('an approved PO with a fully rejected receipt in another warehouse is never counted as not sent, and is withheld from a reader without that warehouse', async () => {
   const purchaseOrder = po([line('X1', '2026-09-20', { receivedQuantity: 0 })], { id: 'PO-X', status: 'approved', metadata: { orderNumber: 'PO-X', transmissionStatus: 'not_sent' } })
   const document = { ...grn('GRN-X', '2026-09-25', ['X1'], 0, 10), poId: 'PO-X', warehouseId: 'WH-B', postingStatus: 'posted' }
   const matches = (row, where) => row.poId && where.poId.in.includes(row.poId) && row.postingStatus === where.postingStatus && (!where.OR || where.OR.some((clause) => clause.warehouseId === null ? !row.warehouseId : clause.warehouseId.in.includes(row.warehouseId)))
   const prisma = {
     tenant: { findUnique: async () => ({ timezone: 'America/New_York' }) },
     purchaseOrder: { findMany: async () => [purchaseOrder] },
-    receivingDocument: { findMany: async ({ where, select }) => [document].filter((row) => matches(row, where)).map((row) => select ? { poId: row.poId } : row) },
+    receivingDocument: { findMany: async ({ where, select }) => [document].filter((row) => matches(row, where)).map((row) => select ? { poId: row.poId, warehouseId: row.warehouseId } : row) },
     supplierInvoice: { findMany: async () => [] },
     supplier: { findMany: async () => [{ id: 'SUP-1', name: 'Summit Supply' }] },
   }
@@ -480,7 +489,28 @@ test('an approved PO with a fully rejected receipt in another warehouse stays me
   // An admin sees the receipt: late, nothing accepted.
   const admin = await read({ allWarehouses: true })
   assert.deepEqual([admin.sampleSize, admin.notSentCount, admin.obligations[0].onTime], [1, 0, false])
-  // A buyer reading only WH-A does not see the receipt, but the order is still a delivery, not "not sent".
+  // A buyer reading only WH-A does not see the receipt. The order is not "not
+  // sent", and its delivery is not judged as late either (design audit
+  // L9-06): it is left out and only counted, so the buyer learns neither a
+  // false delay nor when WH-B received it.
   const buyer = await read({ allWarehouses: false, readWarehouseIds: new Set(['WH-A']) })
-  assert.deepEqual([buyer.sampleSize, buyer.notSentCount, buyer.obligations[0].onTime, buyer.lines[0].receipts], [1, 0, false, []])
+  assert.deepEqual([buyer.sampleSize, buyer.notSentCount, buyer.withheldCount, buyer.lines, buyer.obligations], [0, 0, 1, [], []])
+  assert.equal(admin.withheldCount, 0)
+})
+
+// Design audit L9-06: a buyer who reads one warehouse saw a lower on-time
+// rate than an admin, since deliveries received elsewhere read as late and
+// undelivered. They are withheld instead: the buyer's rate is over the
+// deliveries it can judge, never lowered by receipts it cannot see.
+test('deliveries received in a warehouse the reader cannot see are withheld, so the rate is not lowered', () => {
+  const lines = ['A1', 'A2', 'A3', 'A4', 'A5', 'B1', 'B2'].map((id) => line(id, '2026-09-10'))
+  const purchaseOrders = lines.map((row) => po([row], { id: `PO-${row.id}` }))
+  const visible = grn('GRN-A', '2026-09-09', ['A1', 'A2', 'A3', 'A4', 'A5'], 10, 0)
+  const build = (withheldPurchaseOrderIds) => buildSupplierScorecard({ purchaseOrders, receipts: [visible], receivedPurchaseOrderIds: ['PO-B1', 'PO-B2'], withheldPurchaseOrderIds, period: { from: '2026-09-01', to: '2026-09-30' }, asOfDay: '2026-09-30', limitations: ['receipts_limited_to_your_warehouses'] })
+  // Before: the two deliveries WH-B received on time read as late.
+  const before = build([]).suppliers[0]
+  assert.deepEqual([before.sampleSize, before.metrics.onTime.count], [7, 5])
+  const after = build(['PO-B1', 'PO-B2'])
+  assert.deepEqual([after.suppliers[0].sampleSize, after.suppliers[0].metrics.onTime.rate, after.suppliers[0].withheldCount], [5, 1, 2])
+  assert.deepEqual(after.limitations, ['receipts_limited_to_your_warehouses', 'deliveries_withheld_other_warehouses'])
 })

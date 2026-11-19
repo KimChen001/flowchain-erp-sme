@@ -5,17 +5,30 @@
 // app's own commands leave them; everything that moves stock goes through the
 // commands, in date order, so stock, movements, order status and the reorder
 // list agree:
-//   1. the workspace profile (name, currency, timezone), suppliers, customers,
-//      items with their [assumed] thresholds and empty stock records;
+//   1. the workspace profile (name, currency, timezone, regional format), suppliers, customers
+//      (UCI: on NET30 [assumed], with that payment term added when the
+//      workspace lacks it), items with the thresholds of their latest review
+//      (the app's own rules over the days before it, plan.mjs) and empty
+//      stock records;
 //   2. the [public data] sales orders, confirmed; the [assumed] purchase
-//      orders, issued, and for every one that has arrived an unposted receipt;
+//      orders, issued, at the assumed purchase price (a share of the selling
+//      price), and for every one that has arrived an unposted receipt;
 //   3. opening stock the day before the window (inventory adjustment commands);
 //   4. receipts (receiving posting) and shipments (outbound commands) in time
-//      order, each as of its own time;
+//      order, each as of its own time; UCI's orders still being filled
+//      [assumed] are reserved, and partly shipped or not, instead;
 //   5. the [assumed] supplier terms (item supplier command);
+//   5b. the [assumed] purchase requests, through the request commands: the
+//      buyer raises them, a second person approves or rejects them, and the
+//      converted ones become issued purchase orders (seedPurchaseRequests);
 //   6. UCI only: a customer invoice for each shipment, issued on its day, due
-//      30 days later and paid then [assumed], and its receivable;
-//   7. the walkthrough scene's supplier tier, set by its buyer (scene.mjs);
+//      30 days later and paid then [assumed], its receivable and, once paid,
+//      its payment record;
+//   6b. UCI only: the [assumed] supplier invoices, their three-way matches,
+//      difference reviews, payables and payments, through the finance
+//      commands (seed-payables.mjs);
+//   7. every supplier's tier, set by the buyer with a written reason (the
+//      scene's Acme by its scene, the others by spend: plan.mjs);
 //   8. the workspace note: what is public, what is assumed, the date shift.
 import { assertLocalDevelopment } from '../../server/domain/local-development-contract.mjs'
 import { allocateDocumentNumber } from '../../server/domain/document-numbering.mjs'
@@ -23,9 +36,13 @@ import { createInventoryOperationsCommandService } from '../../server/domain/inv
 import { createReceivingPostingCommandService } from '../../server/domain/receiving-posting-command-service.mjs'
 import { saveItemSupplier } from '../../server/domain/master-data-commands.mjs'
 import { applySupplierTierChange } from '../../server/domain/supplier-tier-command.mjs'
+import { findPaymentTerm } from '../../server/domain/standard-payment-terms.mjs'
 import { backfillTenantAuthorization } from '../../server/auth/authorization-backfill.mjs'
-import { HISTORY_PERMISSIONS, scenarioActor, scenarioCalendar, shipHistoryOrder } from '../seed-history.mjs'
-import { publicDataPlanCounts } from './plan.mjs'
+import { SUPPLIER_TIER_DEFINITIONS } from '../../shared/supplier-tiers.mjs'
+import { HISTORY_PERMISSIONS, scenarioActor, scenarioApprover, scenarioCalendar, shipHistoryOrder } from '../seed-history.mjs'
+import { PUBLIC_DATA_STOCK_UNIT, PUBLIC_DATA_TIER_RULES, publicDataPlanCounts } from './plan.mjs'
+import { PAYABLES_PERMISSIONS, seedSupplierInvoices } from './seed-payables.mjs'
+import { REQUEST_PERMISSIONS, REQUEST_REVIEW_PERMISSIONS, seedPurchaseRequests } from './seed-requests.mjs'
 
 export const PUBLIC_DATA_NOTE_NAMESPACE = 'workspace.public-data'
 export const PUBLIC_DATA_NOTE_KEY = 'note'
@@ -61,7 +78,7 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
   const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } })
   if (!tenant) throw new Error(`Provision workspace ${tenantId} (scripts/setup-pilot-workspace.mjs) before seeding public data.`)
   if (await prisma.item.findFirst({ where: { tenantId }, select: { id: true } })) throw new Error(`Workspace ${tenantId} already has items; seed public data into an empty workspace.`)
-  await prisma.tenant.update({ where: { id: tenantId }, data: { name: profile.workspaceName, currency: profile.currency, timezone: profile.timezone, countryCode: profile.countryCode } })
+  await prisma.tenant.update({ where: { id: tenantId }, data: { name: profile.workspaceName, currency: profile.currency, timezone: profile.timezone, locale: profile.locale, countryCode: profile.countryCode } })
   const calendar = scenarioCalendar(plan.seedDay, profile.timezone)
   const { at, isoDay } = calendar
   const offset = plan.offsetOf
@@ -101,15 +118,30 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
       })),
     })
   }
+  // UCI customers are recorded on NET30 [assumed], and the invoice form fills
+  // the due date only from a payment term of the workspace. A workspace made
+  // by setup-pilot-workspace has none, so the term the customers name is added
+  // here when it is missing; terms already in the workspace stay as they are.
+  if (plan.dataset === 'uci') {
+    const code = `NET${assumptions.paymentTermsDays}`
+    const terms = await prisma.paymentTerm.findMany({ where: { tenantId }, select: { code: true, name: true } })
+    if (!findPaymentTerm(terms, code)) {
+      await prisma.paymentTerm.create({ data: { id: `${P}-PT-${code}`, tenantId, code, name: `Net ${assumptions.paymentTermsDays}`, days: assumptions.paymentTermsDays, metadata: { ...metadata, assumed: true } } })
+    }
+  }
   const items = new Map(plan.items.map((item) => [item.key, { ...item, id: `${P}-ITEM-${safeId(item.sku)}`, balanceId: `${P}-BAL-${safeId(item.sku)}` }]))
   await prisma.item.createMany({
     data: [...items.values()].map((item) => ({
-      id: item.id, tenantId, sku: item.sku, name: item.name, category: item.category, unit: 'pcs', preferredSupplierId: supplierId(item.supplierKey),
+      id: item.id, tenantId, sku: item.sku, name: item.name, category: item.category, unit: PUBLIC_DATA_STOCK_UNIT, preferredSupplierId: supplierId(item.supplierKey),
       safetyStock: item.safetyStock, reorderPoint: item.reorderPoint,
       // The item's own purchasing fields (the item page shows them) agree
-      // with its preferred supplier's terms below.
+      // with its preferred supplier's terms below. No order-up-to level is
+      // recorded: the app's own default applies, as in the history.
       metadata: {
         ...metadata, defaultWarehouseId: warehouse.id, safetyStock: item.safetyStock, reorderPoint: item.reorderPoint, source: item.source, thresholdsAssumed: true,
+        // Where the thresholds come from (design audit L14, W-01): the reorder
+        // list's suggestion at the latest review, from the days before it.
+        thresholdRule: 'reorder_point_suggestion', ...(item.thresholdsSetOn !== null ? { thresholdsSetOn: isoDay(offset(item.thresholdsSetOn)) } : {}),
         minimumOrderQuantity: item.minimumOrderQuantity, moq: item.minimumOrderQuantity, purchaseLeadTimeDays: assumptions.leadTimeDays, leadTimeDays: assumptions.leadTimeDays,
       },
     })),
@@ -125,8 +157,10 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
   // 2. Sales orders (confirmed) and purchase orders (issued, or waiting for
   // approval) with their receipts.
   since = Date.now()
+  // UCI's orders still being filled [assumed] (plan.openSales), by position.
+  const openSaleOf = new Map((plan.openSales || []).map((row) => [row.position, row]))
   const orderRows = plan.salesOrders
-    .map((order, sequence) => ({ ...order, id: `${P}-SO-${String(sequence + 1).padStart(5, '0')}` }))
+    .map((order, sequence) => ({ ...order, id: `${P}-SO-${String(sequence + 1).padStart(5, '0')}`, open: openSaleOf.get(sequence) || null }))
     .sort((a, b) => a.index - b.index || a.orderedAt.localeCompare(b.orderedAt) || a.id.localeCompare(b.id))
   const shipments = []
   for (const part of chunks(orderRows, 500)) {
@@ -140,7 +174,7 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
         if (!customer) throw new Error(`Sales order ${order.id} names an unknown customer ${order.customerKey}.`)
         orders.push({
           id: order.id, tenantId, orderNumber, customerId: customer.id, customerName: customer.name, workflowStatus: 'confirmed', reservationStatus: 'not_reserved', fulfillmentStatus: 'not_fulfilled',
-          promisedDate: dateOnly(order.index), currency: profile.currency, metadata: { ...metadata, source: order.source }, createdAt,
+          promisedDate: dateOnly(order.index), currency: profile.currency, metadata: { ...metadata, source: order.source, ...(order.open ? { stillBeingFilledAssumed: order.open.state } : {}) }, createdAt,
         })
         const shipmentLines = []
         order.lines.forEach((line, lineIndex) => {
@@ -149,7 +183,10 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
           lines.push({ id, salesOrderId: order.id, itemId: item.id, sku: item.sku, itemName: item.name, orderedQuantity: line.quantity, unit: 'pcs', unitPrice: line.unitPrice, amount: money(line.quantity * line.unitPrice), metadata })
           shipmentLines.push({ id, quantity: line.quantity })
         })
-        shipments.push({ id: order.id, index: order.index, offset: offset(order.index), shippedAt: order.shippedAt, lines: shipmentLines, customer, source: order.source })
+        // An order still being filled: reserved and partly shipped, reserved
+        // only, or left alone (not reserved yet).
+        const ship = order.open ? order.open.shipLines.map((lineIndex) => shipmentLines[lineIndex]) : shipmentLines
+        shipments.push({ id: order.id, index: order.index, offset: offset(order.index), shippedAt: order.shippedAt, lines: shipmentLines, ship, reserve: order.open?.state !== 'not_reserved', customer, source: order.source })
       }
       await tx.salesOrder.createMany({ data: orders })
       for (const lineChunk of chunks(lines)) await tx.salesOrderLine.createMany({ data: lineChunk })
@@ -176,13 +213,19 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
         let amount = 0
         const poLines = order.lines.map((line, lineIndex) => {
           const item = items.get(line.itemKey)
-          const unitPrice = plan.dataset === 'm5' ? item.prices[order.created] : item.price
+          // The assumed purchase price: a share of the selling price (M5: of
+          // the day the order is placed), labelled on the line.
+          const sellingPrice = plan.dataset === 'm5' ? item.prices[order.created] : item.price
+          const unitPrice = plan.purchasePriceOf(item, order.created)
           const lineAmount = money(line.quantity * unitPrice)
           amount += lineAmount
           return {
             id: `${order.id}-L${String(lineIndex + 1).padStart(3, '0')}`, purchaseOrderId: order.id, itemId: item.id, sku: item.sku, itemName: item.name, orderedQuantity: line.quantity, receivedQuantity: 0,
             unit: 'pcs', unitPrice, amount: lineAmount, originalPromisedDate: issued ? new Date(`${promised}T12:00:00Z`) : null,
-            metadata: { ...metadata, assumed: true, targetWarehouseId: warehouse.id, requestedDate: promised, promisedDate: promised, ...(line.raisedBy ? { raisedForDemandSpike: line.raisedBy } : {}) },
+            metadata: {
+              ...metadata, assumed: true, targetWarehouseId: warehouse.id, requestedDate: promised, promisedDate: promised, ...(line.raisedBy ? { raisedForDemandSpike: line.raisedBy } : {}),
+              purchasePriceAssumed: { percentOfSellingPrice: assumptions.purchasePricePercent, sellingPrice },
+            },
           }
         })
         orders.push({
@@ -191,6 +234,7 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
           metadata: {
             ...metadata, assumed: true, targetWarehouseId: warehouse.id, transmissionStatus: issued ? 'sent' : 'not_sent', ...(issuedAt ? { issuedAt: issuedAt.toISOString() } : {}),
             purchasingRule: order.scene ? 'walkthrough_scene' : 'weekly_review_base_stock', ...(order.scene ? { walkthroughScene: order.scene } : {}),
+            purchasePricePercentAssumed: assumptions.purchasePricePercent,
           },
         })
         lines.push(...poLines)
@@ -226,7 +270,9 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
   since = Date.now()
   const stock = createInventoryOperationsCommandService({ prisma, env: historyEnv, now: () => at(offset(-1), OPENING_TIME) })
   const openingKey = `public-data:${plan.dataset}:opening-stock`
-  const openingLines = [...items.values()].map((item) => ({ inventoryBalanceId: item.balanceId, adjustmentQuantity: String(plan.purchasing.opening[item.key]) }))
+  // An item the calibration period gives no thresholds and no early demand
+  // starts with none (an adjustment line is never 0).
+  const openingLines = [...items.values()].filter((item) => plan.purchasing.opening[item.key] > 0).map((item) => ({ inventoryBalanceId: item.balanceId, adjustmentQuantity: String(plan.purchasing.opening[item.key]) }))
   let adjustment = (await retrying(() => stock.createAdjustment({ idempotencyKey: `${openingKey}:create`, reasonCode: 'opening_balance', notes: 'Opening stock before the public data window [assumed].', lines: openingLines }, { identity: actor }))).adjustment
   adjustment = (await retrying(() => stock.readyAdjustment(adjustment.id, { idempotencyKey: `${openingKey}:ready`, expectedAdjustmentVersion: adjustment.version }, { identity: actor }))).adjustment
   await retrying(() => stock.postAdjustment(adjustment.id, { idempotencyKey: `${openingKey}:post`, expectedAdjustmentVersion: adjustment.version }, { identity: actor }))
@@ -242,7 +288,9 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
   let shipped = 0
   for (const [position, event] of timeline.entries()) {
     if (event.order) {
-      if (await retrying(() => shipHistoryOrder(prisma, event.order, { tenantId, calendar, identity: actor, env: historyEnv, warehouseId: warehouse.id, keyPrefix: `public-data:${plan.dataset}` }))) shipped += 1
+      // An order still being filled: not reserved yet (nothing done), or
+      // reserved with only its first lines shipped, or none.
+      if (event.order.reserve && await retrying(() => shipHistoryOrder(prisma, event.order, { tenantId, calendar, identity: actor, env: historyEnv, warehouseId: warehouse.id, keyPrefix: `public-data:${plan.dataset}`, ship: event.order.ship })) && event.order.ship.length) shipped += 1
     } else {
       const service = createReceivingPostingCommandService({ prisma, env: historyEnv, now: () => event.receipt.arrivedAt })
       await retrying(() => service.postReceiving({ receivingDocumentId: event.receipt.id, idempotencyKey: `public-data:${plan.dataset}:post:${event.receipt.id}`, expectedVersion: 0 }, { identity: actor }))
@@ -252,28 +300,49 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
   }
   lap('postings', since)
 
-  // 5. Supplier terms [assumed].
+  // 5. Supplier terms [assumed], at the purchase price of the last day.
   since = Date.now()
   for (const item of items.values()) {
-    await retrying(() => saveItemSupplier(prisma, item.id, null, { supplierId: supplierId(item.supplierKey), preferred: true, leadTimeDays: assumptions.leadTimeDays, minimumOrderQuantity: item.minimumOrderQuantity, referencePrice: item.price, currency: profile.currency }, actor.userId, { tenantId }))
+    await retrying(() => saveItemSupplier(prisma, item.id, null, { supplierId: supplierId(item.supplierKey), preferred: true, leadTimeDays: assumptions.leadTimeDays, minimumOrderQuantity: item.minimumOrderQuantity, referencePrice: plan.purchasePriceOf(item, plan.days - 1), currency: profile.currency }, actor.userId, { tenantId }))
   }
   lap('supplierTerms', since)
+
+  // 5b. Purchase requests [assumed], raised by the buyer (the scene's, else
+  // the first user who may) and decided by a second person (design audit C4).
+  since = Date.now()
+  let requests = null
+  if (plan.requests?.length) {
+    const requester = sceneBuyer
+      ? { authenticated: true, tenantId, userId: sceneBuyer.id, role: sceneBuyer.role, name: sceneBuyer.name, source: 'local_walkthrough_scenario' }
+      : await scenarioActor(prisma, tenantId, REQUEST_PERMISSIONS, 'purchase requests')
+    requests = await seedPurchaseRequests(prisma, {
+      plan, env: historyEnv, requester, approver: await scenarioApprover(prisma, tenantId, requester, REQUEST_REVIEW_PERMISSIONS), tenantId, calendar, warehouseId: warehouse.id,
+      itemIdOf: (key) => items.get(key).id, supplierIdOf: supplierId, metadata, retrying,
+    })
+  }
+  lap('purchaseRequests', since)
 
   // 6. UCI: customer invoices, issued on the shipment day, and receivables.
   since = Date.now()
   let invoices = 0
+  let customerPayments = 0
   if (plan.dataset === 'uci') {
     const shipmentRows = await prisma.shipmentDocument.findMany({ where: { tenantId, postingStatus: 'posted' }, select: { id: true, salesOrderId: true, postedAt: true, lines: { select: { id: true, salesOrderLineId: true, itemId: true, sku: true, postedQuantity: true, unit: true } } } })
     const shipmentOf = new Map(shipmentRows.map((row) => [row.salesOrderId, row]))
     const orderLines = new Map((await prisma.salesOrderLine.findMany({ where: { salesOrder: { tenantId } }, select: { id: true, unitPrice: true, itemName: true } })).map((row) => [row.id, row]))
     const seedDayValue = new Date(`${plan.seedDay}T12:00:00.000Z`)
+    // A second person approves what the first submitted (design audit C4).
+    const invoiceApprover = await scenarioApprover(prisma, tenantId, actor, 'finance.customer_invoice.approve')
     for (const part of chunks(shipments, 500)) {
       await prisma.$transaction(async (tx) => {
         const headers = []
         const lines = []
         const receivables = []
+        const payments = []
         for (const order of part) {
           const shipment = shipmentOf.get(order.id)
+          // An order still being filled with nothing shipped has no invoice yet.
+          if (!shipment && !order.ship.length) continue
           if (!shipment) throw new Error(`Sales order ${order.id} has no posted shipment to invoice.`)
           const issuedAt = new Date(shipment.postedAt.getTime() + 5 * 60000)
           const invoiceNumber = await allocateDocumentNumber(tx, { tenantId, documentType: 'customer_invoice', at: issuedAt })
@@ -294,52 +363,80 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
           headers.push({
             id, tenantId, invoiceNumber, salesOrderId: order.id, shipmentId: shipment.id, customerId: order.customer.id, customerNameSnapshot: order.customer.name, invoiceDate, dueDate,
             subtotalAmount: subtotal, enteredTaxAmount: 0, totalAmount: subtotal, currency: profile.currency, status: 'issued',
-            submittedAt: issuedAt, submittedById: actor.userId, approvedAt: issuedAt, approvedById: actor.userId, issuedAt, issuedById: actor.userId, version: 3,
+            submittedAt: issuedAt, submittedById: actor.userId, approvedAt: issuedAt, approvedById: invoiceApprover.userId, issuedAt, issuedById: actor.userId, version: 3,
             metadata: { ...metadata, source: order.source, paymentTermsAssumed: `NET${assumptions.paymentTermsDays}` },
           })
           receivables.push({
             id: `${id}-AR`, tenantId, customerInvoiceId: id, obligationNumber: `AR-${invoiceNumber}`, originalAmount: subtotal, outstandingAmount: paid ? 0 : subtotal, currency: profile.currency, dueDate,
             status: paid ? 'settled' : 'open', metadata: { ...metadata, ...(paid ? { assumedPaidOn: dueDate.toISOString().slice(0, 10) } : {}) },
           })
+          // A settled receivable has its payment, recorded as the app records
+          // one (payment-record-command-service.mjs): on the due date, in full.
+          if (paid) {
+            const paidOn = dueDate.toISOString().slice(0, 10)
+            payments.push({
+              id: `${id}-PAY`, tenantId, obligationType: 'receivable', receivableObligationId: `${id}-AR`, paymentDate: new Date(`${paidOn}T00:00:00.000Z`), amount: subtotal, currency: profile.currency,
+              method: 'other', reference: `Customer payment ${invoiceNumber}`, note: 'Paid on the due date [assumed].', status: 'recorded', recordedById: actor.userId, createdAt: dueDate,
+              metadata: { ...metadata, assumed: true, assumedPaidOn: paidOn },
+            })
+          }
         }
         await tx.customerInvoice.createMany({ data: headers })
         for (const lineChunk of chunks(lines)) await tx.customerInvoiceLine.createMany({ data: lineChunk })
         await tx.receivableObligation.createMany({ data: receivables })
+        if (payments.length) await tx.paymentRecord.createMany({ data: payments })
         invoices += headers.length
+        customerPayments += payments.length
       }, { timeout: 600000 })
     }
   }
   lap('customerInvoices', since)
 
-  // 7. The scene's supplier tier, set by its buyer with a written reason from
-  // the purchase orders: the supplier's share of purchase spend over the
-  // last 12 months.
-  let tiers = []
-  if (plan.scene) {
-    const spend = await prisma.purchaseOrder.groupBy({ by: ['supplierId'], where: { tenantId, createdAt: { gte: at(offset(plan.days - 365), '00:00') } }, _sum: { amount: true } })
-    const total = spend.reduce((sum, row) => sum + Number(row._sum.amount || 0), 0)
-    for (const supplier of plan.suppliers.filter((row) => row.tier)) {
-      const share = total ? Math.round((100 * Number(spend.find((row) => row.supplierId === supplierId(supplier.key))?._sum.amount || 0)) / total) : 0
-      // The hero's rank among all products by sales value over the window.
+  // 6b. UCI: supplier invoices, matches, payables and payments [assumed],
+  // through the finance commands (seed-payables.mjs).
+  since = Date.now()
+  let payables = null
+  if (plan.payables) {
+    const financeEnv = { ...historyEnv, FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE: 'true' }
+    const financeActor = await scenarioActor(prisma, tenantId, PAYABLES_PERMISSIONS, 'supplier invoices and payments')
+    payables = await seedSupplierInvoices(prisma, {
+      plan, env: financeEnv, identity: financeActor, approver: await scenarioApprover(prisma, tenantId, financeActor, 'finance.supplier_invoice.approve'), reviewer: await scenarioApprover(prisma, tenantId, financeActor, 'finance.match_exception.review'), tenantId, calendar, purchaseOrderIds: purchaseOrders.map((order) => order.id), supplierIdOf: supplierId, metadata, retrying, log,
+    })
+  }
+  lap('supplierInvoices', since)
+
+  // 7. Every supplier's tier [assumed] (design audit L7-37), set by the buyer
+  // on the tier day with a written reason from what was known then: its
+  // share of purchase spend over the year before (plan.mjs,
+  // PUBLIC_DATA_TIER_RULES), and for the scene's Acme its sole-source hero.
+  // A Tier 1 supplier gets the buyer as its named owner.
+  const tiers = []
+  const tierDay = isoDay(offset(plan.tierDay))
+  const tierName = (tier) => SUPPLIER_TIER_DEFINITIONS.find((row) => row.tier === tier)?.name || `Tier ${tier}`
+  const { tier1Percent, tier2Percent } = PUBLIC_DATA_TIER_RULES
+  for (const supplier of plan.suppliers.filter((row) => row.tier)) {
+    let reason = `Tier ${supplier.tier} (${tierName(supplier.tier)}): ${supplier.spendShare}% of purchase spend in the 12 months to ${tierDay}. Tiers follow spend: the suppliers that make up the first ${tier1Percent}% are Tier 1, the next up to ${tier2Percent}% Tier 2, the rest Tier 3 [assumed].`
+    if (supplier.tierBasis === 'scene' && plan.scene) {
+      // The hero's rank among all products by sales value up to the tier day.
       const hero = plan.scene.hero
       const value = new Map()
-      for (const order of plan.salesOrders) for (const line of order.lines) value.set(line.itemKey, (value.get(line.itemKey) || 0) + line.quantity * line.unitPrice)
+      for (const order of plan.salesOrders) if (order.index < plan.tierDay) for (const line of order.lines) value.set(line.itemKey, (value.get(line.itemKey) || 0) + line.quantity * line.unitPrice)
       const rank = [...value.entries()].sort((a, b) => b[1] - a[1]).findIndex(([key]) => key === hero.sku) + 1
-      const reason = `Tier ${supplier.tier}: sole source of our ${hero.name} (No. ${rank} of ${plan.items.length} products by sales value over the last 12 months) and of ${plan.items.filter((item) => item.supplierKey === supplier.key).length - 1} other ${supplier.key}xxx lines; ${share}% of purchase spend over the last 12 months.`
-      await prisma.$transaction(async (tx) => {
-        const row = await tx.supplier.findUniqueOrThrow({ where: { id: supplierId(supplier.key) } })
-        const setAt = at(-40, '10:30')
-        await applySupplierTierChange(tx, row, { tier: supplier.tier, reason, actorId: buyer.id, source: 'supplier-master', now: setAt })
-        // The tier's history row carries the day the tier was set, not the seed's.
-        await tx.auditLog.updateMany({ where: { tenantId, entityType: 'supplier', entityId: row.id, action: 'tier_change' }, data: { createdAt: setAt } })
-        await tx.supplier.update({ where: { id: row.id }, data: { businessOwnerId: buyer.id } })
-      })
-      tiers.push({ supplier: supplier.name, tier: supplier.tier, reason, share, setBy: buyer.name })
+      reason = `Tier ${supplier.tier} (${tierName(supplier.tier)}): sole source of our ${hero.name} (No. ${rank} of ${plan.items.length} products by sales value in the 12 months to ${tierDay}) and of ${plan.items.filter((item) => item.supplierKey === supplier.key).length - 1} other ${supplier.key}xxx lines; ${supplier.spendShare}% of purchase spend in those 12 months.`
     }
+    await prisma.$transaction(async (tx) => {
+      const row = await tx.supplier.findUniqueOrThrow({ where: { id: supplierId(supplier.key) } })
+      const setAt = at(offset(plan.tierDay), '10:30')
+      await applySupplierTierChange(tx, row, { tier: supplier.tier, reason, actorId: buyer.id, source: 'supplier-master', now: setAt })
+      // The tier's history row carries the day the tier was set, not the seed's.
+      await tx.auditLog.updateMany({ where: { tenantId, entityType: 'supplier', entityId: row.id, action: 'tier_change' }, data: { createdAt: setAt } })
+      if (supplier.tier === 1) await tx.supplier.update({ where: { id: row.id }, data: { businessOwnerId: buyer.id } })
+    })
+    tiers.push({ supplier: supplier.name, tier: supplier.tier, reason, share: supplier.spendShare, setBy: buyer.name })
   }
 
   // 8. The workspace note.
-  const counts = { ...publicDataPlanCounts(plan), postedReceipts: posted, shippedOrders: shipped, customerInvoices: invoices }
+  const counts = { ...publicDataPlanCounts(plan), postedReceipts: posted, shippedOrders: shipped, customerInvoices: invoices, customerPayments, ...(requests ? { purchaseRequests: requests.requests } : {}), ...(payables ? { supplierInvoices: payables.invoices, supplierPayments: payables.paid } : {}) }
   const note = {
     dataset: plan.dataset,
     sourceWindow: plan.sourceWindow,
@@ -354,7 +451,7 @@ export async function seedPublicData(prisma, env = process.env, { plan, log = ()
   }
   await prisma.runtimeRecord.create({ data: { id: `${P}-PUBLIC-DATA-NOTE`, tenantId, namespace: PUBLIC_DATA_NOTE_NAMESPACE, recordKey: PUBLIC_DATA_NOTE_KEY, payload: note } })
   const scene = plan.scene ? { ...plan.scene, purchaseOrders: sceneOrders, tiers, suppliers: plan.suppliers.filter((row) => row.scene).map(({ name, code, email, contactName }) => ({ name, code, email, contactName })) } : null
-  return { tenantId, seedDay: plan.seedDay, counts, seconds: Math.round((Date.now() - started) / 1000), timing, scene }
+  return { tenantId, seedDay: plan.seedDay, counts, seconds: Math.round((Date.now() - started) / 1000), timing, scene, tiers }
 }
 
 // The scene's buyer: a workspace user with the manager's role, a warehouse

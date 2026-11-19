@@ -114,6 +114,10 @@ test("changing a promised date on an issued PO needs a reason and records a revi
   await signIn(page);
   await page.goto("/app/procurement/orders/LOCAL-DEMO-PO-002");
   const section = page.getByTestId("po-promise-dates");
+  await expect(section).toBeVisible();
+  // A long order with one unchanged date folds its lines into a sentence.
+  const toggle = section.getByTestId("po-promise-toggle");
+  if (await toggle.isVisible()) await toggle.click();
   const row = section.getByTestId("po-promise-line-LOCAL-DEMO-PO-002-LINE-001");
   await expect(row).toBeVisible();
   const originalText = await row.locator("td").nth(1).innerText();

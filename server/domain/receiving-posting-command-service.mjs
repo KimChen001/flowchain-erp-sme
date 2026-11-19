@@ -2,8 +2,10 @@ import { createHash, randomUUID } from 'node:crypto'
 import { assertAuthorized } from '../auth/authorization-service.mjs'
 import { resolveProvisionedActor } from './pilot-identity.mjs'
 import {
+  availableRecordLedger,
   buildReceivingPostingPlan,
   buildReceivingReversalPlan,
+  purchaseOrderReceiptStatus,
   RECEIVABLE_PO_STATUSES,
   RECEIVABLE_WORKFLOW_STATUSES,
   receivingDecimalString as decimalString,
@@ -13,6 +15,7 @@ import {
   receivingMovementNetUnits,
   receivingWorkflowStatus,
 } from './receiving-transaction-policy.mjs'
+import { recordOriginalPromises } from './purchase-order-promise-dates.mjs'
 
 const POST_COMMAND = 'receiving.post'
 const REVERSE_COMMAND = 'receiving.reverse'
@@ -166,15 +169,9 @@ async function assertOperateWarehouseScope(tx, scope, receivingDocument, { allow
   if (scopeCount !== warehouseIds.length) fail('WAREHOUSE_SCOPE_DENIED', 'The actor lacks operate access to every receiving warehouse.', 403)
 }
 
-function poStatus(lines, currentStatus, baseStatus) {
-  const quantities = lines.map((line) => ({
-    ordered: decimalUnits(line.orderedQuantity),
-    received: decimalUnits(line.receivedQuantity),
-  }))
-  if (quantities.length && quantities.every((line) => line.received >= line.ordered)) return 'fully_received'
-  if (quantities.some((line) => line.received > 0n)) return 'partially_received'
-  return text(baseStatus) || (['partially_received', 'fully_received'].includes(currentStatus) ? 'approved' : currentStatus)
-}
+// One rule for a purchase order's status from its received quantities, shared
+// with the supplier return for a replacement (L3-23).
+const poStatus = purchaseOrderReceiptStatus
 
 async function lockReceivingDocument(tx, tenantId, receivingDocumentId) {
   const rows = await tx.$queryRawUnsafe(
@@ -374,7 +371,7 @@ export function createReceivingPostingCommandService({ prisma, now = () => new D
               status: 'posted',
               owner: scope.actorId,
               actorId: scope.actorId,
-              unit: plan.line.unit || plan.poLine.unit,
+              unit: plan.unit,
               relatedPoId: purchaseOrder.id,
               relatedGrnId: receivingDocument.id,
               postingBatchId,
@@ -392,12 +389,13 @@ export function createReceivingPostingCommandService({ prisma, now = () => new D
               warehouseKey: plan.warehouseId,
               location: plan.location || null, locationKey: plan.locationKey,
               onHandQuantity: quantity, availableQuantity: quantity, reservedQuantity: '0',
-              unit: plan.line.unit || plan.poLine.unit, status: 'available', version: 1,
+              unit: plan.unit, status: 'available', version: 1,
             },
             update: {
               onHandQuantity: { increment: quantity }, availableQuantity: { increment: quantity },
               itemId: plan.itemId, itemName: plan.line.itemName || plan.poLine.itemName,
-              location: plan.location || null, unit: plan.line.unit || plan.poLine.unit, version: { increment: 1 },
+              // The balance keeps its own unit: a receipt never relabels it.
+              location: plan.location || null, version: { increment: 1 },
             },
           })
           balances.push(balance)
@@ -412,6 +410,11 @@ export function createReceivingPostingCommandService({ prisma, now = () => new D
         }
 
         await faultInjector('after_movements', { tx, receivingDocument, purchaseOrder, movements, balances })
+        // The supplier has delivered against the PO, so each dated line's
+        // original promise is recorded now if issuing did not: an approved PO
+        // can be received without being issued (design audit L1-05). A line
+        // that already has one keeps it.
+        const originalPromisesRecorded = await recordOriginalPromises(tx, { purchaseOrder })
         const poLines = [...updatedPoLines.values()]
         const nextPoStatus = poStatus(poLines, purchaseOrder.status, purchaseOrder.receivingBaseStatus)
         const poUpdated = await tx.purchaseOrder.updateMany({
@@ -434,11 +437,14 @@ export function createReceivingPostingCommandService({ prisma, now = () => new D
             id: auditId, tenantId: scope.tenantId, actorId: scope.actorId, source: 'receiving_command_service',
             module: 'procurement_receiving', action: 'receiving_posted', entityType: 'ReceivingDocument', entityId: receivingDocument.id,
             summary: `Receiving ${receivingDocument.documentNumber || receivingDocument.id} posted to inventory.`,
-            metadata: auditMetadata({
-              action: 'receiving_posted', before: { postingStatus: receivingDocument.postingStatus, poStatus: purchaseOrder.status, poWorkflowStatus: receivingWorkflowStatus(purchaseOrder), poFulfillmentStatus: receivingFulfillmentStatus(purchaseOrder.lines) },
-              after: { postingStatus: 'posted', poStatus: nextPoStatus, poWorkflowStatus: receivingWorkflowStatus({ ...purchaseOrder, status: nextPoStatus, receivingBaseStatus: purchaseOrder.receivingBaseStatus || purchaseOrder.status }), poFulfillmentStatus: receivingFulfillmentStatus(poLines) }, purchaseOrder, receivingDocument,
-              postingBatchId, idempotencyKey: normalized.idempotencyKey, movements, balances,
-            }),
+            metadata: {
+              ...(originalPromisesRecorded.length ? { originalPromisesRecorded } : {}),
+              ...auditMetadata({
+                action: 'receiving_posted', before: { postingStatus: receivingDocument.postingStatus, poStatus: purchaseOrder.status, poWorkflowStatus: receivingWorkflowStatus(purchaseOrder), poFulfillmentStatus: receivingFulfillmentStatus(purchaseOrder.lines) },
+                after: { postingStatus: 'posted', poStatus: nextPoStatus, poWorkflowStatus: receivingWorkflowStatus({ ...purchaseOrder, status: nextPoStatus, receivingBaseStatus: purchaseOrder.receivingBaseStatus || purchaseOrder.status }), poFulfillmentStatus: receivingFulfillmentStatus(poLines) }, purchaseOrder, receivingDocument,
+                postingBatchId, idempotencyKey: normalized.idempotencyKey, movements, balances,
+              }),
+            },
           },
         })
         await tx.domainChangeFeed.createMany({ data: [
@@ -568,7 +574,9 @@ export function createReceivingPostingCommandService({ prisma, now = () => new D
   async function reconcileInventoryBalance({ tenantId, sku, warehouseId, location = '' } = {}) {
     const locationKey = normalizeLocation(location)
     const balance = await prisma.inventoryBalance.findUnique({ where: balanceKey({ tenantId, sku, warehouseId, locationKey }) })
-    const movements = await prisma.inventoryMovement.findMany({ where: { tenantId, sku, warehouseId, locationKey, status: 'posted' } })
+    // The available record's ledger: quarantine stock at the same key has its
+    // own record (L8-18).
+    const movements = availableRecordLedger(await prisma.inventoryMovement.findMany({ where: { tenantId, sku, warehouseId, locationKey, status: 'posted' } }))
     const calculatedOnHandQuantity = calculateMovementBalance(movements)
     return {
       balance: balance ? plainBalance(balance) : null,

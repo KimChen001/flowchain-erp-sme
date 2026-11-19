@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { billNextStep, buildFirstRunChecklist, buildTodayWork, compareTodayWork, countDocumentsUpdatedToday } from './today-work.mjs'
+import { billNextStep, buildFirstRunChecklist, buildTodayWork, compareTodayWork, countDocumentsUpdatedToday, purchaseOrderSignalRows } from './today-work.mjs'
 import { buildReorderList } from './reorder-list.mjs'
 import { buildRuntimeInventoryAllocation } from './runtime-inventory-allocation-read-model.mjs'
 import { buildHomeOverview } from '../services/business-read-context-service.mjs'
@@ -9,8 +9,9 @@ import { reportReadAccessFor } from './report-read-access.mjs'
 import { defaultRoleTemplates, permissionCodes } from '../auth/permission-catalog.mjs'
 
 // The new customer's first day (walkthrough of 2026-10-07, New York): a PO due
-// today with 20 of 50 still to come, three items at or below their reorder
-// point, a matched and paid bill, a bill waiting for its match, an invoice
+// today with 20 of 50 still to come, three items below their reorder point
+// (at it, with no shipment history, the order-up-to level is the point and
+// there is nothing to order: design audit C3), a matched and paid bill, a bill waiting for its match, an invoice
 // with money owed but not yet due, and the overdue and pending finance work a
 // later day brings.
 const NY = 'America/New_York'
@@ -19,7 +20,7 @@ const EVENING = new Date('2026-10-08T00:00:00Z') // 20:00 in New York, already O
 const AFTER_MIDNIGHT = new Date('2026-10-08T04:30:00Z') // 00:30 in New York on Oct 8
 
 const items = [
-  { id: 'ITEM-V', itemId: 'ITEM-V', sku: 'VALVE-150', name: 'Ball valve 1.5 in', unit: 'EA', safetyStock: 10, reorderPoint: 20, status: 'active' },
+  { id: 'ITEM-V', itemId: 'ITEM-V', sku: 'VALVE-150', name: 'Ball valve 1.5 in', unit: 'EA', safetyStock: 10, reorderPoint: 25, status: 'active' },
   { id: 'ITEM-F', itemId: 'ITEM-F', sku: 'FIT-300', name: 'Pipe fitting', unit: 'EA', reorderPoint: 50, status: 'active' },
   { id: 'ITEM-S', itemId: 'ITEM-S', sku: 'SEAL-400', name: 'Seal kit', unit: 'EA', reorderPoint: 100, status: 'active' },
   { id: 'ITEM-G', itemId: 'ITEM-G', sku: 'GASKET-500', name: 'Gasket', unit: 'EA', reorderPoint: 10, status: 'active' },
@@ -27,7 +28,7 @@ const items = [
 const balances = [
   { sku: 'VALVE-150', itemId: 'ITEM-V', onHandQuantity: 0, reservedQuantity: 0, warehouseId: 'WH-1' },
   { sku: 'FIT-300', itemId: 'ITEM-F', onHandQuantity: 40, reservedQuantity: 0, warehouseId: 'WH-1' },
-  { sku: 'SEAL-400', itemId: 'ITEM-S', onHandQuantity: 100, reservedQuantity: 0, warehouseId: 'WH-1' },
+  { sku: 'SEAL-400', itemId: 'ITEM-S', onHandQuantity: 90, reservedQuantity: 0, warehouseId: 'WH-1' },
   { sku: 'GASKET-500', itemId: 'ITEM-G', onHandQuantity: 500, reservedQuantity: 0, warehouseId: 'WH-1' },
 ]
 const po = (overrides = {}, line = {}) => ({
@@ -122,11 +123,40 @@ test('items at or below their reorder point are listed from the reorder list, la
   assert.ok(reorder.every((item) => item.date === '2026-10-07' && item.actionHref === '/app/inventory/reorder'))
   const valve = reorder.find((item) => item.label === 'VALVE-150')
   assert.equal(valve.href, '/app/master-data/items/ITEM-V')
-  assert.deepEqual({ position: valve.detail.position, reorderPoint: valve.detail.reorderPoint, unit: valve.detail.unit }, { position: 20, reorderPoint: 20, unit: 'EA' })
+  assert.deepEqual({ position: valve.detail.position, reorderPoint: valve.detail.reorderPoint, unit: valve.detail.unit }, { position: 20, reorderPoint: 25, unit: 'EA' })
+  // Every row due today has a quantity to order (design audit W-02).
+  assert.deepEqual(reorder.map((item) => item.detail.purchaseRequest.quantity), [10, 10, 5])
   assert.equal(valve.detail.stockSignal, 'stock_below_safety')
   assert.equal(reorder.find((item) => item.label === 'FIT-300').detail.stockSignal, 'stock_below_reorder')
   // GASKET-500 is well above its reorder point.
   assert.equal(work.items.some((item) => item.label === 'GASKET-500'), false)
+  // Each row carries the reorder list's prefilled request for its item, so
+  // Today links to that request, not just to the whole list.
+  const list = reorderFor([po()]).reorder
+  for (const item of reorder) {
+    const row = list.rows.find((entry) => entry.sku === item.label)
+    assert.deepEqual(item.detail.purchaseRequest, { itemId: row.purchaseRequest.itemId, supplierId: row.purchaseRequest.supplierId, quantity: row.purchaseRequest.quantity, raisedToMinimum: row.purchaseRequest.raisedToMinimum })
+  }
+  assert.equal(reorder.find((item) => item.label === 'FIT-300').detail.purchaseRequest.itemId, 'ITEM-F')
+})
+
+test('past the row limit, every kind keeps its earliest rows and the list stays in date order', async () => {
+  const { todayWorkResponseRows, TODAY_WORK_LIMIT, TODAY_WORK_PER_KIND } = await import('./today-work.mjs')
+  const day = (n) => `2026-10-${String(n).padStart(2, '0')}`
+  const row = (kind, n, date) => ({ id: `${kind}:${n}`, kind, recordId: String(n), label: String(n), date })
+  // 120 overdue receivables dated before 30 items to reorder.
+  const rows = [
+    ...Array.from({ length: 120 }, (_, n) => row('receivable_overdue', n, day(1 + (n % 20)))),
+    ...Array.from({ length: 30 }, (_, n) => row('reorder_now', n, day(25))),
+  ].sort(compareTodayWork)
+  const kept = todayWorkResponseRows(rows)
+  assert.equal(kept.length, TODAY_WORK_LIMIT)
+  assert.equal(kept.filter((item) => item.kind === 'reorder_now').length, TODAY_WORK_PER_KIND)
+  assert.equal(kept.filter((item) => item.kind === 'receivable_overdue').length, TODAY_WORK_LIMIT - TODAY_WORK_PER_KIND)
+  const dates = kept.map((item) => item.date)
+  assert.deepEqual(dates, [...dates].sort())
+  // Under the limit every row stays.
+  assert.equal(todayWorkResponseRows(rows.slice(0, 50)).length, 50)
 })
 
 test('an overdue receivable is listed with what is owed; one due next month is not', () => {
@@ -145,11 +175,64 @@ test('an overdue receivable is listed with what is owed; one due next month is n
   assert.equal(hidden.detail.outstanding, null)
 })
 
+// Design audit L7-12 = L7-18: Today's Overdue counted receivables and
+// purchase orders but never a payable past its due date, so the money we owe
+// late was nowhere on Today. It lists them by the payables list's rule,
+// held ones too.
+test('a payable past its due date is listed as overdue with what we still owe; one paid or not yet due is not', () => {
+  const payables = [
+    { id: 'AP-1', obligationNumber: 'AP-0001', supplierInvoiceId: 'BILL-LATE', supplierInvoiceNumber: 'INV-7700', supplierName: 'Valve Supply Co', status: 'approved', dueDate: '2026-10-05T00:00:00.000Z', outstandingAmount: '75', currency: 'USD' },
+    // Held from payment, still owed and late.
+    { id: 'AP-2', obligationNumber: 'AP-0002', supplierInvoiceId: 'BILL-HELD', supplierInvoiceNumber: 'INV-7701', supplierName: 'Valve Supply Co', status: 'held', dueDate: '2026-10-01T00:00:00.000Z', outstandingAmount: '20', currency: 'USD' },
+    // Due today: not overdue yet, even in the New York evening.
+    { id: 'AP-3', obligationNumber: 'AP-0003', supplierInvoiceId: 'BILL-TODAY', supplierInvoiceNumber: 'INV-7702', supplierName: 'Valve Supply Co', status: 'approved', dueDate: '2026-10-07T00:00:00.000Z', outstandingAmount: '10', currency: 'USD' },
+    { id: 'AP-4', obligationNumber: 'AP-0004', supplierInvoiceId: 'BILL-PAID', supplierInvoiceNumber: 'INV-7781', supplierName: 'Valve Supply Co', status: 'settled', dueDate: '2026-10-01T00:00:00.000Z', outstandingAmount: '0', currency: 'USD' },
+  ]
+  const work = firstDay(EVENING, { payables })
+  const overdue = work.items.filter((item) => item.kind === 'payable_overdue')
+  assert.deepEqual(overdue.map((item) => [item.label, item.overdueDays, item.detail.outstanding, item.detail.held]), [['INV-7701', 6, 20, true], ['INV-7700', 2, 75, false]])
+  assert.equal(overdue[0].href, '/app/procurement/bills/BILL-HELD')
+  assert.equal(overdue[0].entityType, 'supplier_invoice')
+  assert.equal(overdue[0].dateKind, 'due')
+  // They count in Today's Overdue.
+  assert.equal(work.overdue - firstDay(EVENING).overdue, 2)
+  // Without the amount permission the amount is hidden, and the row stays.
+  const hidden = firstDay(EVENING, { payables: [{ ...payables[0], outstandingAmount: null, amountHidden: true }] }).items.find((item) => item.kind === 'payable_overdue')
+  assert.equal(hidden.detail.outstanding, null)
+})
+
+// Design audit L2-01: a bill the three-way match held has no payable, so no
+// payable reminded anyone once its due date passed. Past its due date it
+// counts as overdue, and keeps its invoice date, so its place and any
+// decision on it hold.
+test('a bill held by a match exception past its due date counts as overdue', () => {
+  const held = [
+    { id: 'BILL-HELD-LATE', invoiceNumber: 'INV-7600', supplierName: 'Valve Supply Co', status: 'exception', matchStatus: 'exception', totalAmount: '90.0000', currency: 'USD', invoiceDate: '2026-09-01T00:00:00.000Z', dueDate: '2026-10-01T00:00:00.000Z' },
+    // Every difference approved, still to approve, also late.
+    { id: 'BILL-DIFF-OK', invoiceNumber: 'INV-7601', supplierName: 'Valve Supply Co', status: 'exception', matchStatus: 'variance_approved', totalAmount: '40.0000', currency: 'USD', invoiceDate: '2026-09-02T00:00:00.000Z', dueDate: '2026-10-02T00:00:00.000Z' },
+    { id: 'BILL-HELD-NEW', invoiceNumber: 'INV-7602', supplierName: 'Valve Supply Co', status: 'exception', matchStatus: 'exception', totalAmount: '10.0000', currency: 'USD', invoiceDate: '2026-10-06T00:00:00.000Z', dueDate: '2026-11-05T00:00:00.000Z' },
+    // Matched and not held: waits for approval, not counted as overdue here.
+    { id: 'BILL-MATCHED', invoiceNumber: 'INV-7603', supplierName: 'Valve Supply Co', status: 'matched', totalAmount: '10.0000', currency: 'USD', invoiceDate: '2026-09-01T00:00:00.000Z', dueDate: '2026-10-01T00:00:00.000Z' },
+  ]
+  const work = firstDay(MORNING, { supplierInvoices: held })
+  const row = (label) => work.items.find((item) => item.label === label)
+  assert.deepEqual([row('INV-7600').kind, row('INV-7600').overdueDays, row('INV-7600').date, row('INV-7600').dateKind, row('INV-7600').detail.dueDate], ['bill_exception', 6, '2026-09-01', 'invoice', '2026-10-01'])
+  assert.deepEqual([row('INV-7601').kind, row('INV-7601').overdueDays], ['bill_to_approve', 5])
+  assert.equal(row('INV-7602').overdueDays, 0)
+  assert.equal(row('INV-7602').detail.dueDate, undefined)
+  assert.equal(row('INV-7603').overdueDays, 0)
+})
+
 test('bills, invoices and sales orders follow their pages\' next step', () => {
   assert.equal(billNextStep({ status: 'submitted', poId: 'PO-1', receiptId: null }), 'bill_awaiting_receipt')
   assert.equal(billNextStep({ status: 'submitted', poId: 'PO-1', receiptId: 'GRN-1' }), 'bill_to_match')
   assert.equal(billNextStep({ status: 'matched' }), 'bill_to_approve')
   assert.equal(billNextStep({ status: 'exception' }), 'bill_exception')
+  assert.equal(billNextStep({ status: 'exception', matchStatus: 'exception' }), 'bill_exception')
+  // Design audit L11-07: every difference approved, the bill keeps the
+  // exception status until it is approved itself. It waits for approval (the
+  // approval email already says so), not for a review with nothing left in it.
+  assert.equal(billNextStep({ status: 'exception', matchStatus: 'variance_approved' }), 'bill_to_approve')
   assert.equal(billNextStep({ status: 'approved' }), null)
   assert.equal(billNextStep({ status: 'draft' }), null)
   const work = firstDay()
@@ -349,7 +432,7 @@ test('a role without purchasing sees no purchase order items; one without financ
 
   const buyer = (await homeFor(roleAccess('procurement-specialist'))).payload
   assert.deepEqual(buyer.workItems.map((item) => item.kind), ['purchase_order_due', 'reorder_now', 'reorder_now', 'reorder_now'])
-  assert.deepEqual(buyer.hidden, ['bills', 'sales_orders', 'customer_invoices', 'receivables'])
+  assert.deepEqual(buyer.hidden, ['bills', 'sales_orders', 'customer_invoices', 'receivables', 'payables'])
   // The setup steps a buyer may not do have no link.
   assert.equal(buyer.firstRun.steps.find((step) => step.id === 'teammates').href, null)
 })
@@ -397,4 +480,11 @@ test('a source that cannot be read is named instead of failing the page', async 
   assert.ok(response.payload.limitations.includes('today_database_sources_unavailable'))
   assert.equal(response.payload.firstRun, null)
   assert.ok(response.payload.workItems.some((item) => item.kind === 'purchase_order_due'))
+})
+
+// Today reads the open purchase orders report's rows, so it names a renamed
+// supplier by its current name too (listForReport adds currentSupplierName).
+test("Today names an order's supplier by its current name, as the open purchase orders report does", () => {
+  const { rows } = purchaseOrderSignalRows([{ id: 'P', supplierId: 'SUP-1', supplierName: 'Acme Ltd', currentSupplierName: 'Acme Components', status: 'issued', createdAt: '2026-09-01', expectedDate: '2026-09-09', lines: [{ quantity: 10, receivedQuantity: 0, unit: 'pcs' }] }], new Date('2026-09-11T15:00:00Z'), 'America/New_York')
+  assert.deepEqual([rows[0].supplierId, rows[0].supplier], ['SUP-1', 'Acme Components'])
 })

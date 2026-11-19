@@ -18,7 +18,7 @@ const statusCodes: Record<string, [string, string]> = {
   open: ["Open", "未结"],
   closed: ["Closed", "已关闭"],
   completed: ["Completed", "已完成"],
-  converted: ["Converted", "已转换"],
+  converted: ["Converted to PO", "已转采购订单"],
   collecting_quotes: ["Collecting quotes", "报价收集中"],
   awarded: ["Awarded", "已授标"],
   not_received: ["Not received", "未收货"],
@@ -26,13 +26,16 @@ const statusCodes: Record<string, [string, string]> = {
   fully_received: ["Fully received", "全部收货"],
   received: ["Received", "已收货"],
   ready_for_receiving: ["Ready to post", "待过账"],
-  unposted: ["Unposted", "未过账"],
+  // "Not posted", as the receiving cards and filters say (design audit U-21).
+  unposted: ["Not posted", "未过账"],
   posted: ["Posted", "已过账"],
   reversed: ["Reversed", "已冲销"],
   partial: ["Partial", "部分"],
   passed: ["Passed", "已通过"],
   failed: ["Failed", "未通过"],
   matched: ["Matched", "已匹配"],
+  // Every difference on the match was approved; the variance stays on record.
+  variance_approved: ["Variance approved", "差异已批准"],
   mismatch: ["Mismatch", "不一致"],
   not_matched: ["Not matched", "未匹配"],
   variance: ["Variance", "有差异"],
@@ -44,7 +47,67 @@ const statusCodes: Record<string, [string, string]> = {
   available: ["Available", "可用"],
   quarantined: ["Quarantined", "隔离中"],
   on_hold: ["On hold", "已暂停"],
+  // From Today's and the reports' own tables (design audit L6-14), where
+  // held read 已暂停 and 已暂挂, fulfilled 已完成 and 已履约, exception 有差异
+  // and partial 部分履约. Each code now has this one wording.
+  held: ["Held", "已暂停"],
+  overdue: ["Overdue", "已逾期"],
+  confirmed: ["Confirmed", "已确认"],
+  matching: ["Matching", "匹配中"],
+  reviewed: ["Reviewed", "已复核"],
+  resolved: ["Resolved", "已解决"],
+  recorded: ["Recorded", "已登记"],
+  export_ready: ["Export ready", "可导出"],
+  // An approved supplier invoice still to pay (the server's billPaymentStatus).
+  to_pay: ["To pay", "待付款"],
+  paid: ["Paid", "已付款"],
+  partially_settled: ["Partly paid", "部分付款"],
+  settled: ["Paid", "已结清"],
+  void: ["Voided", "已作废"],
+  voided: ["Voided", "已作废"],
+  not_reserved: ["Not reserved", "未预留"],
+  partially_reserved: ["Partially reserved", "部分预留"],
+  fully_reserved: ["Reserved", "已预留"],
+  reserved: ["Reserved", "已预留"],
+  partially_allocated: ["Partially allocated", "部分分配"],
+  ready_to_ship: ["Ready to ship", "可发货"],
+  not_fulfilled: ["Not fulfilled", "未履约"],
+  partially_fulfilled: ["Partially fulfilled", "部分履约"],
+  fully_fulfilled: ["Fulfilled", "已履约"],
+  fulfilled: ["Fulfilled", "已履约"],
+  delivered: ["Delivered", "已交付"],
+  shortage_risk: ["Shortage risk", "缺货风险"],
+  out_of_stock: ["Out of stock", "缺货"],
+  below_safety_stock: ["Below safety stock", "低于安全库存"],
+  below_reorder_point: ["Below reorder point", "低于再订货点"],
+  ok: ["In stock", "库存正常"],
+  high: ["High", "高"],
+  medium: ["Medium", "中"],
+  low: ["Low", "低"],
+  unknown: ["Unknown", "未知"],
+  // An issued customer invoice nothing has been received on yet (the
+  // server's customerInvoicePaymentStatus; partly paid and paid are
+  // partially_settled and settled).
+  to_be_paid: ["To be paid", "待收款"],
 };
+
+// Where one document type words a shared code differently. "Issued" is 已下达
+// for a purchase order (owner's terminology, 2026-11-05) but 已开具 for a
+// customer invoice, as the finance pages say it. Every other type keeps the
+// shared label.
+const documentStatusCodes: Record<string, Record<string, [string, string]>> = {
+  customer_invoice: {
+    issued: ["Issued", "已开具"],
+  },
+};
+
+// The label of a status on one type of document (the type codes Today's
+// recent documents use, such as "customer_invoice"), or undefined when that
+// type words the code as every other page does.
+export function documentStatusLabel(documentType: string, code: string, language: string): string | undefined {
+  const pair = documentStatusCodes[String(documentType || "").trim()]?.[String(code || "").trim()];
+  return pair ? pair[language === "en-US" ? 0 : 1] : undefined;
+}
 
 // Inventory movement types, as the ledger records them.
 const movementTypes: Record<string, [string, string]> = {

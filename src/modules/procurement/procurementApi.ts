@@ -46,6 +46,18 @@ export const procurementApi = {
         body: JSON.stringify(input),
       },
     ),
+  // Opens a draft RFQ (its planned suppliers are marked invited inside
+  // FlowChain; nothing is sent) or cancels one, so its purchase request can be
+  // turned into a purchase order (design audit A7).
+  transitionRfq: (rfqId: string, action: "open" | "cancel", input: { expectedVersion: number; idempotencyKey: string; reason?: string }) =>
+    apiJson<unknown>(
+      `/api/procurement/rfqs/${encodeURIComponent(rfqId)}/${action}`,
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": input.idempotencyKey },
+        body: JSON.stringify(input),
+      },
+    ),
   appendRfqSupplierResponseRevision: (rfqId: string, supplierId: string, input: RfqSupplierResponseCommandInput) =>
     apiJson<RfqSupplierResponseCommandResult>(
       `/api/procurement/rfqs/${encodeURIComponent(rfqId)}/supplier-responses/${encodeURIComponent(supplierId)}/revisions`,

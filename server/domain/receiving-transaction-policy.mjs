@@ -5,6 +5,9 @@ import {
   isPurchaseOrderReceivable,
   isReceivingWorkflowPostable,
 } from './procurement-status-authority.mjs'
+import { itemStockUnit, unitOtherThanStock } from './item-stock-unit.mjs'
+import { isQuarantineRecordMovement } from './inventory-operations-policy.mjs'
+import { sourceDocumentReturnHolds } from './return-source-holds.mjs'
 
 const SCALE = 10_000n
 const ZERO = 0n
@@ -79,10 +82,28 @@ export function replayLedgerWithoutMovement(ledger = [], excludedMovementId) {
   return { found: true, lowest, lowestAtMovementId, finalAfterRemoval: running }
 }
 
+// The ledger of the available stock record at a stock key: every posted
+// movement there except those of the quarantine record that shares the key.
+export function availableRecordLedger(movements = []) {
+  return movements.filter((movement) => !isQuarantineRecordMovement(movement))
+}
+
 export function receivingFulfillmentStatus(lines = []) {
   if (!lines.length || lines.every((line) => receivingDecimalUnits(line.receivedQuantity) <= ZERO)) return 'not_received'
   if (lines.every((line) => receivingDecimalUnits(line.receivedQuantity) >= receivingDecimalUnits(line.orderedQuantity))) return 'fully_received'
   return 'partially_received'
+}
+
+// A purchase order's status from its lines' received quantities, as a
+// receipt (and a supplier return for a replacement, L3-23) leaves them.
+export function purchaseOrderReceiptStatus(lines, currentStatus, baseStatus) {
+  const quantities = lines.map((line) => ({
+    ordered: receivingDecimalUnits(line.orderedQuantity),
+    received: receivingDecimalUnits(line.receivedQuantity),
+  }))
+  if (quantities.length && quantities.every((line) => line.received >= line.ordered)) return 'fully_received'
+  if (quantities.some((line) => line.received > ZERO)) return 'partially_received'
+  return receivingText(baseStatus) || (['partially_received', 'fully_received'].includes(currentStatus) ? 'approved' : currentStatus)
 }
 
 export function receivingWorkflowStatus(po = {}) {
@@ -95,6 +116,21 @@ const balanceWhere = ({ tenantId, sku, warehouseId, locationKey }) => ({ tenantI
 const balanceKey = ({ sku, warehouseId, locationKey }) => `${sku}|${warehouseId || ''}|${locationKey || ''}`
 const safeUnits = (value, blockingIssues, label) => {
   try { return receivingDecimalUnits(value) } catch (error) { blockingIssues.push(issue('RECEIVING_VALIDATION_FAILED', `${label}: ${error.message}`)); return null }
+}
+
+// ---- Unit of measure (design audit L1-02 / L3-01) ----
+// A receipt adds its accepted quantity to the stock balance as it is, and no
+// conversion between units is recorded (item-stock-unit.mjs). So a receiving
+// line posts only when its unit and its purchase order line's unit are the
+// item's stock unit, and the receipt is booked in the stock unit. A unit that
+// is not recorded is not judged.
+function receivingUnitPlan({ item, line, poLine }) {
+  const stockUnit = itemStockUnit(item)
+  const other = unitOtherThanStock(stockUnit, [line.unit, poLine.unit])
+  const issueFound = other
+    ? issue('RECEIVING_UNIT_MISMATCH', `Receiving line ${line.id} is in ${other}, but ${receivingText(line.sku)} is stocked in ${stockUnit} and no conversion between the two is recorded. Only a purchase order line in ${stockUnit} can be received.`, 409, { receivingLineId: line.id, purchaseOrderLineId: poLine.id, sku: receivingText(line.sku), unit: other, stockUnit })
+    : null
+  return { unit: stockUnit || receivingText(line.unit || poLine.unit) || null, issue: issueFound }
 }
 
 export async function buildReceivingPostingPlan({ prisma, tenantId, receivingDocument, purchaseOrder }) {
@@ -121,8 +157,10 @@ export async function buildReceivingPostingPlan({ prisma, tenantId, receivingDoc
     if (!sku || !itemId || sku !== receivingText(poLine.sku) || itemId !== receivingText(poLine.itemId)) {
       blockingIssues.push(issue('RECEIVING_VALIDATION_FAILED', `Receiving line ${line.id} does not match its purchase order item and SKU.`))
     }
-    const item = sku && itemId ? await prisma.item.findFirst({ where: { id: itemId, tenantId, sku }, select: { id: true } }) : null
+    const item = sku && itemId ? await prisma.item.findFirst({ where: { id: itemId, tenantId, sku }, select: { id: true, unit: true, metadata: true } }) : null
     if (!item) blockingIssues.push(issue('RECEIVING_VALIDATION_FAILED', `Item ${itemId} / ${sku} is not valid for this tenant.`))
+    const unitPlan = receivingUnitPlan({ item, line, poLine })
+    if (unitPlan.issue) blockingIssues.push(unitPlan.issue)
     const warehouseId = receivingText(line.warehouseId || receivingDocument.warehouseId)
     const warehouse = warehouseId ? await prisma.warehouse.findFirst({ where: { id: warehouseId, tenantId, status: 'active' }, select: { id: true } }) : null
     if (!warehouse) blockingIssues.push(issue('RECEIVING_VALIDATION_FAILED', `Warehouse ${warehouseId || '(missing)'} is not active for this tenant.`))
@@ -133,7 +171,7 @@ export async function buildReceivingPostingPlan({ prisma, tenantId, receivingDoc
     acceptedByPoLine.set(poLine.id, acceptedInDocument)
     if (previouslyReceived + acceptedInDocument > ordered) blockingIssues.push(issue('RECEIVING_OVER_RECEIPT', `Receiving line ${line.id} exceeds the purchase order quantity.`))
     const location = receivingText(line.location)
-    quantityPlans.push({ line, poLine, sku, itemId, warehouseId, location, locationKey: receivingLocationKey(location), accepted, rejected })
+    quantityPlans.push({ line, poLine, sku, itemId, warehouseId, location, locationKey: receivingLocationKey(location), accepted, rejected, unit: unitPlan.unit })
   }
 
   const inventoryImpacts = []
@@ -174,9 +212,8 @@ export async function buildReceivingReversalPlan({ prisma, tenantId, receivingDo
   // invoice position decides the outcome regardless of stock. Invoice lines
   // carry no tenantId, so the tenant is enforced through the owning invoice.
   //
-  // This refusal is permanent for that receipt, by design. Supplier invoices
-  // have no cancel or void operation, and a supplier credit memo is sourced
-  // from a supplier return, not from the invoice, so neither releases the hold.
+  // A supplier credit memo is sourced from a supplier return, not from the
+  // invoice, so it does not release the hold.
   // Receipt reversal corrects a mistaken posting before anything is committed
   // against it; once an invoice claims the goods, the correction is a supplier
   // return. The message says so rather than pointing at an action that does
@@ -193,12 +230,22 @@ export async function buildReceivingReversalPlan({ prisma, tenantId, receivingDo
       })
     : null
   if (holdingInvoiceLine) {
-    blockingIssues.push(issue('RECEIVING_REVERSAL_BLOCKED_BY_INVOICE', 'A supplier invoice already claims this receipt, so it can no longer be reversed. To send these goods back, use a supplier return.', 409, {
+    blockingIssues.push(issue('RECEIVING_REVERSAL_BLOCKED_BY_INVOICE', 'A supplier invoice already claims this receipt, so it can no longer be reversed. To correct what was received, resolve it on that supplier invoice first; returning goods to a supplier is not available in FlowChain yet.', 409, {
       supplierInvoiceId: holdingInvoiceLine.supplierInvoiceId,
       invoiceNumber: holdingInvoiceLine.supplierInvoice?.invoiceNumber || null,
       invoiceStatus: holdingInvoiceLine.supplierInvoice?.status || null,
       receivingLineId: holdingInvoiceLine.receivingLineId,
     }))
+  }
+  // A supplier return that names this receipt (a draft, one in progress, or
+  // one whose goods already went back) holds it: reversing the receipt would
+  // take goods out of stock that the return also takes out, or leave the
+  // return pointing at a receipt that no longer exists. The return can always
+  // be cancelled, or its dispatch reversed first (L8-07).
+  const returnHolds = await sourceDocumentReturnHolds({ prisma, tenantId, sourceDocumentType: 'ReceivingDocument', sourceLineIds: receivingLineIds })
+  if (returnHolds.length) {
+    const numbers = returnHolds.map((row) => row.requestNumber).join(', ')
+    blockingIssues.push(issue('RECEIVING_REVERSAL_BLOCKED_BY_RETURN', `Supplier return ${numbers} is based on this receipt, so the receipt cannot be reversed. Cancel the return first, reversing its dispatch if it was posted.`, 409, { returnRequests: returnHolds }))
   }
   const receivingLines = new Map(receivingDocument.lines.map((line) => [line.id, line]))
   const poLines = new Map(purchaseOrder.lines.map((line) => [line.id, line]))
@@ -208,12 +255,14 @@ export async function buildReceivingReversalPlan({ prisma, tenantId, receivingDo
   for (const movement of originalMovements) {
     const locationKey = movement.locationKey || receivingLocationKey(movement.location)
     // Same scope and filter as reconcileInventoryBalance, so the replay agrees
-    // with the system's own ledger reconciliation.
-    const ledger = await prisma.inventoryMovement.findMany({
+    // with the system's own ledger reconciliation. Movements of the quarantine
+    // record at the same key are left out: quarantine stock cannot cover an
+    // outbound movement that depended on this receipt (L8-18).
+    const ledger = availableRecordLedger(await prisma.inventoryMovement.findMany({
       where: { tenantId, sku: movement.sku, warehouseId: movement.warehouseId, locationKey, status: 'posted' },
-      select: { id: true, quantityIn: true, quantityOut: true, adjustmentQty: true },
+      select: { id: true, quantityIn: true, quantityOut: true, adjustmentQty: true, movementType: true, metadata: true },
       orderBy: [{ occurredAt: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
-    })
+    }))
     const replay = replayLedgerWithoutMovement(ledger, movement.id)
     const downstreamSources = [movement.id, receivingDocument.id]
     const [consumedSerial, consumedLot] = await Promise.all([

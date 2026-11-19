@@ -18,6 +18,7 @@ import { createCustomerInvoiceDocumentReadService } from "../domain/customer-inv
 import { PilotIdentityError } from "../domain/pilot-identity.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { notifyApprovalWaiting } from "../notifications/approval-notifier.mjs";
+import { raiseInvoiceExceptionDecision } from "../services/invoice-exception-decision.mjs";
 
 const capabilityIds = [
   "supplier-invoice",
@@ -134,8 +135,10 @@ export async function handleOperationalFinanceRoute(ctx) {
     const { read, command, o2cRead, o2cCommand, settlementRead, settlementCommand, transferCommand, advanceCommand, payment, invoiceDocuments } = await services(ctx);
     if (ctx.req.method === "GET" && path === "/api/finance/entry-data") {
       const [p2p, o2c, settlement] = await Promise.all([
-        read.entryData(ctx),
-        o2cRead.entryData(ctx),
+        // ?po=, ?receipt= or ?supplier=: the supplier invoice form (L2-12).
+        read.entryData(ctx, query(ctx.url)),
+        // ?salesOrder= or ?shipment=: the customer invoice form opened from one.
+        o2cRead.entryData(ctx, query(ctx.url)),
         settlementRead.entryData(ctx),
       ]);
       ctx.send(ctx.res, 200, { ...p2p, ...o2c, ...settlement, capabilities: capabilities(ctx.env || process.env) });
@@ -482,6 +485,8 @@ export async function handleOperationalFinanceRoute(ctx) {
           documentType: "supplier_invoice",
           documentId: result?.entityId,
         });
+        // A match that holds the bill raises its decision on Today at once.
+        void raiseInvoiceExceptionDecision(ctx, result?.entityId || invoiceId);
         return true;
       }
       if (ctx.req.method === "POST" && action === "approve-preview") {
@@ -584,19 +589,19 @@ export async function handleOperationalFinanceRoute(ctx) {
     }
 
     const memoMatch = path.match(
-      /^\/api\/finance\/supplier-credit-memos\/([^/]+)\/(approve-preview|approve)$/,
+      /^\/api\/finance\/supplier-credit-memos\/([^/]+)\/(approve-preview|approve|cancel-preview|cancel)$/,
     );
     if (memoMatch && ctx.req.method === "POST") {
       if (!ensureCapability(ctx, "supplier-credit-memo")) return true;
       const memoId = decodeURIComponent(memoMatch[1]);
       const body = await ctx.readBody(ctx.req);
-      ctx.send(
-        ctx.res,
-        200,
-        memoMatch[2] === "approve-preview"
-          ? await command.previewApproveSupplierCreditMemo(memoId, body, ctx)
-          : await command.approveSupplierCreditMemo(memoId, body, ctx),
-      );
+      const method = {
+        "approve-preview": "previewApproveSupplierCreditMemo",
+        approve: "approveSupplierCreditMemo",
+        "cancel-preview": "previewCancelSupplierCreditMemo",
+        cancel: "cancelSupplierCreditMemo",
+      }[memoMatch[2]];
+      ctx.send(ctx.res, 200, await command[method](memoId, body, ctx));
       return true;
     }
 
@@ -621,7 +626,7 @@ export async function handleOperationalFinanceRoute(ctx) {
     }
 
     const customerInvoiceMatch = path.match(
-      /^\/api\/finance\/customer-invoices\/([^/]+)(?:\/(submit-preview|submit|approve-preview|approve|issue-preview|issue))?$/,
+      /^\/api\/finance\/customer-invoices\/([^/]+)(?:\/(submit-preview|submit|approve-preview|approve|issue-preview|issue|cancel-preview|cancel))?$/,
     );
     if (customerInvoiceMatch) {
       const invoiceId = decodeURIComponent(customerInvoiceMatch[1]);
@@ -647,6 +652,9 @@ export async function handleOperationalFinanceRoute(ctx) {
           approve: "approveCustomerInvoice",
           "issue-preview": "previewIssueCustomerInvoice",
           issue: "issueCustomerInvoice",
+          // A draft or submitted invoice that was never issued, with a reason.
+          "cancel-preview": "previewCancelCustomerInvoice",
+          cancel: "cancelCustomerInvoice",
         };
         ctx.send(
           ctx.res,
@@ -697,19 +705,19 @@ export async function handleOperationalFinanceRoute(ctx) {
     }
 
     const customerCreditMatch = path.match(
-      /^\/api\/finance\/customer-credit-notes\/([^/]+)\/(approve-preview|approve)$/,
+      /^\/api\/finance\/customer-credit-notes\/([^/]+)\/(approve-preview|approve|cancel-preview|cancel)$/,
     );
     if (customerCreditMatch && ctx.req.method === "POST") {
       if (!ensureCapability(ctx, "customer-credit-note")) return true;
       const noteId = decodeURIComponent(customerCreditMatch[1]);
       const body = await ctx.readBody(ctx.req);
-      ctx.send(
-        ctx.res,
-        200,
-        customerCreditMatch[2] === "approve-preview"
-          ? await o2cCommand.previewApproveCustomerCreditNote(noteId, body, ctx)
-          : await o2cCommand.approveCustomerCreditNote(noteId, body, ctx),
-      );
+      const method = {
+        "approve-preview": "previewApproveCustomerCreditNote",
+        approve: "approveCustomerCreditNote",
+        "cancel-preview": "previewCancelCustomerCreditNote",
+        cancel: "cancelCustomerCreditNote",
+      }[customerCreditMatch[2]];
+      ctx.send(ctx.res, 200, await o2cCommand[method](noteId, body, ctx));
       return true;
     }
 

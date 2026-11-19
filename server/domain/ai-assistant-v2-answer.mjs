@@ -41,6 +41,14 @@ export function assistantV2Hidden(facts) {
   return sources.length || amountsOn.length ? { sources, amountsOn } : null
 }
 
+// The sources whose read stopped at the repository's limit, each with that
+// limit (design audit 2026-11-15, L5-05): the model reads them as partialSources
+// and says a count over one covers only the latest records. null when none.
+export function assistantV2Partial(facts) {
+  const cut = array(facts?.limitations).filter((row) => row?.code === 'truncated' && text(row.source))
+  return cut.length ? { sources: cut.map((row) => ({ source: text(row.source), ...(Number(row.limit) > 0 ? { limit: Number(row.limit) } : {}) })), note: 'Only the latest records of these were read: say a count from one covers those.' } : null
+}
+
 // What each data tool reads, for the progress line and the answer's checked
 // sources. A tool not listed reads "records".
 const TOOL_SOURCES = Object.freeze({
@@ -50,7 +58,18 @@ const TOOL_SOURCES = Object.freeze({
   list_supplier_invoices: 'supplier_invoices', list_purchase_requests: 'purchase_requests', list_rfqs: 'rfqs', list_suppliers: 'suppliers', search_documents: 'documents',
   list_contracts: 'contracts', supplier_risks: 'supplier_risks',
 })
-const PROGRESS_SOURCES = Object.freeze({ search_records: 'records', calculate: 'calculation', list_receivables: 'receivables', workspace_summary: 'workspace' })
+const PROGRESS_SOURCES = Object.freeze({ search_records: 'records', calculate: 'calculation', list_receivables: 'receivables', workspace_summary: 'workspace', supplier_payables: 'payables', cash_movements: 'payments', gross_profit: 'gross_profit' })
+// The sources line names every tool that read business data; a calculation
+// or the clock reads none.
+const BASIS_SOURCES = Object.freeze({
+  ...TOOL_SOURCES,
+  inventory_value: 'inventory', stock_on_hand: 'inventory', optimize_order_plan: 'inventory', order_quantity_costs: 'inventory', suggest_purchase_lines: 'inventory', suggest_purchase_request: 'inventory',
+  item_suppliers: 'suppliers', rfq_quotes: 'rfqs', sales_summary: 'sales_orders', list_receivables: 'receivables',
+  supplier_payables: 'payables', cash_movements: 'payments', gross_profit: 'gross_profit', stock_movements: 'inventory', list_shipments: 'sales_orders',
+  record_history: 'audit',
+  records_missing_data: 'items', setup_status: 'items', suggest_setup_records: 'items',
+  workspace_summary: 'overview', attention_list: 'overview', decision_items: 'overview', decision_history: 'overview', search_records: 'overview',
+})
 export const assistantV2ProgressSources = (names) => [...new Set(array(names).map((name) => PROGRESS_SOURCES[name] || TOOL_SOURCES[name] || 'records'))]
 
 // The page each kind of record opens. A document has none (the knowledge
@@ -76,7 +95,9 @@ const firstSentence = (value) => text(value).split(/(?<=[.!?。！？])\s*/u)[0]
 // relied on as evidence and links, built from the refs the tools returned.
 // `summary` is the answer's text; `records` the refs the text cites; `calls`
 // the loop's tool calls; `results` its data results.
-export function presentAssistantV2Answer({ summary = '', records = [], refs = [], calls = [], facts = null, language, query = '', results = [] }) {
+const derivedOf = (figures) => array(figures).reduce((total, row) => total + (Number(row?.derived) || 0), 0)
+
+export function presentAssistantV2Answer({ summary = '', records = [], refs = [], calls = [], facts = null, language, query = '', results = [], figures = [] }) {
   const cited = aiModelFirstCitedRefs(records, refs)
   // A cited document names the sections this answer's searches returned from
   // it (the last part of each heading), so the reader sees where to look.
@@ -109,6 +130,21 @@ export function presentAssistantV2Answer({ summary = '', records = [], refs = []
     skill: { id: 'assistant_v2', asOf: facts?.asOf || null, timezone: facts?.timezone || null },
     checked,
     checkedLabel: checked.length ? aiSkillText('answer.checked', language, { sources: aiSkillList(checked.map((source) => aiSkillText(`source.${source}`, language)), language) }) : '',
+    // The sources line under the answer: what it read, as of which day, and
+    // how many of its figures (records, names, dates, numbers) the check read
+    // against the results, and how many it could not match (flagged).
+    basis: {
+      sources: [...new Set(array(calls).filter((call) => call.status === 'ok').map((call) => BASIS_SOURCES[call.tool]).filter(Boolean))].map((source) => aiSkillText(`source.${source}`, language)),
+      asOf: facts?.asOf || null,
+      figures: array(figures).reduce((total, row) => total + (Number(row?.figures) || 0), 0),
+      flagged: array(figures).reduce((total, row) => total + (Number(row?.flagged) || 0), 0),
+      // Figures passed only as worked out from the answer's own figures,
+      // counted apart from those found in the records (design audit L5-03);
+      // left out when there are none.
+      ...(derivedOf(figures) ? { derived: derivedOf(figures) } : {}),
+      // The tools that answered, for feedback on this answer (not shown).
+      tools: [...new Set(array(calls).filter((call) => call.status === 'ok').map((call) => text(call.tool)).filter(Boolean))].slice(0, 20),
+    },
     scope: { module: 'workspace', timeRange: facts?.asOf || undefined, dataScopeLabel: scopeLabel },
     conclusion: { title: firstSentence(summary), summary: text(summary), severity: 'info', confidence: 'medium' },
     keyEvidence,

@@ -1,10 +1,11 @@
-import { AI_TOOL_LIMITS, aiToolList, aiToolRef, aiToolSupplier, defineAiTool } from './ai-read-tool-contract.mjs'
+import { AI_TOOL_LIMITS, aiStockSku, aiToolList, aiToolRef, aiToolSupplier, defineAiTool } from './ai-read-tool-contract.mjs'
 import { capabilityForEnvironment } from './capability-registry.mjs'
 import { createContractReadService } from './contract-read-service.mjs'
 import { createOperationalFinanceO2cReadService } from './operational-finance-o2c-read-service.mjs'
 import { createPriceHistoryReadService } from './price-history-read-service.mjs'
-import { createReorderListReadService } from './reorder-list-read-service.mjs'
+import { allocationTruncatedSubjects, createReorderListReadService } from './reorder-list-read-service.mjs'
 import { DEMAND_WINDOW_DAYS } from './reorder-list.mjs'
+import { forecastClientFromEnv } from './reorder-point-forecast.mjs'
 import { addCalendarDays } from '../../shared/purchase-request-prefill.mjs'
 import { SUPPLIER_ISSUE_TYPES, createSupplierInsightsReadService } from './supplier-insights.mjs'
 import { aiSkillSpendPeriod } from './ai-skill-spend-analysis.mjs'
@@ -29,6 +30,7 @@ import { knowledgeProviderEnv } from './ai-knowledge-config.mjs'
 const text = (value) => String(value ?? '').trim()
 const array = (value) => (Array.isArray(value) ? value : [])
 const fold = (value) => text(value).toLowerCase()
+const stockRowOf = (facts, sku) => array(facts?.inventory?.rows).find((row) => fold(row.sku) === fold(sku)) || null
 const limitParam = { type: 'integer', minimum: 1, maximum: AI_TOOL_LIMITS.maxRows, description: `How many rows to return, ${AI_TOOL_LIMITS.rows} by default.` }
 const can = (context, permission) => Boolean(context?.actor?.permissionCodes?.has?.(permission))
 const serviceOf = (context, name, create) => context?.routeContext?.aiReadServices?.[name] || create({ prisma: context.prisma, env: context.routeContext?.env || process.env, now: () => context.now })
@@ -95,23 +97,44 @@ const suggestionFacts = (suggestion) => ({
 // from the row's supplier, never from the row itself.
 const reorderList = defineAiTool({
   name: 'reorder_list',
-  description: 'The reorder list as the inventory page shows it: the items to order now or soon, by the day they must be ordered, with the preferred supplier, its lead time and minimum order quantity, and the quantity it suggests (raised to the minimum when the shortfall is smaller). The stock position is on hand minus reserved plus every open purchase order line, whatever its due date; a line past its due date is marked late and still counts. Flags name late lines and lines it could not count. counts gives how many rows are to order now and how many suggested quantities were raised to the supplier minimum: use them instead of counting rows. Two dates, never one for the other: orderByDate is the last day to place the order (最晚下单日); needByDate, on a row to order now, is when the goods would arrive if ordered today, today plus the lead time (需求日期); a row not due has none, so give it no need-by date. Filter by SKU or supplier. Transfers between warehouses are not considered.',
+  description: 'The reorder list as the inventory page shows it: the items to order now or soon, by the day they must be ordered, with the preferred supplier, its lead time and minimum order quantity, and the quantity it suggests, up to orderUpTo (orderUpToSource: recorded, or assumed as an app default). The stock position is on hand minus reserved, plus every open purchase order line (drafts included) and open purchase request, minus backorders (sales orders not reserved); a late line still counts and is marked late. Safety stock is judged on the stock available now (on hand less reserved), the reorder point on the stock position (adding open orders): an item can be below safety stock while its open orders cover the reorder point. safetyStock and belowSafetyStock give that judgement for each row. Flags name late lines and lines it could not count. counts gives, over every row of the list whatever SKU or supplier is asked, how many are to order now, due within 7 and within 30 days (order-now included), without an order-by date, and raised to the supplier minimum; orderByRange gives the earliest and latest order-by dates of every row: use them instead of counting or reading a range off the rows shown. Rows come a page at a time (shownFrom to shownTo of total); due narrows them and offset gives the next page. Two dates, never one for the other: orderByDate is the last day to place the order (最晚下单日); needByDate, on a row to order now, is when the goods would arrive if ordered today, today plus the lead time (需求日期); a row not due has none, so give it no need-by date. Filter by SKU or supplier. forecast: true adds the forecasting model\'s reorder point (forecastReorderPoint). Transfers between warehouses are not considered.',
   parameters: {
-    sku: { type: 'string', description: 'Only this SKU.' },
+    sku: { type: 'string', description: 'Only this item: its SKU or its name as the records write it.' },
     supplier: { type: 'string', description: 'Only items whose preferred supplier is this one: a name or code.' },
+    due: { type: 'string', enum: ['now', 'within_7_days', 'within_30_days', 'all'], description: 'Only items to order now, or by an order-by date within 7 or 30 days (order-now items included); all by default.' },
+    offset: { type: 'integer', minimum: 0, maximum: 10000, description: 'Rows to skip, for the next page ("the next 20": offset 20).' },
+    forecast: { type: 'boolean' },
     limit: limitParam,
   },
   available: (facts, context) => Boolean(facts?.inventory) && Boolean(context?.actor) && can(context, 'inventory.balance.read'),
   async run(args, { facts, context }) {
     const { access, allocationContext, business } = await scopedBusiness(context)
     const allocation = buildRuntimeInventoryAllocation(access.collections.inventoryItems ? allocationContext : business)
+    const route = context.routeContext || {}
+    const forecastClient = route.forecastClient !== undefined ? route.forecastClient : forecastClientFromEnv(route.env || process.env)
     const list = await serviceOf(context, 'reorderList', createReorderListReadService).read({
       tenantId: context.tenantId, warehouseIds: access.warehouseIds ?? null, today: facts.today, timeZone: facts.timezone,
-      allocationRows: allocation.availability, showPurchaseOrders: Boolean(access.collections.purchaseOrders),
-      truncatedSubjects: array(allocationContext.truncatedSubjects).filter((entry) => ['inventory_items', 'sales_orders', 'purchase_orders'].includes(entry?.subject)),
+      allocationRows: allocation.availability, showPurchaseOrders: Boolean(access.collections.purchaseOrders), showPurchaseRequests: Boolean(access.collections.purchaseRequests),
+      truncatedSubjects: allocationTruncatedSubjects(allocationContext),
+      // The forecasting model's reorder point the page shows (TimesFM, when
+      // FLOWCHAIN_FORECAST_URL is set), only when asked: it reads two years of
+      // shipments (design audit 2026-11-15, L5-25: the page showed it, the
+      // assistant could not).
+      forecastClient: args.forecast ? forecastClient : null,
     })
     let listed = array(list.rows)
-    if (args.sku) listed = listed.filter((row) => fold(row.sku) === fold(args.sku))
+    // The whole list, before any filter: its counts and order-by range
+    // (2026-11-08: a SKU filter that matched nothing gave "0 to order now").
+    const everyRow = listed
+    if (args.sku) {
+      // By SKU or the item's name; an item it cannot find is said to be
+      // missing, never an empty list ("蛋糕架" against English names).
+      const onList = aiStockSku({ inventory: { rows: listed.map((row) => ({ sku: row.sku, itemName: row.itemName || row.name })) } }, args.sku)
+      const found = onList.error === 'not_found' ? aiStockSku(facts, args.sku) : onList
+      if (found.error === 'not_found') return { error: 'not_found', details: ['No item has that SKU or name. Names are as the records write them, which may be in another language than the question.'] }
+      if (found.error) return found
+      listed = listed.filter((row) => fold(row.sku) === fold(found.sku))
+    }
     if (args.supplier) {
       // Among the suppliers the user may read when the facts hold them;
       // otherwise among the preferred suppliers the list names.
@@ -121,17 +144,29 @@ const reorderList = defineAiTool({
       listed = listed.filter((row) => text(row.supplier?.id) === found.supplier.id)
     }
     const rows = listed.map((row) => ({
-      ...primitives(row, ['sku', 'itemName', 'name', 'unit', 'orderByDate', 'orderNow', 'daysUntilOrderBy', 'onHand', 'reserved', 'incoming', 'position', 'reorderPoint', 'shortfall']),
-      averageDailyDemand: row.demand?.averageDailyDemand ?? null,
+      ...primitives(row, ['sku', 'itemName', 'name', 'unit', 'orderByDate', 'orderNow', 'daysUntilOrderBy', 'onHand', 'reserved', 'incoming', 'requested', 'backorders', 'position', 'reorderPoint', 'shortfall']),
+      // The level requestQuantity orders up to and where it comes from
+      // (recorded on the item, or assumed: reorder point plus a week of demand).
+      orderUpTo: row.orderUpTo?.level ?? null,
+      orderUpToSource: row.orderUpTo?.source ?? null,
+      lotSize: row.lotSize ?? null,
+      // The open purchase requests already asking for the item, by number, for
+      // a reader who may see them (design audit L5-06).
+      requests: array(row.requests).map((request) => text(request.number)).filter(Boolean),
+      // One decimal as the model reads it ("7.1556 件" was copied as is).
+      averageDailyDemand: row.demand?.averageDailyDemand === null || row.demand?.averageDailyDemand === undefined ? null : Math.round(Number(row.demand.averageDailyDemand) * 10) / 10,
       supplier: text(row.supplier?.name) || null,
-      supplierId: text(row.supplier?.id) || null,
-      leadTimeDays: row.supplier?.leadTimeDays ?? null,
+      // availableToday is the stock that judgement uses, given so an answer
+      // can say it (2026-11-09 on Flash: "48 pcs available" in a reorder
+      // answer was flagged, as no result held it).
+      ...(() => { const stock = stockRowOf(facts, row.sku); const safety = stock?.safetyStock ?? null; const available = Number.isFinite(Number(row.onHand)) ? Number(row.onHand) - (Number(row.reserved) || 0) : null; return { safetyStock: safety, availableToday: available, belowSafetyStock: safety !== null && available !== null ? available < safety : null } })(),
+      leadTimeDays: row.leadTimeDays ?? row.supplier?.leadTimeDays ?? null,
       // When an order placed today would arrive (the request's need-by date),
       // beside orderByDate, the last day to order: on 2026-11-04 an answer
       // gave the order-by day as the need-by day.
       // Only on a row to order now: for one not due, today plus the lead time
       // fell before its order-by day plus the lead time and read as wrong.
-      needByDate: row.orderNow === true && Number.isInteger(row.supplier?.leadTimeDays) && /^\d{4}-\d{2}-\d{2}$/.test(text(facts.today)) ? addCalendarDays(facts.today, row.supplier.leadTimeDays) : null,
+      needByDate: row.orderNow === true && Number.isInteger(row.leadTimeDays ?? row.supplier?.leadTimeDays) && /^\d{4}-\d{2}-\d{2}$/.test(text(facts.today)) ? addCalendarDays(facts.today, row.leadTimeDays ?? row.supplier.leadTimeDays) : null,
       minimumOrderQuantity: row.supplier?.minimumOrderQuantity ?? null,
       moqUnit: row.supplier?.moqUnit ?? null,
       requestQuantity: row.purchaseRequest?.quantity ?? null,
@@ -142,14 +177,40 @@ const reorderList = defineAiTool({
       // (reorder-point-suggestion.mjs). A suggestion only: the row is dated
       // by the recorded reorder point until a person changes it on the item.
       suggestedReorderPoint: row.reorderPointSuggestion?.suggestedReorderPoint ?? null,
+      ...(args.forecast ? { forecastReorderPoint: row.reorderPointForecast?.reorderPoint ?? null } : {}),
       reorderPointSuggestion: row.reorderPointSuggestion ? suggestionFacts(row.reorderPointSuggestion) : null,
       ref: aiToolRef('item', row.itemId || row.purchaseRequest?.itemId || row.sku, row.sku),
     }))
     rows.sort((a, b) => text(a.orderByDate || '9999').localeCompare(text(b.orderByDate || '9999')) || text(a.sku).localeCompare(text(b.sku)))
     // Counts over every row, so an answer reads them instead of counting
     // (2026-11-07: "10 of the 12 were raised to the minimum" when 11 were).
-    const counts = { orderNow: rows.filter((row) => row.orderNow === true).length, raisedToMinimum: rows.filter((row) => row.raisedToMinimum).length }
-    return { asOf: facts.asOf, summary: list.summary && typeof list.summary === 'object' ? primitives(list.summary, Object.keys(list.summary)) : null, notJudged: array(list.notJudged).length, limitations: array(list.dataLimitations), counts, demandWindowDays: DEMAND_WINDOW_DAYS, ...aiToolList(rows, args.limit) }
+    // Counts and the order-by range over every row, so an answer about the
+    // rows it did not read uses them (2026-11-08: "the other 195 are due
+    // Nov 10 to Nov 16" came from the first 20 rows, soonest first).
+    const today = text(facts.today).slice(0, 10)
+    const within = (row, days) => row.orderNow === true || (Boolean(row.orderByDate) && /^\d{4}-\d{2}-\d{2}$/.test(today) && text(row.orderByDate) <= addCalendarDays(today, days))
+    const dated = everyRow.map((row) => text(row.orderByDate)).filter(Boolean).sort()
+    const counts = {
+      orderNow: everyRow.filter((row) => row.orderNow === true).length,
+      dueWithin7Days: everyRow.filter((row) => within(row, 7)).length,
+      dueWithin30Days: everyRow.filter((row) => within(row, 30)).length,
+      noOrderByDate: everyRow.filter((row) => !row.orderByDate).length,
+      raisedToMinimum: everyRow.filter((row) => Boolean(row.purchaseRequest?.raisedToMinimum)).length,
+    }
+    const windowed = args.due === 'now' ? rows.filter((row) => row.orderNow === true) : args.due === 'within_7_days' ? rows.filter((row) => within(row, 7)) : args.due === 'within_30_days' ? rows.filter((row) => within(row, 30)) : rows
+    // A page: rows are about a kilobyte each, so 50 at once is too large for
+    // an answer; the next ones come with offset (2026-11-08: "the detail of
+    // the 195" could not be read).
+    const offset = Math.min(Math.max(0, Number(args.offset) || 0), windowed.length)
+    const page = aiToolList(windowed.slice(offset), args.limit)
+    return {
+      asOf: facts.asOf, summary: list.summary && typeof list.summary === 'object' ? primitives(list.summary, Object.keys(list.summary)) : null, notJudged: array(list.notJudged).length, limitations: array(list.dataLimitations), counts,
+      orderByRange: dated.length ? { earliest: dated[0], latest: dated.at(-1) } : null,
+      forecastAvailable: Boolean(forecastClient),
+      ...(args.forecast && list.forecast ? { forecast: primitives(list.forecast, ["status", "model", "error"]) } : {}),
+      demandWindowDays: DEMAND_WINDOW_DAYS, dueWindowsInDays: [7, 30],
+      ...page, total: windowed.length, shownFrom: page.rows.length ? offset + 1 : 0, shownTo: offset + page.rows.length, more: Math.max(0, windowed.length - offset - page.rows.length),
+    }
   },
 })
 
@@ -234,28 +295,42 @@ const listReceivables = defineAiTool({
 // top customers and best-selling items had no tool, on two years of invoices).
 // Invoices dated in the period, not drafts or cancelled, before tax; credit
 // notes are not subtracted. Amounts are never added across currencies.
-const SALES_PERIODS = ['this_month', 'last_month', 'this_quarter', 'last_quarter', 'this_year', 'last_year', 'last_30_days', 'last_90_days', 'last_12_months']
+export const SALES_PERIODS = ['this_month', 'last_month', 'this_quarter', 'last_quarter', 'this_year', 'last_year', 'last_30_days', 'last_90_days', 'last_12_months']
 const SALES_DAYS = Object.freeze({ last_30_days: 30, last_90_days: 90, last_12_months: 365 })
 const SALES_INVOICES_MAX = 20000
-const SALES_BASIS = 'Customer invoices dated in the period, not drafts or cancelled, before tax. Credit notes are not subtracted.'
+export const SALES_BASIS = 'Customer invoices dated in the period, not drafts or cancelled, before tax. Credit notes are not subtracted.'
 const money2 = (value) => Math.round(value * 100) / 100
 const share = (part, whole) => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : null)
-const salesDay = (value) => (value instanceof Date ? value.toISOString() : text(value)).slice(0, 10)
-function salesRange(args, today) {
+export const salesDay = (value) => (value instanceof Date ? value.toISOString() : text(value)).slice(0, 10)
+export function salesRange(args, today) {
   if (args.from || args.to) return args.from && args.to && args.from <= args.to ? { from: args.from, to: args.to } : null
   const period = args.period || 'last_12_months'
   return aiSkillSpendPeriod(SALES_DAYS[period] ? { kind: 'last_days', days: SALES_DAYS[period] } : { kind: period }, today)
 }
+// The item a sales question names, by its SKU, its name or its item id; an
+// SKU no item holds any more is counted as asked (2026-11-12 on Flash:
+// "84879 在 2026 年 10 月卖了多少件" came back as 0 invoices and 0 units, where
+// the invoices hold 611: the lines were matched on the exact SKU only).
+export function salesItem(facts, value) {
+  const items = [...array(facts.inventory?.rows), ...array(facts.inventory?.masterOnly)]
+  const byId = items.find((row) => row.itemId && fold(row.itemId) === fold(value))
+  if (byId) return { sku: text(byId.sku), itemId: text(byId.itemId) }
+  const found = aiStockSku(facts, value)
+  if (found.error) return found
+  return { sku: text(found.sku), itemId: text(items.find((row) => fold(row.sku) === fold(found.sku))?.itemId) || null }
+}
 const salesSummary = defineAiTool({
   name: 'sales_summary',
-  description: 'Completed sales from customer invoices over a period: the total, and the largest customers or items, or each month, by invoiced amount with each one\'s share (and, for customers and items, a rank, 1 the largest, with runningAmount and runningSharePercent: the rows up to and including it together, so the top N together are the figures at rank N). Invoices dated in the period, not drafts or cancelled, before tax; credit notes are not subtracted. For "last month\'s sales", "our top customers this quarter" or "which products sold most".',
+  description: 'Completed sales from customer invoices over a period: the total, and the largest customers or items, or each month, by invoiced amount with each one\'s share (and, for customers and items, a rank, 1 the largest, with runningAmount and runningSharePercent: the rows up to and including it together, so the top N together are the figures at rank N). rankBy quantity ranks items by units sold: for "sold the most units", "bought the most of", 卖得最多/买得最多 (a count of pieces, not money). Invoices dated in the period, not drafts or cancelled, before tax; credit notes are not subtracted. For "last month\'s sales", "our top customers this quarter" or "which products sold most".',
   parameters: {
     by: { type: 'string', enum: ['customer', 'item', 'month'], description: 'customer (default), item or month.' },
     period: { type: 'string', enum: SALES_PERIODS, description: 'Counted from the workspace day; last_12_months by default.' },
-    from: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'A first day, with to, instead of period.' },
+    from: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'A first day, with to, instead of period; the same day as to for one day\'s sales.' },
     to: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'The last day, included.' },
     customer: { type: 'string', description: 'Only this customer (part of its name).' },
-    sku: { type: 'string', description: 'Only this item.' },
+    sku: { type: 'string', description: 'Only this item: its SKU (or its name).' },
+    unsold: { type: 'boolean', description: 'Instead of sales: the items with stock on hand that sold nothing in the period (no invoice line in any currency), most stock first. For "what has not sold in 30 days", 没卖出去的, slow movers.' },
+    rankBy: { type: 'string', enum: ['amount', 'quantity'], description: 'With by item: rank by invoiced amount (default) or by quantity sold ("the most of" an item is quantity).' },
     currency: { type: 'string', pattern: '^[A-Z]{3}$', description: 'A currency code; the workspace currency by default.' },
     limit: limitParam,
   },
@@ -263,6 +338,10 @@ const salesSummary = defineAiTool({
   async run(args, { facts, context }) {
     const range = salesRange(args, salesDay(facts.today || facts.asOf))
     if (!range) return { error: 'invalid_period' }
+    const item = args.sku ? salesItem(facts, args.sku) : null
+    if (item?.error === 'ambiguous') return { error: 'ambiguous', candidates: item.candidates }
+    const sku = item ? item.sku || text(args.sku) : null
+    const lineOf = (line) => (item?.itemId && text(line.itemId) === item.itemId) || fold(line.sku) === fold(sku)
     const found = array(await context.prisma.customerInvoice.findMany({
       where: { tenantId: context.tenantId, status: { notIn: ['draft', 'cancelled'] }, invoiceDate: { gte: new Date(`${range.from}T00:00:00Z`), lt: new Date(`${addCalendarDays(range.to, 1)}T00:00:00Z`) } },
       select: { id: true, customerNameSnapshot: true, invoiceDate: true, subtotalAmount: true, currency: true, lines: { select: { itemId: true, sku: true, itemName: true, quantity: true, unit: true, lineAmount: true } } },
@@ -270,6 +349,24 @@ const salesSummary = defineAiTool({
     }))
     let invoices = found.slice(0, SALES_INVOICES_MAX).map((row) => ({ id: text(row.id), customer: text(row.customerNameSnapshot) || null, day: salesDay(row.invoiceDate), amount: Number(row.subtotalAmount) || 0, currency: text(row.currency).toUpperCase() || null, lines: array(row.lines) }))
     if (args.customer) invoices = invoices.filter((row) => fold(row.customer).includes(fold(args.customer)))
+    // The stocked items no invoice of the period sold, in any currency
+    // (2026-11-12 on Flash: "最近 30 天哪些商品一件都没卖出去？" had no tool, and
+    // the answer listed only the unsold items below safety stock).
+    if (args.unsold) {
+      const soldIds = new Set(invoices.flatMap((row) => row.lines.map((line) => text(line.itemId))).filter(Boolean))
+      const soldSkus = new Set(invoices.flatMap((row) => row.lines.map((line) => fold(line.sku))).filter(Boolean))
+      const unsold = array(facts.inventory?.rows)
+        .filter((row) => Number(row.onHand) > 0 && !(row.itemId && soldIds.has(text(row.itemId))) && !soldSkus.has(fold(row.sku)))
+        .sort((a, b) => Number(b.onHand) - Number(a.onHand) || text(a.sku).localeCompare(text(b.sku)))
+        .map((row) => ({ sku: row.sku, itemName: row.itemName || null, onHand: Number(row.onHand), unit: row.unit || null, ref: aiToolRef('item', row.itemId || row.sku, row.sku) }))
+      return {
+        period: range, basis: `Items with stock on hand and no line on any customer invoice dated in the period. ${SALES_BASIS}`, unsold: true,
+        stockedItems: array(facts.inventory?.rows).filter((row) => Number(row.onHand) > 0).length,
+        ...(args.customer ? { customer: args.customer } : {}),
+        ...(found.length > SALES_INVOICES_MAX ? { onlyFirstInvoices: SALES_INVOICES_MAX } : {}),
+        ...aiToolList(unsold, args.limit),
+      }
+    }
     const currencies = new Map()
     for (const row of invoices) {
       const entry = currencies.get(row.currency) || { currency: row.currency, invoices: 0, amount: 0 }
@@ -280,8 +377,8 @@ const salesSummary = defineAiTool({
     const workspace = text(facts.currency).toUpperCase()
     const currency = args.currency || (currencies.has(workspace) ? workspace : [...currencies.values()].sort((a, b) => b.amount - a.amount)[0]?.currency) || workspace || null
     // Each sale counted: the invoice, or its lines for one item.
-    const sales = invoices.filter((row) => row.currency === currency).flatMap((row) => (args.sku || args.by === 'item'
-      ? row.lines.filter((line) => !args.sku || fold(line.sku) === fold(args.sku)).map((line) => ({ invoice: row.id, customer: row.customer, day: row.day, amount: Number(line.lineAmount) || 0, quantity: Number(line.quantity) || 0, sku: text(line.sku), itemName: text(line.itemName) || null, unit: text(line.unit) || null, itemId: text(line.itemId) || null }))
+    const sales = invoices.filter((row) => row.currency === currency).flatMap((row) => (sku || args.by === 'item'
+      ? row.lines.filter((line) => !sku || lineOf(line)).map((line) => ({ invoice: row.id, customer: row.customer, day: row.day, amount: Number(line.lineAmount) || 0, quantity: Number(line.quantity) || 0, sku: text(line.sku), itemName: text(line.itemName) || null, unit: text(line.unit) || null, itemId: text(line.itemId) || null }))
       : [{ invoice: row.id, customer: row.customer, day: row.day, amount: row.amount }]))
     const total = sales.reduce((sum, row) => sum + row.amount, 0)
     const by = args.by || 'customer'
@@ -297,9 +394,13 @@ const salesSummary = defineAiTool({
     // Customers and items, largest first, carry the share of all the rows up
     // to them (2026-11-07: "前五大客户合计" was summed by the model, written as
     // 25.4% and corrected to 29.4% in the same answer).
+    // Items may rank by quantity sold (2026-11-09 on Flash: "which product sold
+    // the most units" named the top earner, 1,969 units, over one that sold
+    // 3,020 for less).
+    const byQuantity = by === 'item' && args.rankBy === 'quantity'
     let running = 0
     const rows = [...groups.values()]
-      .sort(by === 'month' ? (a, b) => a.key.localeCompare(b.key) : (a, b) => b.amount - a.amount || a.key.localeCompare(b.key))
+      .sort(by === 'month' ? (a, b) => a.key.localeCompare(b.key) : byQuantity ? (a, b) => b.quantity - a.quantity || b.amount - a.amount || a.key.localeCompare(b.key) : (a, b) => b.amount - a.amount || a.key.localeCompare(b.key))
       .map((entry, index) => ({
         ...(by === 'month' ? {} : { rank: index + 1 }),
         ...(by === 'item' ? { sku: entry.row.sku, itemName: entry.row.itemName, quantity: Math.round(entry.quantity * 10000) / 10000, unit: entry.row.unit, ref: aiToolRef('item', entry.row.itemId || entry.row.sku, entry.row.sku) }
@@ -311,7 +412,8 @@ const salesSummary = defineAiTool({
       period: range, basis: SALES_BASIS, by, currency,
       invoices: new Set(sales.map((row) => row.invoice)).size,
       amount: money2(total),
-      ...(args.sku ? { sku: args.sku, quantity: Math.round(sales.reduce((sum, row) => sum + row.quantity, 0) * 10000) / 10000 } : {}),
+      ...(byQuantity ? { rankedBy: 'quantity' } : {}),
+      ...(sku ? { sku, quantity: Math.round(sales.reduce((sum, row) => sum + row.quantity, 0) * 10000) / 10000, ...(item.error && !sales.length ? { itemNotFound: true } : {}) } : {}),
       ...(args.customer ? { customer: args.customer } : {}),
       otherCurrencies: [...currencies.values()].filter((entry) => entry.currency !== currency).map((entry) => ({ currency: entry.currency, invoices: entry.invoices, amount: money2(entry.amount) })),
       ...(found.length > SALES_INVOICES_MAX ? { onlyFirstInvoices: SALES_INVOICES_MAX } : {}),
@@ -387,11 +489,14 @@ const priceHistory = defineAiTool({
       service.lastOrders(itemId, identityOf(context)),
     ])
     const history = array(read.histories)[0] || {}
-    const fact = (row) => (row ? { ...primitives(row, ['unitPrice', 'currency', 'unit', 'orderedQuantity', 'date', 'orderNumber', 'supplierName']), ref: aiToolRef('purchase_order', row.purchaseOrderId, row.orderNumber) } : null)
+    // A price as a number, not the stored text with its four places
+    // (2026-11-11 on Flash: "£2.9500/pcs" copied into the answer).
+    const priced = (row) => (row && typeof row.unitPrice === 'string' && /^-?\d+(?:\.\d+)?$/.test(row.unitPrice.trim()) ? { ...row, unitPrice: Number(row.unitPrice) } : row)
+    const fact = (row) => (row ? { ...priced(primitives(row, ['unitPrice', 'currency', 'unit', 'orderedQuantity', 'date', 'orderNumber', 'supplierName'])), ref: aiToolRef('purchase_order', row.purchaseOrderId, row.orderNumber) } : null)
     const supplierName = (id) => array(facts.suppliers).find((row) => row.id === id)?.name || null
     return {
       sku: item.sku, unit: history.unit ?? null, currency: history.currency ?? currency, status: history.status ?? null,
-      latest: fact(history.latest), earlier: array(history.earlier).map(fact), average: history.average ? primitives(history.average, ['unitPrice', 'quantity', 'orderedQuantity', 'count', 'lineCount']) : null,
+      latest: fact(history.latest), earlier: array(history.earlier).map(fact), average: history.average ? priced(primitives(history.average, ['unitPrice', 'quantity', 'orderedQuantity', 'count', 'lineCount'])) : null,
       otherCurrencies: array(history.otherCurrencies), otherUnits: array(history.otherUnits),
       pricesHidden: Boolean(read.restrictedFields?.length),
       lastOrderBySupplier: array(last.lastOrders).map((row) => ({ supplier: supplierName(row.supplierId), orderNumber: row.orderNumber, day: row.day, ref: aiToolRef('purchase_order', row.purchaseOrderId, row.orderNumber) })),
@@ -405,7 +510,7 @@ const priceHistory = defineAiTool({
 // records the user may read; the others are named in `hidden`.
 const supplierRisks = defineAiTool({
   name: 'supplier_risks',
-  description: 'The Supplier risks list: each supplier\'s open issues (overdue purchase orders, rejected receipt quantities, receipts received but not posted, supplier invoice variances) with a count per supplier, earliest date first. It does not score or rank suppliers. Filter by supplier or issue type. Record kinds the user may not read are named in hidden: their issues are missing, not zero.',
+  description: 'The Supplier risks list: each supplier\'s open issues (overdue purchase orders, rejected receipt quantities, supplier invoice variances) with a count per supplier, earliest date first. It does not score or rank suppliers. Filter by supplier or issue type. Record kinds the user may not read are named in hidden: their issues are missing, not zero.',
   parameters: {
     supplier: { type: 'string', description: 'A supplier name or code.' },
     type: { type: 'string', enum: SUPPLIER_ISSUE_TYPES },

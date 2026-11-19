@@ -49,12 +49,7 @@ export const capabilityRegistry = [
   capability('data-import', 'beta', true, true, 'CSV import of items, suppliers, customers, item suppliers and opening stock through the manual-entry commands', { databaseOnly: true, requiresExplicitEnable: true, environmentFlag: 'FLOWCHAIN_ENABLE_DATA_IMPORT' }),
   capability('imports', 'unavailable', false, false, 'Legacy direct imports are retired; use Universal Intake.', { businessCommitReady: false }),
   capability('universal-intake', 'preview', true, true, 'Tenant-scoped Intake foundation without parsing or business commit adapters', { databaseOnly: true, requiresExplicitEnable: true, environmentFlag: 'FLOWCHAIN_ENABLE_UNIVERSAL_INTAKE', businessCommitReady: false }),
-  capability('forecast', 'unavailable', false, false, 'Forecast and MRP planning are unavailable until PostgreSQL authoritative models exist'),
-  capability('exception-cases', 'preview', true, false, 'Internal exception workflow preview'),
-  capability('collaboration-drafts', 'preview', true, false, 'Internal draft-only workflow'),
   capability('review-actions', 'preview', true, false, 'Human review workflow preview'),
-  capability('audit-history', 'preview', true, false, 'Internal audit exploration'),
-  capability('pilot-readiness', 'preview', true, false, 'Internal readiness assessment'),
 ]
 
 export const capabilityFor = id => capabilityRegistry.find(entry => entry.id === id)

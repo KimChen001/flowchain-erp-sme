@@ -49,7 +49,10 @@ export const DATA_IMPORT_COLUMNS = Object.freeze({
     column('phone', 'Phone', '电话', { example: '+1 415 555 0100', aliases: ['telephone', 'mobile', '联系电话', '手机号'] }),
     column('email', 'Email', '邮箱', { example: 'buyer@example.com', aliases: ['email_address', '电子邮箱'] }),
     column('address', 'Address', '地址', { example: '2 Market St, San Francisco, CA' }),
+    // The country and the credit standing had no column (design audit L4-06).
+    column('country', 'Country', '国家或地区', { example: 'United States', aliases: ['country_name', '国家'] }),
     column('paymentTerms', 'Payment terms', '付款条款', { example: 'NET30', aliases: ['payment_terms', 'payment_term', '付款条件', '账期'] }),
+    column('creditStatus', 'Credit status', '信用状态', { example: 'normal', aliases: ['credit_status', 'credit'] }),
     column('currency', 'Currency', '币种', { example: 'USD', aliases: currencyAliases }),
     column('status', 'Status', '状态', { example: 'Active', aliases: statusAliases }),
   ]),

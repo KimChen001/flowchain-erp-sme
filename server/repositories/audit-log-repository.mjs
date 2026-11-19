@@ -1,9 +1,12 @@
 import { appendAuditEvent, ensureAuditLog } from '../domain/audit-foundation.mjs'
 
+// The entity type matches whatever its case (purchaseOrder, PurchaseOrder).
+const sameType = (value, wanted) => String(value || '').toLowerCase() === wanted
+
 function matchesFilter(entry = {}, filters = {}) {
-  const entityType = filters.entityType || ''
+  const entityType = String(filters.entityType || '').toLowerCase()
   const entityId = filters.entityId || ''
-  return (!entityType || entry.entityType === entityType || entry.entity?.type === entityType) &&
+  return (!entityType || sameType(entry.entityType, entityType) || sameType(entry.entity?.type, entityType)) &&
     (!entityId || entry.entityId === entityId || entry.entity?.id === entityId)
 }
 

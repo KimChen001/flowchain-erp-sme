@@ -76,7 +76,7 @@ const ROUTES: Record<string, RouteTarget> = {
   supplier_invoice: { module: "procurement", route: "procurement:bills", focusEntityType: "supplier_invoice" },
   invoiceMatch: { module: "procurement", route: "procurement:bills", focusEntityType: "supplier_invoice" },
   inventoryMovement: { module: "inventory", route: "inventory:movements", focusEntityType: "inventory_movement", detailAvailable: false },
-  inventoryException: { module: "inventory", route: "inventory:exceptions", focusEntityType: "inventory_exception" },
+  inventoryException: { module: "inventory", route: "", focusEntityType: "inventory_exception", detailAvailable: false },
   auditEvent: { module: "audit", route: "", focusEntityType: "audit_event", detailAvailable: false },
 };
 

@@ -22,7 +22,7 @@ async function loadClient() {
     import { renderToStaticMarkup } from 'react-dom/server'
     import { AnswerParts } from './src/modules/ai-assistant/v2/parts/AnswerParts.tsx'
     import { StreamingText } from './src/modules/ai-assistant/v2/parts/StreamingText.tsx'
-    import { PurchaseRequestFormPart, addedFormRow, createFormRequest, draftRequestBody, initialFormLines, newSupplierLinkBody, newSupplierOption } from './src/modules/ai-assistant/v2/parts/PurchaseRequestFormPart.tsx'
+    import { PurchaseRequestFormPart, addedFormRow, createFormRequest, draftRequestBody, initialFormLines, newSupplierLinkBody, newSupplierOption, supplierNamesLinked } from './src/modules/ai-assistant/v2/parts/PurchaseRequestFormPart.tsx'
     const navigate = () => {}
     export const text = (props) => renderToStaticMarkup(createElement(StreamingText, { onNavigate: navigate, ...props }))
     export const answer = (props) => renderToStaticMarkup(createElement(AnswerParts, { threadId: 'thr_7f2c', messageId: 'msg_19', onNavigate: navigate, onFollowUp: () => {}, onChoose: () => {}, ...props }))
@@ -31,7 +31,7 @@ async function loadClient() {
     import { SetupRecordsPart, createSetupRecords, initialSetupDrafts, itemBody, itemIssues, itemSupplierBody, setupCreatedRecords, supplierBody, supplierIssues } from './src/modules/ai-assistant/v2/parts/SetupRecordsPart.tsx'
     export const steps = (props) => renderToStaticMarkup(createElement(SetupStepsPart, { onNavigate: navigate, ...props }))
     export const setupCard = (props) => renderToStaticMarkup(createElement(SetupRecordsPart, { partId: 'p3', onNavigate: navigate, ...props }))
-    export { addedFormRow, createFormRequest, draftRequestBody, initialFormLines, newSupplierLinkBody, newSupplierOption, createSetupRecords, initialSetupDrafts, itemBody, itemIssues, itemSupplierBody, setupCreatedRecords, supplierBody, supplierIssues }
+    export { addedFormRow, createFormRequest, draftRequestBody, initialFormLines, newSupplierLinkBody, newSupplierOption, supplierNamesLinked, createSetupRecords, initialSetupDrafts, itemBody, itemIssues, itemSupplierBody, setupCreatedRecords, supplierBody, supplierIssues }
     import { RecordActionsPart, cardActions, recordActionErrorText, runRecordAction } from './src/modules/ai-assistant/v2/parts/RecordActionsPart.tsx'
     export const recordCard = (props) => renderToStaticMarkup(createElement(RecordActionsPart, { onNavigate: navigate, ...props }))
     export { cardActions, recordActionErrorText, runRecordAction }
@@ -129,7 +129,7 @@ test('the protocol accepts the design example and every event type, and lists th
     assert.ok(result.success, `${line.slice(0, 60)}: ${result.success ? '' : JSON.stringify(result.error.issues)}`)
   }
   assert.deepEqual([...STREAM_EVENT_TYPES], ['start', 'progress', 'tool', 'text_delta', 'ui', 'flag', 'replace', 'notice', 'error', 'answer'])
-  assert.deepEqual([...UI_COMPONENTS], ['table', 'records', 'chart', 'kpis', 'choices', 'pr_form', 'followups', 'citations', 'setup_steps', 'setup_form', 'record_actions'])
+  assert.deepEqual([...UI_COMPONENTS], ['table', 'records', 'chart', 'kpis', 'choices', 'pr_form', 'followups', 'citations', 'setup_steps', 'setup_form', 'record_actions', 'decisions'])
   const envelope = { v: 2, seq: 3 }
   for (const event of [
     { ...envelope, type: 'flag', partId: 'p1', spans: [{ text: '600', kind: 'number', reason: 'not_in_tool_results' }] },
@@ -379,6 +379,21 @@ test('an item added from the search reads the reference price the item suppliers
   assert.deepEqual([body.lines[0].estimatedUnitPrice, body.lines[0].estimatedAmount, body.lines[0].currency], [0.42, 4.2, 'USD'])
 })
 
+// Design audit A5 follow-up: the item list gives the recorded purchase unit
+// and the stock unit; an item added from the search is requested in the stock
+// unit, which the server accepts (no conversion between units is recorded).
+test('an item added from the search is requested in its stock unit, not its purchase unit', async () => {
+  const client = await loadClient()
+  const sources = [{ id: 'sup_3', name: 'Acme Packaging', preferred: true, referencePrice: '0.42', currency: 'USD', leadTimeDays: 14 }]
+  const boxed = client.addedFormRow({ itemId: 'itm_60', sku: 'BOX-1', itemName: 'Carton', purchaseUnit: 'pcs', baseUnit: 'box', stockUnit: 'box' }, sources, '2026-11-02')
+  assert.equal(boxed.item.unit, 'box')
+  const props = formProps({ suggested: [], lines: [boxed] })
+  const body = client.draftRequestBody([{ ...client.initialFormLines(props, 'p3')[0], quantity: '10' }], props, { threadId: 'thr_7f2c', messageId: 'msg_20', partId: 'p3' })
+  assert.equal(body.lines[0].unitSnapshot, 'box')
+  // No stock unit recorded: the purchase unit, as the server keeps it.
+  assert.equal(client.addedFormRow({ itemId: 'itm_61', sku: 'WRAP-1', purchaseUnit: 'roll', baseUnit: 'pcs', stockUnit: '' }, sources, '2026-11-02').item.unit, 'roll')
+})
+
 test('the receipt has Submit as its one primary button, and submitting says when approvers get an email', async () => {
   const client = await loadClient()
   const draft = client.form({ props: formProps(), receipt: { id: 'PR-0231', version: 1, status: 'draft' } })
@@ -413,7 +428,8 @@ test('create posts the classic form body with one key per form and an assistant 
     specificationSnapshot: '', commodityId: '', quantity: 600, estimatedUnitPrice: 0.42, estimatedAmount: 252, currency: 'USD', targetWarehouseId: 'WH-1', needByDate: '2026-11-20',
     serviceStartDate: '', serviceEndDate: '', internalLineComment: '', supplierOverride: null,
   })
-  assert.deepEqual([body.departmentId, body.defaultCurrency, body.defaultNeedByDate], ['operations', 'USD', '2026-11-20'])
+  // No department from the form: the server takes the requester's own (design audit L5-24).
+  assert.deepEqual([body.departmentId, body.defaultCurrency, body.defaultNeedByDate], ['', 'USD', '2026-11-20'])
   const trail = sanitizeSuggestionTrail(body.suggestionTrail)
   assert.equal(trail.origin, 'ai_assistant')
   assert.deepEqual(trail.fields.find((field) => field.field === 'lines.0.quantity'), { field: 'lines.0.quantity', source: 'record', ref: 'toolu_01', outcome: 'accepted' })
@@ -500,6 +516,12 @@ test('Create adds the new supplier to the item first, then creates the request w
   assert.deepEqual(trail.fields.find((field) => field.field === 'lines.0.needByDate'), { field: 'lines.0.needByDate', source: 'default', ref: 'toolu_01', outcome: 'accepted' })
   // The link it created is reported, so the server can say the click added it.
   assert.deepEqual(outcome, { status: 'created', linked: { [first.key]: 'sup_9' }, created: { id: 'PR-0300', version: 1, status: 'draft' }, added: ['ISR-1'] })
+  // The request fails after the supplier was added: the form names the
+  // supplier it added, since that stays (design audit L5-24).
+  const failed = await client.createFormRequest({ ticked, props, ids: IDS, post: async (url, body) => { if (url === '/api/procurement/requests') throw Object.assign(new Error('no'), { status: 422, code: 'VALIDATION_FAILED' }); return post(url, body) } })
+  assert.equal(failed.status, 'request_failed')
+  assert.deepEqual(client.supplierNamesLinked(ticked, failed.linked), [NORTHSTAR.name])
+  assert.deepEqual(client.supplierNamesLinked(ticked, {}), [])
   // A retry after a failed request does not add the supplier again.
   posts.length = 0
   await client.createFormRequest({ ticked, props, ids: IDS, post, linked: outcome.linked })
@@ -921,13 +943,13 @@ test('the record card shows each step as a button, and a step past submitting as
   assert.match(reject, /Reject PR-0231 for 300 pcs of LDM-002 from Northstar Electronics\? The requester sees your reason\./)
   assert.match(reject, /data-testid="ai-v2-record-reason"/)
   assert.match(reject, /data-testid="ai-v2-record-confirm-button"[^>]*disabled=""/)
-  // An approved request: the route's path recommendation, quotes first when it says so.
+  // An approved request: the order only. A card saved before A7 that still
+  // lists an RFQ step does not draw it (design audit L1-01).
   const approved = cardProps({ record: cardRecord({ status: 'approved', lineCount: 2 }), actions: ['create_rfq', 'create_po'], path: { recommendation: 'rfq', reasons: ['amount_over_rfq_threshold'] } })
   const order = client.recordCard({ props: approved, language: 'en-US' })
-  assert.deepEqual(buttons(order), ['create_rfq:Request quotes (RFQ)', 'create_po:Create purchase order'])
-  assert.match(order, /data-testid="ai-v2-record-path" data-recommendation="rfq"[^>]*>Recommended: request quotes first[^]*the amount is at or above the quote threshold/)
+  assert.deepEqual(buttons(order), ['create_po:Create purchase order'])
+  assert.doesNotMatch(order, /Request quotes/)
   assert.match(client.recordCard({ props: approved, language: 'en-US', initialConfirm: 'create_po' }), /Turn PR-0231 into a purchase order for 2 lines from Northstar Electronics\?/)
-  assert.match(client.recordCard({ props: approved, language: 'en-US', initialConfirm: 'create_rfq' }), /Request quotes for PR-0231 \(2 lines\)\? This creates a draft RFQ; nothing is sent to suppliers until you open it\./)
   // An order: mark it issued says FlowChain sends nothing.
   const issue = cardProps({ record: cardRecord({ ref: ref('purchase_order', 'PO-009'), type: 'purchase_order', status: 'approved', suppliers: ['Summit Packaging'] }), allowed: ['issue'], actions: ['issue'], path: undefined })
   assert.match(client.recordCard({ props: issue, language: 'en-US', initialConfirm: 'issue' }), /Mark PO-009 \(300 pcs of LDM-002 from Summit Packaging\) as issued\? FlowChain records the issue; you send the PO to the supplier\./)
@@ -985,9 +1007,9 @@ test('a step posts its route with the record\'s version and the card\'s key; a r
 test('after a step the card offers what the new status allows, and shows what it did when the answer is shown again', async () => {
   const client = await loadClient()
   const props = cardProps()
-  // Approved: the next step is ordering it, by the route's recommendation; once ordered, nothing more.
+  // Approved: the next step is ordering it, never an RFQ (A7), whatever an older card's path says; once ordered, nothing more.
   assert.deepEqual(client.cardActions(props, { status: 'approved', version: 4 }, false), ['create_po'])
-  assert.deepEqual(client.cardActions({ ...props, path: { recommendation: 'rfq', reasons: [] } }, { status: 'approved', version: 4 }, false), ['create_rfq', 'create_po'])
+  assert.deepEqual(client.cardActions({ ...props, path: { recommendation: 'rfq', reasons: [] } }, { status: 'approved', version: 4 }, false), ['create_po'])
   assert.deepEqual(client.cardActions(props, { status: 'approved', version: 5 }, true), [])
   assert.deepEqual(client.cardActions({ ...props, allowed: ['approve', 'reject'] }, { status: 'approved', version: 4 }, false), [])
   const receipt = { type: 'purchase_request', id: 'PR-0231', status: 'converted', version: 5, steps: [

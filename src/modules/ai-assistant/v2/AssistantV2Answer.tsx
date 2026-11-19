@@ -4,6 +4,7 @@ import { isTranslationKey } from "../../../i18n/I18n";
 import { aiProgressLine } from "../presentation";
 import { answerPartsOf, type AssistantV2Message } from "./foldEvents";
 import { AnswerParts } from "./parts/AnswerParts";
+import { AnswerFooter } from "./AnswerFooter";
 import { isRef, toneStyle, usePartCopy, type Navigate, type PartCopy } from "./parts/partKit";
 import type { PartRef, PrReceipt, RecordActionReceipt, SetupReceipt } from "./parts/types";
 
@@ -99,6 +100,8 @@ export function AssistantV2Answer({
           {copy.known("ai.v2.notice", code)}
         </p>
       ))}
+      {/* What the answer read and checked, and a thumbs up or down, once it is complete. */}
+      {message.done && !message.error && message.body ? <AnswerFooter message={message} threadId={message.threadId || threadId} messageId={message.messageId || fallbackMessageId} copy={copy} /> : null}
       {message.error ? (
         <div role="alert" data-testid="ai-v2-error" data-code={message.error.code} className="space-y-2">
           <p className="text-[13px]" style={{ color: toneStyle("danger").color }}>

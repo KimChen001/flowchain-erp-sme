@@ -127,11 +127,32 @@ export function readOnlyPrisma(data, calls = [], tenant = { locale: 'en-US', cur
     warehouse: { findMany: ({ where }) => where.tenantId === AI_SKILL_TENANT ? array(data.warehouses) : [] },
     // The supplier scorecard's reads (supplier-scorecard.mjs), by supplier and
     // status as it asks; the fixture lines record no original promise.
-    purchaseOrder: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.purchaseOrders.filter((row) => !where.status?.notIn?.includes(row.status) && (typeof where.supplierId === 'string' ? row.supplierId === where.supplierId : Boolean(row.supplierId))) },
-    receivingDocument: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.receipts.filter((row) => where.poId.in.includes(row.poId) && (!where.postingStatus || row.postingStatus === where.postingStatus)) },
-    supplierInvoice: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.supplierInvoices.filter((row) => typeof where.supplierId === 'string' ? row.supplierId === where.supplierId : true).map((row) => ({ ...row, lines: row.lines || [], matchRuns: [] })) },
-    // Suppliers, read by both the minimum order and the scorecard.
-    supplier: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.suppliers.filter((row) => !where.id || row.id === where.id).map((row) => ({ id: row.id, code: row.supplierCode || row.id, name: row.name, status: row.status || 'active' })), count: ({ where }) => (where.tenantId === AI_SKILL_TENANT ? data.suppliers.length : 0) },
+    purchaseOrder: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.purchaseOrders.filter((row) => !where.status?.notIn?.includes(row.status) && (!where.id?.in || where.id.in.includes(row.id)) && (typeof where.supplierId === 'string' ? row.supplierId === where.supplierId : Boolean(row.supplierId))) },
+    purchaseOrderLine: { findMany: ({ where }) => where.purchaseOrder?.tenantId !== AI_SKILL_TENANT ? [] : data.purchaseOrders.flatMap((row) => row.lines).filter((line) => !where.id?.in || where.id.in.includes(line.id)).map((line) => ({ id: line.id, unitPrice: line.unitPrice })) },
+    receivingDocument: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.receipts.filter((row) => (where.poId?.in ? where.poId.in.includes(row.poId) : Boolean(row.poId)) && (!where.postingStatus || row.postingStatus === where.postingStatus)) },
+    supplierInvoice: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.supplierInvoices.filter((row) => (typeof where.supplierId === 'string' ? row.supplierId === where.supplierId : true) && (typeof where.status === 'string' ? row.status === where.status : !where.status?.not || row.status !== where.status.not) && (!where.relatedGrnId || Boolean(row.relatedGrnId))).map((row) => ({ ...row, lines: row.lines || [], matchRuns: [] })) },
+    // The money tools' reads (ai-assistant-v2-money-tools.mjs): payables still
+    // owed, recorded payments and invoice lines linked to receipt lines; none
+    // unless a test adds them.
+    supplierInvoiceLine: { findMany: ({ where }) => where.supplierInvoice?.tenantId !== AI_SKILL_TENANT ? [] : data.supplierInvoices.filter((row) => row.status !== 'cancelled').flatMap((row) => array(row.lines)).filter((line) => line.receivingLineId).map((line) => ({ receivingLineId: line.receivingLineId })) },
+    payableObligation: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : array(data.payables).filter((row) => (!where.status?.in || where.status.in.includes(row.status)) && (where.outstandingAmount?.gt === undefined || Number(row.outstandingAmount) > where.outstandingAmount.gt)) },
+    paymentRecord: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : array(data.payments).filter((row) => row.status === where.status && where.obligationType.in.includes(row.obligationType) && row.paymentDate >= where.paymentDate.gte && row.paymentDate < where.paymentDate.lt) },
+    // Today's decision items (decision-items.mjs), none unless a test adds
+    // them: by state and record, and only the live ones when asked for.
+    decisionItem: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : array(data.decisionItems).filter((row) => (!where.state || row.state === where.state) && (!where.recordId || row.recordId === where.recordId) && (!where.activeKey || Boolean(row.activeKey))) },
+    // Posted shipments and sales orders by number (list_shipments), none unless a test adds them.
+    shipmentDocument: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : array(data.shipments).filter((row) => !where.salesOrderId || row.salesOrder?.id === where.salesOrderId) },
+    salesOrder: { findFirst: ({ where }) => (where.tenantId === AI_SKILL_TENANT ? array(data.salesOrders).map((row) => ({ id: row.id, orderNumber: row.salesOrderId || row.id })).find((row) => row.orderNumber === where.orderNumber || (where.OR || []).some((entry) => entry.id === row.id || entry.orderNumber === row.orderNumber)) || null : null) },
+    // A record's audit entries (record_history), newest first; none unless a
+    // test adds them.
+    auditLog: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : array(data.auditLogs).filter((row) => row.entityId === where.entityId && where.entityType.in.includes(row.entityType)).sort((a, b) => String(b.createdAt.toISOString?.() || b.createdAt).localeCompare(String(a.createdAt.toISOString?.() || a.createdAt))).slice(0, where.take ?? undefined) },
+    // Suppliers, read by both the minimum order and the scorecard, and one by
+    // id for a supplier's detail page (supplier-insights.mjs readActivity).
+    supplier: {
+      findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.suppliers.filter((row) => !where.id || row.id === where.id).map((row) => ({ id: row.id, code: row.supplierCode || row.id, name: row.name, status: row.status || 'active' })),
+      findFirst: ({ where }) => (where.tenantId === AI_SKILL_TENANT && data.suppliers.some((row) => row.id === where.id) ? { id: where.id } : null),
+      count: ({ where }) => (where.tenantId === AI_SKILL_TENANT ? data.suppliers.length : 0),
+    },
   }
   return new Proxy({}, {
     get(_target, model) {
@@ -167,6 +188,7 @@ export function aiSkillRepositories(data, calls = [], { truncated = [] } = {}) {
     procurementRuntime: {
       snapshot: scoped('procurementRuntime.snapshot', { purchaseRequests: data.purchaseRequests, rfqs: data.rfqs, purchaseOrders: data.purchaseOrders, receipts: data.receipts, receivingDocs: data.receipts, supplierInvoices: data.supplierInvoices }),
       listForReport: scoped('procurementRuntime.listForReport', data.purchaseOrders),
+      listReceiptsAndInvoices: scoped('procurementRuntime.listReceiptsAndInvoices', { receipts: data.receipts, supplierInvoices: data.supplierInvoices }),
     },
   }
 }

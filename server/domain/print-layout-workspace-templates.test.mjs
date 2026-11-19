@@ -25,7 +25,8 @@ test('the print-layout print rules apply only while the editor is open', () => {
     const selectors = rule.slice(0, rule.indexOf('{')).split(',').map((selector) => selector.trim())
     for (const selector of selectors) assert.match(selector, /^body\.fc-print-layout-open /, `unscoped print rule: ${selector}`)
   }
-  assert.match(printBlock(css), /body\.fc-print-layout-open \* \{ visibility: hidden !important; \}/)
+  // Everything but the editor and its ancestors is taken out of the page (L11-17).
+  assert.match(printBlock(css), /body\.fc-print-layout-open \*:not\(:has\(\.print-layout-editor\)\):not\(\.print-layout-editor\):not\(\.print-layout-editor \*\) \{ display: none !important; \}/)
   assert.doesNotMatch(css, /(^|[\s,}])body \* \{/, 'no hide-everything rule outside the editor scope')
 
   const editor = read('src/modules/print-layout/PrintLayoutEditor.tsx')

@@ -1,3 +1,5 @@
+import { purchaseOrderDueDay } from '../domain/open-purchase-orders-report.mjs'
+import { approvalAuthorIds } from '../domain/self-approval.mjs'
 import { maskProcurementDocuments, maskProcurementSummary, readableProcurementRows, readableProcurementSnapshot } from '../domain/procurement-read-access.mjs'
 import {
   buildProcurementDocumentLinks,
@@ -139,6 +141,20 @@ const withNumber = (field, numbers, id) => {
   return value ? { [field]: value } : {}
 }
 
+// The GRN number of each receipt the invoices name (GRN-202611-0009), by id:
+// from the receipts already loaded, and one query in the workspace for the
+// ones that are not. A receipt recorded without a number is left out.
+async function receiptNumbersFor(client, tenantId, invoices = [], loaded = []) {
+  const numbers = new Map(loaded.filter((row) => text(row.documentNumber)).map((row) => [row.id, text(row.documentNumber)]))
+  const loadedIds = new Set(loaded.map((row) => row.id))
+  const missing = [...new Set(invoices.map((row) => text(row.relatedGrnId)).filter((id) => id && !loadedIds.has(id)))]
+  if (missing.length) {
+    const rows = await client.receivingDocument.findMany({ where: { tenantId, id: { in: missing } }, select: { id: true, documentNumber: true } })
+    for (const row of rows) if (text(row.documentNumber)) numbers.set(row.id, text(row.documentNumber))
+  }
+  return numbers
+}
+
 // The request with its requester's name, when the user is known.
 function withRequesterName(request, names) {
   const name = names.get(request.requesterId)
@@ -188,6 +204,9 @@ export function mapPurchaseRequest(record = {}) {
     number: procurementDocumentNumber(record),
     version: numberFrom(meta.version, 0),
     requesterId: text(meta.requesterId || record.requester),
+    // Who raised or submitted it, as its approval command reads them; the
+    // reads turn them into canApprove for the reader (design audit C4).
+    approvalAuthorIds: approvalAuthorIds('purchase_request', record),
     departmentId: text(meta.departmentId),
     defaultCurrency: text(record.currency),
     defaultNeedByDate: isoDate(record.requiredDate),
@@ -220,10 +239,24 @@ export function mapPurchaseRequest(record = {}) {
   }
 }
 
-export function mapRfq(record = {}, quotations = []) {
+// An RFQ's invited suppliers and how many responded come from its
+// participation records (a response recorded, or a quotation from that
+// supplier), never from the header's supplierCount / respondedSupplierCount,
+// which are written once at creation and not maintained (design audit
+// L1-32 = L12-01). Without participation records: the quoting suppliers.
+export function rfqSupplierCounts(record = {}, quotations = [], participations = []) {
+  // A quotation without a supplier (an older row) counts on its own.
+  const quotedSuppliers = new Set(quotations.filter((quote) => quote.rfqId === record.id).map((quote, index) => text(quote.supplierId) || `quotation:${text(quote.id) || index}`))
+  const invited = participations.filter((participation) => participation.rfqId === record.id)
+  if (!invited.length) return { suppliers: numberFrom(record.supplierCount, quotedSuppliers.size), quoted: quotedSuppliers.size }
+  const responded = invited.filter((participation) => text(participation.status) === 'response_recorded' || quotedSuppliers.has(text(participation.supplierId))).length
+  return { suppliers: invited.length, quoted: responded }
+}
+
+export function mapRfq(record = {}, quotations = [], participations = []) {
   const line = firstLine(record)
   const meta = metadata(record)
-  const quoteCount = quotations.filter((quote) => quote.rfqId === record.id).length
+  const counts = rfqSupplierCounts(record, quotations, participations)
   return {
     id: record.id,
     number: procurementDocumentNumber(record),
@@ -231,8 +264,8 @@ export function mapRfq(record = {}, quotations = []) {
     title: text(record.title, procurementDocumentNumber(record)),
     category: text(record.category),
     status: canonicalStatus('rfq', record.status) || text(record.status, 'active'),
-    suppliers: numberFrom(record.supplierCount, quoteCount),
-    quoted: numberFrom(record.respondedSupplierCount, quoteCount),
+    suppliers: counts.suppliers,
+    quoted: counts.quoted,
     due: isoDate(record.dueDate),
     bestPrice: numberFrom(record.bestPrice, 0),
     bestSupplier: text(record.awardedSupplier),
@@ -252,7 +285,7 @@ export function mapRfq(record = {}, quotations = []) {
 }
 
 function mapRfqDetail(record = {}, quotations = [], participations = []) {
-  const base = buildProcurementRfqs({ rfqs: [mapRfq(record, quotations)] })[0] || null
+  const base = buildProcurementRfqs({ rfqs: [mapRfq(record, quotations, participations)] })[0] || null
   if (!base) return null
 
   const recordMeta = metadata(record)
@@ -444,9 +477,14 @@ export function mapPurchaseOrder(record = {}) {
     number,
     orderNumber: number,
     version: numberFrom(record.version, 0),
+    approvalAuthorIds: approvalAuthorIds('purchase_order', record),
     supplier: text(record.supplierName || meta.supplier),
     supplierId: text(record.supplierId),
     eta: isoDate(record.expectedDate),
+    // The day it is due by the rule Today and the reports use: the earliest
+    // promised day of a line still to receive (design audit V-B-02). The
+    // header's expected date can sit on a line received long ago.
+    dueDay: purchaseOrderDueDay(record) || null,
     expectedDeliveryDate: isoDate(record.expectedDate),
     owner: text(record.owner),
     amount: numberFrom(record.amount, lineQuantity(record.lines, 'amount', 0)),
@@ -567,6 +605,10 @@ function mapSupplierInvoice(record = {}) {
   return {
     id: record.id,
     invoiceNumber: record.id,
+    // The supplier's own invoice number as recorded (INV-UI7-B002), which
+    // pages show; invoiceNumber above is the id the read model keys on.
+    supplierInvoiceNumber: text(record.invoiceNumber),
+    approvalAuthorIds: approvalAuthorIds('supplier_invoice', record),
     supplier: text(record.supplierName || meta.supplier),
     supplierId: text(record.supplierId),
     relatedPo: text(record.relatedPoId),
@@ -708,13 +750,21 @@ async function readReceivingDocument(client, { id, tenantId }) {
   })[0] || null
 }
 
+// A supplier invoice with what decides how its match reads (settledMatchStatus
+// in procurement-read-model.mjs): its own workflow status and how its match
+// exceptions were decided, as counts.
+const INVOICE_DOCUMENT_INCLUDE = Object.freeze({ lines: true, matchExceptions: { select: { status: true } } })
+function mapInvoiceWithDecisions(record = {}) {
+  return { ...mapSupplierInvoice(record), workflowStatus: text(record.status), matchExceptions: matchExceptionCounts(record) }
+}
+
 async function readSupplierInvoiceDocument(client, { id, tenantId }) {
   const record = await client.supplierInvoice.findFirst({
     where: documentWhere(tenantId, id),
-    include: { lines: true },
+    include: INVOICE_DOCUMENT_INCLUDE,
   })
   if (!record) return null
-  return buildProcurementSupplierInvoices({ supplierInvoices: [mapSupplierInvoice(record)] })[0] || null
+  return buildProcurementSupplierInvoices({ supplierInvoices: [mapInvoiceWithDecisions(record)] })[0] || null
 }
 
 async function readThreeWayMatchDocument(client, { id, tenantId }) {
@@ -722,7 +772,7 @@ async function readThreeWayMatchDocument(client, { id, tenantId }) {
   if (!matchId?.[1]) return null
   const invoice = await client.supplierInvoice.findFirst({
     where: documentWhere(tenantId, matchId[1]),
-    include: { lines: true },
+    include: INVOICE_DOCUMENT_INCLUDE,
   })
   if (!invoice) return null
 
@@ -741,8 +791,9 @@ async function readThreeWayMatchDocument(client, { id, tenantId }) {
       : null,
   ])
 
+  // The receipt read here gives the match its GRN number (documentNumber).
   return buildProcurementThreeWayMatches({
-    supplierInvoices: [mapSupplierInvoice(invoice)],
+    supplierInvoices: [mapInvoiceWithDecisions(invoice)],
     purchaseOrders: purchaseOrder ? [mapPurchaseOrder(purchaseOrder)] : [],
     receivingDocs: receivingDocument ? [mapReceivingDocument(receivingDocument)] : [],
   })[0] || null
@@ -786,7 +837,7 @@ async function loadProcurementSnapshot(client, filters = {}) {
     client.supplierQuotation.findMany({ where, orderBy: [{ createdAt: 'desc' }], take }),
     client.purchaseOrder.findMany({ where, include: { lines: true }, orderBy: [{ createdAt: 'desc' }], take }),
     client.receivingDocument.findMany({ where, include: { lines: true }, orderBy: [{ createdAt: 'desc' }], take }),
-    client.supplierInvoice.findMany({ where, include: { lines: true }, orderBy: [{ createdAt: 'desc' }], take }),
+    client.supplierInvoice.findMany({ where, include: INVOICE_DOCUMENT_INCLUDE, orderBy: [{ createdAt: 'desc' }], take }),
     client.documentLink.findMany({ where, orderBy: [{ createdAt: 'desc' }], take }),
     client.procurementFollowup.findMany({ where, orderBy: [{ createdAt: 'desc' }], take }),
   ])
@@ -799,17 +850,122 @@ async function loadProcurementSnapshot(client, filters = {}) {
   // References to a request, RFQ or order carry its number when it is among
   // the loaded rows (prNumber, rfqNumber, poNumber); otherwise the page looks
   // it up (GET /api/procurement/document-numbers).
+  // Who was invited to each listed RFQ and who responded (rfqSupplierCounts).
+  const rfqParticipations = rfqs.length && typeof client.rfqSupplierParticipation?.findMany === 'function'
+    ? await client.rfqSupplierParticipation.findMany({ where: { ...where, rfqId: { in: rfqs.map((rfq) => rfq.id) } }, select: { rfqId: true, supplierId: true, status: true } })
+    : []
   const prNumbers = numbersById(purchaseRequests)
   const rfqNumbers = numbersById(rfqs)
   const poNumbers = numbersById(purchaseOrders)
+  const grnNumbers = await receiptNumbersFor(client, where.tenantId, supplierInvoices, receivingDocuments)
   return {
     purchaseRequests: purchaseRequests.map((record) => ({ ...withRequesterName(mapPurchaseRequest(record), requesters), ...withNumber('rfqNumber', rfqNumbers, record.linkedRfqId), ...withNumber('poNumber', poNumbers, record.linkedPoId) })),
-    rfqs: rfqs.map((rfq) => ({ ...mapRfq(rfq, supplierQuotations), ...withNumber('prNumber', prNumbers, rfq.sourceRequestId), ...withNumber('poNumber', poNumbers, rfq.linkedPoId) })),
+    rfqs: rfqs.map((rfq) => ({ ...mapRfq(rfq, supplierQuotations, rfqParticipations), ...withNumber('prNumber', prNumbers, rfq.sourceRequestId), ...withNumber('poNumber', poNumbers, rfq.linkedPoId) })),
     purchaseOrders: purchaseOrders.map((record) => ({ ...mapPurchaseOrder(record), ...withNumber('prNumber', prNumbers, record.sourceRequestId), ...withNumber('rfqNumber', rfqNumbers, record.sourceRfqId) })),
     receivingDocs: receivingDocuments.map((record) => ({ ...mapReceivingDocument(record), ...withNumber('poNumber', poNumbers, record.poId) })),
-    supplierInvoices: supplierInvoices.map((record) => ({ ...mapSupplierInvoice(record), ...withNumber('poNumber', poNumbers, record.relatedPoId) })),
+    // workflowStatus and poLineQuantities: the invoice's own status and the
+    // quantity it invoices on each PO line, which the PO list (whose read
+    // leaves invoice lines out) uses to tell an approved invoice from an open
+    // variance and a partly invoiced order from a fully invoiced one.
+    // matchExceptions: how its match exceptions were decided, so a variance
+    // already decided reads variance_approved (settledMatchStatus).
+    supplierInvoices: supplierInvoices.map((record) => ({ ...mapInvoiceWithDecisions(record), ...withNumber('poNumber', poNumbers, record.relatedPoId), ...withNumber('grnNumber', grnNumbers, record.relatedGrnId), poLineQuantities: invoicedQuantitiesByPoLine(record) })),
     documentLinks: documentLinks.map(mapDocumentLink).filter((link) => link.sourceType && link.sourceId && link.targetType && link.targetId),
     procurementFollowups: procurementFollowups.map(mapFollowup).filter((item) => item.id && item.documentType && item.documentId),
+  }
+}
+
+// One purchase order, by its id or the number it shows, with what its detail
+// page reads: the receipts and supplier invoices for it (also one that names
+// it only on a line), the links and follow-ups that name it, and the numbers
+// of its source request and RFQ. The same record shapes as the snapshot, so
+// the detail page reads it as it read the snapshot. Null when the workspace
+// has no such order; another workspace's order is never found.
+const ORDER_DOCUMENTS_LIMIT = 500
+
+// What the PO detail shows of a supplier invoice beyond the shared record, for
+// display only: its own workflow status (the shared status reads 存在差异 while
+// the invoice has a variance, even once approved), how its match exceptions
+// were decided, and what is paid on it. The payment's money is in fields named
+// amount and openAmount, so the masking that hides invoice amounts from a role
+// without finance.amounts.read hides these too.
+const roundMoney = (value) => Math.round(value * 10000) / 10000
+
+// The quantity an invoice bills on each PO line it names, { poLineId: qty }.
+function invoicedQuantitiesByPoLine(record = {}) {
+  const quantities = {}
+  for (const line of asArray(record.lines)) {
+    const poLineId = text(line.purchaseOrderLineId)
+    if (poLineId) quantities[poLineId] = roundMoney((quantities[poLineId] || 0) + numberFrom(line.quantity, 0))
+  }
+  return quantities
+}
+
+// How an invoice's match exceptions were decided, as counts.
+function matchExceptionCounts(record = {}) {
+  const exceptions = asArray(record.matchExceptions)
+  const decided = (status) => exceptions.filter((entry) => text(entry.status) === status).length
+  return { count: exceptions.length, open: decided('open'), approved: decided('approved'), rejected: decided('rejected') }
+}
+
+export function purchaseOrderInvoiceProgress(record = {}) {
+  const payable = record.payableObligation
+  return {
+    workflowStatus: text(record.status),
+    matchExceptions: matchExceptionCounts(record),
+    payment: payable
+      ? {
+          status: text(payable.status),
+          // What is owed after approved supplier credits, and what is still open.
+          amount: roundMoney(numberFrom(payable.originalAmount, 0) - numberFrom(payable.approvedCreditAmount, 0)),
+          openAmount: roundMoney(numberFrom(payable.outstandingAmount, 0)),
+          currency: text(payable.currency),
+        }
+      : null,
+  }
+}
+
+async function loadPurchaseOrderWorkbench(client, { tenantId, id } = {}) {
+  const scoped = requireTenantId({ tenantId })
+  const requestedId = text(id)
+  if (!requestedId) return null
+  const record = await findNumberedDocument(client.purchaseOrder, scoped, requestedId, { lines: true })
+  if (!record) return null
+  const lineIds = asArray(record.lines).map((line) => text(line.id)).filter(Boolean)
+  const forOrder = (field) => ({
+    tenantId: scoped,
+    OR: [{ [field]: record.id }, ...(lineIds.length ? [{ lines: { some: { purchaseOrderLineId: { in: lineIds } } } }] : [])],
+  })
+  const newest = [{ createdAt: 'desc' }]
+  const [receivingDocuments, supplierInvoices, documentLinks, procurementFollowups, request, rfq] = await Promise.all([
+    client.receivingDocument.findMany({ where: forOrder('poId'), include: { lines: true }, orderBy: newest, take: ORDER_DOCUMENTS_LIMIT }),
+    client.supplierInvoice.findMany({
+      where: forOrder('relatedPoId'),
+      include: {
+        lines: true,
+        matchExceptions: { select: { status: true } },
+        payableObligation: { select: { status: true, originalAmount: true, approvedCreditAmount: true, outstandingAmount: true, currency: true } },
+      },
+      orderBy: newest,
+      take: ORDER_DOCUMENTS_LIMIT,
+    }),
+    client.documentLink.findMany({ where: { tenantId: scoped, OR: [{ sourceId: record.id }, { targetId: record.id }] }, orderBy: newest, take: ORDER_DOCUMENTS_LIMIT }),
+    client.procurementFollowup.findMany({ where: { tenantId: scoped, documentId: record.id }, orderBy: newest, take: ORDER_DOCUMENTS_LIMIT }),
+    record.sourceRequestId ? client.purchaseRequest.findFirst({ where: { tenantId: scoped, id: record.sourceRequestId }, select: { id: true, number: true } }) : null,
+    record.sourceRfqId ? client.rfq.findFirst({ where: { tenantId: scoped, id: record.sourceRfqId }, select: { id: true, number: true } }) : null,
+  ])
+  const poNumbers = numbersById([record])
+  // The receipts loaded here are the order's own; an invoice naming another keeps its id.
+  const grnNumbers = new Map(receivingDocuments.filter((doc) => text(doc.documentNumber)).map((doc) => [doc.id, text(doc.documentNumber)]))
+  const isThisOrder = (type, documentId) => type === 'po' && documentId === record.id
+  return {
+    purchaseOrders: [{ ...mapPurchaseOrder(record), ...withNumber('prNumber', numbersById(request ? [request] : []), record.sourceRequestId), ...withNumber('rfqNumber', numbersById(rfq ? [rfq] : []), record.sourceRfqId) }],
+    receivingDocs: receivingDocuments.map((doc) => ({ ...mapReceivingDocument(doc), ...withNumber('poNumber', poNumbers, doc.poId) })),
+    supplierInvoices: supplierInvoices.map((invoice) => ({ ...mapSupplierInvoice(invoice), ...withNumber('poNumber', poNumbers, invoice.relatedPoId), ...withNumber('grnNumber', grnNumbers, invoice.relatedGrnId), ...purchaseOrderInvoiceProgress(invoice) })),
+    documentLinks: documentLinks.map(mapDocumentLink)
+      .filter((link) => link.sourceType && link.sourceId && link.targetType && link.targetId)
+      .filter((link) => isThisOrder(link.sourceType, link.sourceId) || isThisOrder(link.targetType, link.targetId)),
+    procurementFollowups: procurementFollowups.map(mapFollowup).filter((item) => item.id && isThisOrder(item.documentType, item.documentId)),
   }
 }
 
@@ -840,6 +996,9 @@ export function createDbProcurementReadRepository({ env = process.env, prisma } 
       const client = await resolvePrisma({ env, prisma })
       return loadProcurementSnapshot(client, filters)
     },
+    // One purchase order and its receipts, invoices, links and follow-ups,
+    // in the snapshot's shape; null when the workspace has no such order.
+    purchaseOrderWorkbench: async ({ tenantId, id } = {}) => loadPurchaseOrderWorkbench(await resolvePrisma({ env, prisma }), { tenantId, id }),
     // With `access` (procurement-read-access.mjs), documents the actor may
     // not read are left out and hidden amounts are masked before any search
     // filter runs, so a search can never match a hidden value.
@@ -860,20 +1019,20 @@ export function createDbProcurementReadRepository({ env = process.env, prisma } 
       const rows = [...buildProcurementDocumentLinks(snapshot), ...snapshot.documentLinks]
       return filterProcurementRows(access ? readableProcurementRows(rows, access) : rows, filters)
     },
-    listFollowups: async (filters = {}, { access = null } = {}) => {
+    listFollowups: async (filters = {}, { access = null, timeZone } = {}) => {
       const client = await resolvePrisma({ env, prisma })
       const loaded = await loadProcurementSnapshot(client, filters)
       const snapshot = access ? readableProcurementSnapshot(loaded, access) : loaded
-      const rows = [...buildProcurementFollowups(snapshot), ...snapshot.procurementFollowups]
+      const rows = [...buildProcurementFollowups(snapshot, { timeZone }), ...snapshot.procurementFollowups]
       return filterProcurementRows(access ? readableProcurementRows(rows, access) : rows, filters)
     },
     // Counts come from what the actor may read; the open amount is hidden
     // when any amount behind it is.
-    getSummary: async (filters = {}, { access = null } = {}) => {
+    getSummary: async (filters = {}, { access = null, timeZone } = {}) => {
       const client = await resolvePrisma({ env, prisma })
       const loaded = await loadProcurementSnapshot(client, filters)
       const snapshot = access ? readableProcurementSnapshot(loaded, access) : loaded
-      const built = buildProcurementSummary(snapshot)
+      const built = buildProcurementSummary(snapshot, { timeZone })
       const explicitFollowups = snapshot.procurementFollowups.length
       const summary = explicitFollowups ? { ...built, followupCount: built.followupCount + explicitFollowups } : built
       return access ? maskProcurementSummary(summary, access) : summary

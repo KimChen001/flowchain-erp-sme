@@ -282,12 +282,12 @@ function GovernanceList({
     requests: {
       title: copy("Return requests"),
       statusKey: "workflowStatus",
-      statuses: ["", "draft", "submitted", "authorized", "executed", "cancelled", "rejected"],
+      statuses: ["", "draft", "submitted", "authorized", "partially_executed", "executed", "cancelled", "rejected"],
     },
     authorizations: {
       title: copy("Return authorizations"),
       statusKey: "workflowStatus",
-      statuses: ["", "approved", "partially_executed", "executed", "cancelled", "expired"],
+      statuses: ["", "approved", "partially_executed", "executed", "cancelled", "expired", "rejected"],
     },
     postings: {
       title: copy("Return execution"),
@@ -432,6 +432,8 @@ function RequestCreate() {
   const [requestNumber, setRequestNumber] = useState("");
   const [reasonCode, setReasonCode] = useState("damaged");
   const [reasonDetail, setReasonDetail] = useState("");
+  // What the supplier owes for the goods (L3-23); customer returns are credited.
+  const [resolution, setResolution] = useState<"credit" | "replacement">("credit");
   const [preview, setPreview] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -448,6 +450,7 @@ function RequestCreate() {
     contextDocumentId: source?.contextDocumentId || source?.id,
     reasonCode,
     reasonDetail,
+    resolution: returnType === "supplier_return" ? resolution : "credit",
     lines: selectedLines.map((id) => ({
       sourceDocumentLineId: id,
       requestedQuantity: quantities[id] || "",
@@ -456,6 +459,7 @@ function RequestCreate() {
   });
   const changeType = (value: "customer_return" | "supplier_return") => {
     setReturnType(value);
+    setResolution("credit");
     setSourceId("");
     setSelectedLines([]);
     setQuantities({});
@@ -527,6 +531,16 @@ function RequestCreate() {
             <span>{copy("Reason details")}</span>
             <input aria-label={copy("Reason details")} className={`${field} w-full`} value={reasonDetail} onChange={(event) => { setReasonDetail(event.target.value); setPreview(null); }} />
           </label>
+          {returnType === "supplier_return" ? (
+            <label className="space-y-1 text-sm md:col-span-2">
+              <span>{copy("What the supplier owes")}</span>
+              <select aria-label={copy("What the supplier owes")} className={`${field} w-full`} value={resolution} onChange={(event) => { setResolution(event.target.value === "replacement" ? "replacement" : "credit"); setPreview(null); }} data-testid="return-resolution">
+                <option value="credit">{codeLabel("credit")}</option>
+                <option value="replacement">{codeLabel("replacement")}</option>
+              </select>
+              <span className="block text-xs text-slate-500">{copy("A replacement takes the returned quantity off the purchase order's received quantity, so the replacement is expected on that order. A credit leaves the order as it is.")}</span>
+            </label>
+          ) : null}
         </div>
         <div>
           <h3 className="mb-2 font-semibold">{copy("Source lines (choose each line)")}</h3>
@@ -586,34 +600,73 @@ function useWorkbench(url: string) {
   return { data, error, refresh: () => setRevision((value) => value + 1) };
 }
 
+type RequestAction = "submit" | "authorize" | "cancel" | "reject" | "revise";
+
+// An authorization expires at the end of the chosen day, local time. Empty
+// means it does not expire (L8-06).
+const endOfDay = (day: string) => new Date(`${day}T23:59:59`).toISOString();
+
 function RequestDetail({ id }: { id: string }) {
   const returnsCopy = useReturnsCopy();
   const { copy, codeLabel, errorLabel, listSeparator } = returnsCopy;
   const { data, error, refresh } = useWorkbench(`/api/returns/requests/${encodeURIComponent(id)}/workbench`);
   const [preview, setPreview] = useState<any>(null);
-  const [action, setAction] = useState("");
+  const [action, setAction] = useState<RequestAction | "">("");
   const [authorizationNumber, setAuthorizationNumber] = useState("");
+  const [expiresOn, setExpiresOn] = useState("");
   const [authLines, setAuthLines] = useState<Record<string, { quantity: string; route: string }>>({});
   const [reason, setReason] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<{ reasonCode: string; reasonDetail: string; quantities: Record<string, string> }>({ reasonCode: "", reasonDetail: "", quantities: {} });
   const [busy, setBusy] = useState(false);
   if (error) return <ErrorState failure={error} retry={refresh} />;
   if (!data) return <Loading />;
   const request = data.request;
-  const doPreview = async (nextAction: "submit" | "authorize" | "cancel") => {
+  const authorizationLines = () =>
+    data.lines.map((line: any) => ({
+      returnRequestLineId: line.id,
+      authorizedQuantity: authLines[line.id]?.quantity || "",
+      dispositionRoute: authLines[line.id]?.route || "",
+    }));
+  // A draft is revised with the same source lines; only quantities and the
+  // reason change here.
+  const revisedRequest = () => ({
+    requestNumber: request.requestNumber,
+    returnType: request.returnType,
+    contextDocumentType: request.contextDocumentType || request.sourceDocumentType,
+    contextDocumentId: request.contextDocumentId || request.sourceDocumentId,
+    reasonCode: draft.reasonCode,
+    reasonDetail: draft.reasonDetail,
+    resolution: request.resolution || "credit",
+    lines: data.lines.map((line: any) => ({
+      sourceDocumentLineId: line.sourceDocumentLineId,
+      requestedQuantity: draft.quantities[line.id] ?? line.requestedQuantity,
+      reasonCode: draft.reasonCode,
+      conditionCode: line.conditionCode || "",
+    })),
+  });
+  const startEditing = () => {
+    setDraft({
+      reasonCode: request.reasonCode || "",
+      reasonDetail: request.reasonDetail || "",
+      quantities: Object.fromEntries(data.lines.map((line: any) => [line.id, line.requestedQuantity])),
+    });
+    setEditing(true);
+    setAction("revise");
+    setPreview(null);
+  };
+  const doPreview = async (nextAction: RequestAction) => {
     setAction(nextAction);
     const body =
       nextAction === "authorize"
-        ? {
-            authorizationNumber,
-            lines: data.lines.map((line: any) => ({
-              returnRequestLineId: line.id,
-              authorizedQuantity: authLines[line.id]?.quantity || "",
-              dispositionRoute: authLines[line.id]?.route || "",
-            })),
-          }
+        ? { authorizationNumber, lines: authorizationLines() }
         : nextAction === "cancel"
           ? { reason }
-          : {};
+          : nextAction === "reject"
+            ? { authorizationNumber, reason }
+            : nextAction === "revise"
+              ? revisedRequest()
+              : {};
     const suffix =
       nextAction === "authorize" ? "authorization-preview" : `${nextAction}-preview`;
     try {
@@ -625,24 +678,33 @@ function RequestDetail({ id }: { id: string }) {
   const confirm = async () => {
     setBusy(true);
     try {
-      const body =
-        action === "authorize"
-          ? {
-              expectedRequestVersion: request.version,
-              authorizationNumber,
-              expiresAt: new Date(Date.now() + 7 * 86_400_000).toISOString(),
-              idempotencyKey: key("authorize-return"),
-              lines: data.lines.map((line: any) => ({
-                returnRequestLineId: line.id,
-                authorizedQuantity: authLines[line.id]?.quantity || "",
-                dispositionRoute: authLines[line.id]?.route || "",
-              })),
-            }
-          : action === "cancel"
-            ? { expectedVersion: request.version, reason, idempotencyKey: key("cancel-return") }
-            : { expectedVersion: request.version, idempotencyKey: key("submit-return") };
-      await apiJson(`/api/returns/requests/${id}/${action === "authorize" ? "authorize" : action}`, json("POST", body));
+      if (action === "revise")
+        await apiJson(`/api/returns/requests/${id}`, json("PATCH", {
+          ...revisedRequest(),
+          expectedVersion: request.version,
+          idempotencyKey: key("revise-return"),
+        }));
+      else {
+        const body =
+          action === "authorize"
+            ? {
+                expectedRequestVersion: request.version,
+                authorizationNumber,
+                ...(expiresOn ? { expiresAt: endOfDay(expiresOn) } : {}),
+                idempotencyKey: key("authorize-return"),
+                lines: authorizationLines(),
+              }
+            : action === "reject"
+              ? { expectedRequestVersion: request.version, authorizationNumber, reason, idempotencyKey: key("reject-return") }
+              : action === "cancel"
+                ? { expectedVersion: request.version, reason, idempotencyKey: key("cancel-return") }
+                : { expectedVersion: request.version, idempotencyKey: key("submit-return") };
+        await apiJson(`/api/returns/requests/${id}/${action}`, json("POST", body));
+      }
       setPreview(null);
+      setEditing(false);
+      setAction("");
+      setReason("");
       refresh();
     } catch (cause) {
       setPreview(failedPreview(returnsCopy, cause, "The action could not be completed"));
@@ -656,6 +718,13 @@ function RequestDetail({ id }: { id: string }) {
       : request.returnType === "customer_return"
         ? ["receive_to_quarantine"]
         : ["return_from_available", "return_from_quarantine"];
+  const confirmLabel = {
+    authorize: copy("Confirm authorization"),
+    submit: copy("Confirm submit"),
+    cancel: copy("Confirm cancellation"),
+    reject: copy("Confirm rejection"),
+    revise: copy("Save draft changes"),
+  }[action || "submit"];
   return (
     <div className="space-y-4" data-testid="return-request-workbench">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -663,8 +732,12 @@ function RequestDetail({ id }: { id: string }) {
           <Link to="/app/inventory/returns/requests" className="text-sm font-semibold text-blue-600">{copy("← Back to return requests")}</Link>
           <h2 className="mt-3 text-lg font-semibold">{request.requestNumber}</h2>
           <div className="mt-2 flex gap-2"><Status value={request.returnType} /><Status value={request.workflowStatus} /></div>
+          {request.returnType === "supplier_return" ? (
+            <p className="mt-2 text-xs text-slate-600" data-testid="return-resolution-shown">{copy("What the supplier owes: {resolution}", { resolution: codeLabel(request.resolution || "credit") })}</p>
+          ) : null}
         </div>
         <div className="flex gap-2">
+          <button className={secondary} disabled={!data.availableActions.revise || editing} onClick={startEditing} data-testid="edit-return-draft">{copy("Edit draft")}</button>
           <button className={secondary} disabled={!data.availableActions.submit} onClick={() => doPreview("submit")} data-testid="preview-submit-return">{copy("Preview submit")}</button>
           <button className={secondary} disabled={!data.availableActions.cancel} onClick={() => doPreview("cancel")}>{copy("Preview cancellation")}</button>
         </div>
@@ -679,10 +752,40 @@ function RequestDetail({ id }: { id: string }) {
           <tbody>{data.lines.map((line: any) => <tr key={line.id} className="border-b last:border-0"><td className="px-4 py-3 font-semibold">{line.sku}</td><td className="px-4 py-3">{line.itemName}</td><td className="px-4 py-3">{line.sourceDocumentLineId}</td><td className="px-4 py-3">{line.sourceQuantity}</td><td className="px-4 py-3">{line.requestedQuantity} {line.unit}</td><td className="px-4 py-3">{line.sourceWarehouseIds.join(", ")}</td></tr>)}</tbody>
         </table>
       </Card>
+      {editing ? (
+        <Card className="space-y-4 p-5" data-testid="return-request-edit-form">
+          <h3 className="font-semibold">{copy("Edit draft")}</h3>
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="space-y-1 text-sm">
+              <span>{copy("Reason code")}</span>
+              <input aria-label={copy("Reason code")} className={`${field} w-full`} value={draft.reasonCode} onChange={(event) => { setDraft((current) => ({ ...current, reasonCode: event.target.value })); setPreview(null); }} />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span>{copy("Reason details")}</span>
+              <input aria-label={copy("Reason details")} className={`${field} w-full`} value={draft.reasonDetail} onChange={(event) => { setDraft((current) => ({ ...current, reasonDetail: event.target.value })); setPreview(null); }} />
+            </label>
+          </div>
+          {data.lines.map((line: any) => (
+            <div key={line.id} className="grid gap-3 rounded-lg border p-3 md:grid-cols-[1fr_180px] md:items-center">
+              <div className="text-sm"><strong>{line.sku}</strong> · {line.itemName}</div>
+              <input aria-label={copy("Requested quantity {sku}", { sku: line.sku })} className={field} value={draft.quantities[line.id] ?? ""} onChange={(event) => { setDraft((current) => ({ ...current, quantities: { ...current.quantities, [line.id]: event.target.value } })); setPreview(null); }} />
+            </div>
+          ))}
+          <div className="flex gap-2">
+            <button className={secondary} onClick={() => doPreview("revise")} data-testid="preview-revise-return">{copy("Preview changes")}</button>
+            <button className={secondary} onClick={() => { setEditing(false); setAction(""); setPreview(null); }}>{copy("Discard changes")}</button>
+          </div>
+        </Card>
+      ) : null}
       {data.availableActions.authorize ? (
         <Card className="space-y-4 p-5" data-testid="return-authorization-form">
           <h3 className="font-semibold">{request.workflowStatus === "executed" ? copy("Quarantine release authorization") : copy("Manager authorization")}</h3>
           <input aria-label={copy("Authorization number")} className={`${field} w-full`} placeholder={copy("Authorization number")} value={authorizationNumber} onChange={(event) => { setAuthorizationNumber(event.target.value); setPreview(null); }} />
+          <label className="block space-y-1 text-sm">
+            <span>{copy("Expires on (optional)")}</span>
+            <input type="date" aria-label={copy("Authorization expiry date")} className={`${field} w-full`} value={expiresOn} onChange={(event) => { setExpiresOn(event.target.value); setPreview(null); }} />
+            <span className="block text-xs text-slate-500">{copy("Leave empty if the authorization should not expire.")}</span>
+          </label>
           {data.lines.map((line: any) => (
             <div key={line.id} className="grid gap-3 rounded-lg border p-3 md:grid-cols-[1fr_180px_260px] md:items-center">
               <div className="text-sm"><strong>{line.sku}</strong><div className="text-xs text-slate-500">{copy("Requested {quantity} {unit}", { quantity: line.requestedQuantity, unit: line.unit })}</div></div>
@@ -693,11 +796,17 @@ function RequestDetail({ id }: { id: string }) {
               </select>
             </div>
           ))}
-          <button className={secondary} onClick={() => doPreview("authorize")} data-testid="preview-authorize-return">{copy("Preview authorization")}</button>
+          <div className="flex flex-wrap gap-2">
+            <button className={secondary} onClick={() => doPreview("authorize")} data-testid="preview-authorize-return">{copy("Preview authorization")}</button>
+            {data.availableActions.reject ? (
+              <button className={secondary} onClick={() => doPreview("reject")} data-testid="preview-reject-return">{copy("Preview rejection")}</button>
+            ) : null}
+          </div>
         </Card>
       ) : null}
-      {action === "cancel" ? <input aria-label={copy("Cancellation reason")} className={`${field} w-full`} placeholder={copy("Cancellation reason")} value={reason} onChange={(event) => setReason(event.target.value)} /> : null}
-      <Preview value={preview} confirm={confirm} confirmLabel={action === "authorize" ? copy("Confirm authorization") : action === "submit" ? copy("Confirm submit") : copy("Confirm cancellation")} busy={busy} />
+      {action === "cancel" ? <input aria-label={copy("Cancellation reason")} className={`${field} w-full`} placeholder={copy("Cancellation reason")} value={reason} onChange={(event) => { setReason(event.target.value); setPreview(null); }} /> : null}
+      {action === "reject" ? <input aria-label={copy("Rejection reason")} className={`${field} w-full`} placeholder={copy("Rejection reason")} value={reason} onChange={(event) => { setReason(event.target.value); setPreview(null); }} /> : null}
+      <Preview value={preview} confirm={confirm} confirmLabel={confirmLabel} busy={busy} />
       <RelatedAuthorizations rows={data.authorizations} />
       <Evidence rows={data.evidence} />
     </div>
@@ -714,16 +823,33 @@ function RelatedAuthorizations({ rows }: { rows: any[] }) {
   );
 }
 
+// Select values that ask the server to use (and create when missing) a stock
+// record instead of an existing balance: a quarantine record in a warehouse
+// for a customer return receipt (V-C-01), or another location of the same
+// warehouse for a quarantine release (L8-14).
+const NEW_QUARANTINE = "new-quarantine:";
+const NEW_DESTINATION = "new-destination";
+type CloseAction = "cancel" | "expire" | "close_remainder";
+const closePaths: Record<CloseAction, string> = {
+  cancel: "cancel",
+  expire: "expire",
+  close_remainder: "close-remainder",
+};
+
 function AuthorizationDetail({ id }: { id: string }) {
   const returnsCopy = useReturnsCopy();
   const { copy, codeLabel } = returnsCopy;
   const navigate = useNavigate();
+  const warehouseName = useWarehouseNames();
   const { data, error, refresh } = useWorkbench(`/api/returns/authorizations/${encodeURIComponent(id)}/workbench`);
   const [balances, setBalances] = useState<Record<string, { available: BalanceOption[]; quarantine: BalanceOption[] }>>({});
   const [lines, setLines] = useState<Record<string, any>>({});
   const [postingNumber, setPostingNumber] = useState("");
   const [preview, setPreview] = useState<any>(null);
   const [busy, setBusy] = useState(false);
+  const [closeAction, setCloseAction] = useState<CloseAction | "">("");
+  const [closeReason, setCloseReason] = useState("");
+  const [closePreview, setClosePreview] = useState<any>(null);
   useEffect(() => {
     if (!data) return;
     Promise.all(
@@ -739,15 +865,26 @@ function AuthorizationDetail({ id }: { id: string }) {
   if (error) return <ErrorState failure={error} retry={refresh} />;
   if (!data) return <Loading />;
   const auth = data.authorization;
+  const actions = data.availableActions || {};
   const requestLineById = Object.fromEntries(data.requestLines.map((line: any) => [line.id, line]));
   const postingLines = auth.lines.map((authLine: any) => {
     const input = lines[authLine.id] || {};
+    const source = String(input.quarantineBalanceId || "");
+    const destination = String(input.destinationInventoryBalanceId || "");
     return {
       returnAuthorizationLineId: authLine.id,
       quantity: input.quantity || "",
       ...(input.inventoryBalanceId ? { inventoryBalanceId: input.inventoryBalanceId } : {}),
-      ...(input.quarantineBalanceId ? { quarantineBalanceId: input.quarantineBalanceId } : {}),
-      ...(input.destinationInventoryBalanceId ? { destinationInventoryBalanceId: input.destinationInventoryBalanceId } : {}),
+      ...(source.startsWith(NEW_QUARANTINE)
+        ? { warehouseId: source.slice(NEW_QUARANTINE.length), location: input.location || "" }
+        : source
+          ? { quarantineBalanceId: source }
+          : {}),
+      ...(destination === NEW_DESTINATION
+        ? { destinationLocation: input.destinationLocation || "" }
+        : destination
+          ? { destinationInventoryBalanceId: destination }
+          : {}),
     };
   });
   const runPreview = async () => {
@@ -773,14 +910,75 @@ function AuthorizationDetail({ id }: { id: string }) {
       setBusy(false);
     }
   };
+  const previewClose = async (next: CloseAction) => {
+    setCloseAction(next);
+    try {
+      setClosePreview(await apiJson(`/api/returns/authorizations/${id}/${closePaths[next]}-preview`, json("POST", { reason: closeReason })));
+    } catch (cause) {
+      setClosePreview(failedPreview(returnsCopy, cause, "Could not load the preview", "PREVIEW_FAILED"));
+    }
+  };
+  const confirmClose = async () => {
+    if (!closeAction) return;
+    setBusy(true);
+    try {
+      await apiJson(`/api/returns/authorizations/${id}/${closePaths[closeAction]}`, json("POST", {
+        expectedAuthorizationVersion: auth.version,
+        expectedRequestVersion: data.request.version,
+        ...(closeAction === "expire" ? {} : { reason: closeReason }),
+        idempotencyKey: key(`${closePaths[closeAction]}-return-authorization`),
+      }));
+      setClosePreview(null);
+      setCloseAction("");
+      setCloseReason("");
+      refresh();
+    } catch (cause) {
+      setClosePreview(failedPreview(returnsCopy, cause, "The action could not be completed"));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const closingLines = (closePreview?.lines || []).filter((line: any) => line.closingQuantity && line.closingQuantity !== "0.0000");
+  const authLineSku = (authorizationLineId: string) => {
+    const authLine = auth.lines.find((line: any) => line.id === authorizationLineId);
+    return requestLineById[authLine?.returnRequestLineId]?.sku || authorizationLineId;
+  };
   return (
     <div className="space-y-4" data-testid="return-authorization-workbench">
-      <div>
-        <Link to="/app/inventory/returns/authorizations" className="text-sm font-semibold text-blue-600">{copy("← Back to return authorizations")}</Link>
-        <h2 className="mt-3 text-lg font-semibold">{auth.authorizationNumber}</h2>
-        <div className="mt-2 flex gap-2"><Status value={data.request.returnType} /><Status value={auth.workflowStatus} /></div>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <Link to="/app/inventory/returns/authorizations" className="text-sm font-semibold text-blue-600">{copy("← Back to return authorizations")}</Link>
+          <h2 className="mt-3 text-lg font-semibold">{auth.authorizationNumber}</h2>
+          <div className="mt-2 flex gap-2"><Status value={data.request.returnType} /><Status value={auth.workflowStatus} /></div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button className={secondary} disabled={!actions.cancel} onClick={() => previewClose("cancel")} data-testid="preview-cancel-return-authorization">{copy("Preview cancellation")}</button>
+          <button className={secondary} disabled={!actions.expire} onClick={() => previewClose("expire")} data-testid="preview-expire-return-authorization">{copy("Preview expiry")}</button>
+          <button className={secondary} disabled={!actions.closeRemainder} onClick={() => previewClose("close_remainder")} data-testid="preview-close-return-remainder">{copy("Preview closing the remainder")}</button>
+        </div>
       </div>
       <ReadOnly capabilities={data.capabilities} />
+      {actions.openPostingNumbers?.length ? (
+        <Card className="border-amber-200 bg-amber-50 p-4 text-sm text-amber-800" data-testid="return-authorization-open-postings">
+          {copy("Open postings: {numbers}. Cancel or post them before you close this authorization.", { numbers: actions.openPostingNumbers.join(", ") })}
+        </Card>
+      ) : null}
+      {closeAction && closeAction !== "expire" ? (
+        <input aria-label={closeAction === "cancel" ? copy("Cancellation reason") : copy("Reason for closing the remainder")} className={`${field} w-full`} placeholder={closeAction === "cancel" ? copy("Cancellation reason") : copy("Reason for closing the remainder")} value={closeReason} onChange={(event) => { setCloseReason(event.target.value); setClosePreview(null); }} />
+      ) : null}
+      {closingLines.length ? (
+        <Card className="space-y-1 p-4 text-sm" data-testid="return-remainder-lines">
+          {closingLines.map((line: any) => (
+            <div key={line.returnAuthorizationLineId}>{copy("{sku}: posted {posted}, closing {closing} not returned", { sku: authLineSku(line.returnAuthorizationLineId), posted: line.postedQuantity, closing: line.closingQuantity })}</div>
+          ))}
+        </Card>
+      ) : null}
+      <Preview
+        value={closePreview}
+        confirm={confirmClose}
+        confirmLabel={closeAction === "expire" ? copy("Confirm expiry") : closeAction === "close_remainder" ? copy("Confirm closing the remainder") : copy("Confirm cancellation")}
+        busy={busy}
+      />
       <Card className="space-y-4 p-5">
         <div className="flex flex-wrap gap-3 text-sm">
           <Link className="font-semibold text-blue-600" to={`/app/inventory/returns/requests/${data.request.id}`}>{copy("Source request {number}", { number: data.request.requestNumber })}</Link>
@@ -791,19 +989,42 @@ function AuthorizationDetail({ id }: { id: string }) {
           const options = balances[requestLine.id] || { available: [], quarantine: [] };
           const value = lines[authLine.id] || {};
           const route = authLine.dispositionRoute;
+          const setLine = (patch: Record<string, string>) => {
+            setLines((current) => ({ ...current, [authLine.id]: { ...current[authLine.id], ...patch } }));
+            setPreview(null);
+          };
+          const newQuarantineOptions =
+            route === "receive_to_quarantine"
+              ? (requestLine.sourceWarehouseIds || []).map((warehouseId: string) => ({
+                  value: `${NEW_QUARANTINE}${warehouseId}`,
+                  label: copy("{warehouse} · receive into a quarantine location", { warehouse: warehouseName(warehouseId) }),
+                }))
+              : [];
           return (
             <div key={authLine.id} className="space-y-3 rounded-xl border p-4">
               <div className="text-sm font-semibold">{requestLine.sku} · {requestLine.itemName} · {copy("Authorized {quantity} {unit}", { quantity: authLine.authorizedQuantity, unit: requestLine.unit })}</div>
+              {authLine.postedQuantity != null ? (
+                <div className="text-xs text-slate-500">
+                  {copy("Posted {quantity}", { quantity: authLine.postedQuantity })}
+                  {authLine.closedQuantity && authLine.closedQuantity !== "0.0000" ? ` · ${copy("Remainder closed {quantity}", { quantity: authLine.closedQuantity })}` : ""}
+                </div>
+              ) : null}
               <div className="text-xs text-slate-500">{copy("{route}; choose every balance. None is selected for you.", { route: codeLabel(route) })}</div>
               <div className="grid gap-3 md:grid-cols-3">
-                <input aria-label={copy("Posting quantity {sku}", { sku: requestLine.sku })} className={field} placeholder={copy("Posting quantity")} value={value.quantity || ""} onChange={(event) => { setLines((current) => ({ ...current, [authLine.id]: { ...current[authLine.id], quantity: event.target.value } })); setPreview(null); }} />
+                <input aria-label={copy("Posting quantity {sku}", { sku: requestLine.sku })} className={field} placeholder={copy("Posting quantity")} value={value.quantity || ""} onChange={(event) => setLine({ quantity: event.target.value })} />
                 {route === "return_from_available" ? (
                   <BalanceSelect label={copy("Available balance {sku}", { sku: requestLine.sku })} value={value.inventoryBalanceId || ""} options={options.available} onChange={(selected) => { setLines((current) => ({ ...current, [authLine.id]: { quantity: current[authLine.id]?.quantity || "", inventoryBalanceId: selected } })); setPreview(null); }} />
                 ) : (
-                  <BalanceSelect label={copy("Quarantine balance {sku}", { sku: requestLine.sku })} value={value.quarantineBalanceId || ""} options={options.quarantine} onChange={(selected) => { setLines((current) => ({ ...current, [authLine.id]: { ...current[authLine.id], quarantineBalanceId: selected } })); setPreview(null); }} />
+                  <BalanceSelect label={copy("Quarantine balance {sku}", { sku: requestLine.sku })} value={value.quarantineBalanceId || ""} options={options.quarantine} extraOptions={newQuarantineOptions} onChange={(selected) => setLine({ quarantineBalanceId: selected })} />
                 )}
+                {String(value.quarantineBalanceId || "").startsWith(NEW_QUARANTINE) ? (
+                  <input aria-label={copy("Quarantine location {sku}", { sku: requestLine.sku })} className={field} placeholder={copy("Location (optional)")} value={value.location || ""} onChange={(event) => setLine({ location: event.target.value })} />
+                ) : null}
                 {route === "release_quarantine_to_available" ? (
-                  <BalanceSelect label={copy("Destination available balance {sku}", { sku: requestLine.sku })} value={value.destinationInventoryBalanceId || ""} options={options.available} onChange={(selected) => { setLines((current) => ({ ...current, [authLine.id]: { ...current[authLine.id], destinationInventoryBalanceId: selected } })); setPreview(null); }} />
+                  <BalanceSelect label={copy("Destination available balance {sku}", { sku: requestLine.sku })} value={value.destinationInventoryBalanceId || ""} options={options.available} extraOptions={[{ value: NEW_DESTINATION, label: copy("Another location in the same warehouse") }]} onChange={(selected) => setLine({ destinationInventoryBalanceId: selected })} />
+                ) : null}
+                {value.destinationInventoryBalanceId === NEW_DESTINATION ? (
+                  <input aria-label={copy("Destination location {sku}", { sku: requestLine.sku })} className={field} placeholder={copy("Location (optional)")} value={value.destinationLocation || ""} onChange={(event) => setLine({ destinationLocation: event.target.value })} />
                 ) : null}
               </div>
             </div>
@@ -822,11 +1043,13 @@ function BalanceSelect({
   label,
   value,
   options,
+  extraOptions = [],
   onChange,
 }: {
   label: string;
   value: string;
   options: BalanceOption[];
+  extraOptions?: { value: string; label: string }[];
   onChange: (value: string) => void;
 }) {
   const { copy } = useReturnsCopy();
@@ -838,6 +1061,9 @@ function BalanceSelect({
         <option key={option.id} value={option.id}>
           {warehouseName(option.warehouseId)} / {option.location || copy("No location")} · {option.balanceType === "available" ? copy("Available {quantity}", { quantity: option.availableQuantity }) : copy("Quarantine {quantity}", { quantity: option.quarantineQuantity })}
         </option>
+      ))}
+      {extraOptions.map((option) => (
+        <option key={option.value} value={option.value}>{option.label}</option>
       ))}
     </select>
   );
@@ -857,11 +1083,19 @@ function PostingDetail({ id }: { id: string }) {
   const posting = data.posting;
   const runPreview = async (next: "ready" | "post" | "reverse") => {
     setAction(next);
+    setReason("");
     try {
       setPreview(await apiJson(`/api/returns/postings/${id}/${next}-preview`, json("POST", {})));
     } catch (cause) {
       setPreview(failedPreview(returnsCopy, cause, "Could not load the preview", "PREVIEW_FAILED"));
     }
+  };
+  // Cancelling an unposted draft or ready posting has no server preview: it
+  // moves no stock, and the server checks the state again (V-C-06).
+  const startCancel = () => {
+    setAction("cancel");
+    setReason("");
+    setPreview(null);
   };
   const confirm = async () => {
     setBusy(true);
@@ -870,10 +1104,12 @@ function PostingDetail({ id }: { id: string }) {
         expectedPostingVersion: posting.version,
         expectedAuthorizationVersion: data.returnAuthorization.version,
         expectedRequestVersion: data.returnRequest.version,
-        ...(action === "reverse" ? { reason } : {}),
+        ...(action === "reverse" || action === "cancel" ? { reason } : {}),
         idempotencyKey: key(`${action}-return-posting`),
       }));
       setPreview(null);
+      setAction("");
+      setReason("");
       refresh();
     } catch (cause) {
       setPreview(failedPreview(returnsCopy, cause, "The action could not be completed"));
@@ -893,6 +1129,7 @@ function PostingDetail({ id }: { id: string }) {
           <button className={secondary} disabled={!data.availableActions.ready} onClick={() => runPreview("ready")}>{copy("Preview: mark ready to post")}</button>
           <button className={secondary} disabled={!data.availableActions.post} onClick={() => runPreview("post")} data-testid="preview-post-return">{copy("Preview posting")}</button>
           <button className={secondary} disabled={!data.availableActions.reverse} onClick={() => runPreview("reverse")} data-testid="preview-reverse-return">{copy("Preview reversal")}</button>
+          <button className={secondary} disabled={!data.availableActions.cancel} onClick={startCancel} data-testid="cancel-return-posting">{copy("Cancel posting")}</button>
         </div>
       </div>
       <ReadOnly capabilities={{ "return-posting": data.capability }} />
@@ -906,11 +1143,21 @@ function PostingDetail({ id }: { id: string }) {
       <Card className="overflow-x-auto">
         <table className="w-full min-w-[920px] text-xs">
           <thead><tr className="border-b">{["SKU", copy("Quantity"), copy("Disposition route"), copy("Source balance"), copy("Destination balance"), copy("Warehouse / location")].map((label) => <th key={label} className="px-4 py-3 text-left">{label}</th>)}</tr></thead>
-          <tbody>{data.lines.map((line: any) => <tr key={line.id} className="border-b last:border-0"><td className="px-4 py-3 font-semibold">{line.sku}</td><td className="px-4 py-3">{line.quantity} {line.unit}</td><td className="px-4 py-3">{codeLabel(line.dispositionRoute)}</td><td className="px-4 py-3">{line.sourceBalanceId}</td><td className="px-4 py-3">{line.destinationBalanceId || "—"}</td><td className="px-4 py-3">{warehouseName(line.warehouseId)} / {line.location || copy("No location")}</td></tr>)}</tbody>
+          <tbody>{data.lines.map((line: any) => <tr key={line.id} className="border-b last:border-0"><td className="px-4 py-3 font-semibold">{line.sku}</td><td className="px-4 py-3">{line.quantity} {line.unit}</td><td className="px-4 py-3">{codeLabel(line.dispositionRoute)}</td><td className="px-4 py-3">{line.sourceBalanceId}</td><td className="px-4 py-3">{line.destinationBalanceId ? `${line.destinationBalanceId}${line.destinationLocation ? ` · ${line.destinationLocation}` : ""}` : "—"}</td><td className="px-4 py-3">{warehouseName(line.warehouseId)} / {line.location || copy("No location")}</td></tr>)}</tbody>
         </table>
       </Card>
       {action === "reverse" ? <input aria-label={copy("Reversal reason")} className={`${field} w-full`} placeholder={copy("Reversal reason (required)")} value={reason} onChange={(event) => setReason(event.target.value)} /> : null}
-      <Preview value={preview} confirm={confirm} confirmLabel={action === "ready" ? copy("Confirm ready to post") : action === "post" ? copy("Confirm posting") : copy("Confirm reversal")} busy={busy} />
+      {action === "cancel" ? (
+        <Card className="space-y-3 border-amber-200 bg-amber-50 p-4" data-testid="return-posting-cancel">
+          <div className="text-sm text-amber-800">{copy("Cancelling keeps this posting on record and moves no stock. Its authorization can then be closed or used for a new posting.")}</div>
+          <input aria-label={copy("Cancellation reason")} className={`${field} w-full`} placeholder={copy("Cancellation reason")} value={reason} onChange={(event) => setReason(event.target.value)} />
+          <div className="flex gap-2">
+            <button className={primary} disabled={!reason.trim() || busy} onClick={confirm} data-testid="confirm-cancel-return-posting">{busy ? copy("Working…") : copy("Confirm cancellation")}</button>
+            <button className={secondary} disabled={busy} onClick={() => setAction("")}>{copy("Keep the posting")}</button>
+          </div>
+        </Card>
+      ) : null}
+      <Preview value={preview} confirm={action === "cancel" ? undefined : confirm} confirmLabel={action === "ready" ? copy("Confirm ready to post") : action === "post" ? copy("Confirm posting") : copy("Confirm reversal")} busy={busy} />
       <Reconciliation value={data.reconciliation} />
       <Card className="p-5">
         <h3 className="mb-3 font-semibold">{copy("Related records")}</h3>
@@ -938,7 +1185,7 @@ function Reconciliation({ value }: { value: any }) {
               {line.checks.map((check: any) => (
                 <div key={check.rule} className="rounded-lg bg-slate-50 p-3 text-xs">
                   <div className="font-semibold">{ruleLabel(check.rule)} · {codeLabel(check.status)}</div>
-                  <div className="mt-1 break-all text-slate-400">{check.rule}</div>
+                  <div className="mt-1 break-all text-slate-500">{check.rule}</div>
                   <div className="mt-1 text-slate-500">{copy("Calculated {calculated} / recorded {recorded}", { calculated: checkValue(check.calculated), recorded: checkValue(check.recorded) })}</div>
                 </div>
               ))}
@@ -964,7 +1211,7 @@ function Evidence({
       {!rows.length && !movements.length ? <div className="text-sm text-slate-500">{copy("No evidence yet.")}</div> : null}
       <div className="space-y-2">
         {rows.map((row) => <div key={row.id} className="rounded-lg bg-slate-50 p-3 text-xs"><strong>{codeLabel(row.action)}</strong> · {row.actor?.name || row.actorId || copy("System")} · {row.occurredAt || row.createdAt}<div className="mt-1 text-slate-500">{row.summary || row.metadata?.reason || copy("Audit event")}</div></div>)}
-        {movements.map((row) => <div key={row.id} className="rounded-lg bg-blue-50 p-3 text-xs"><strong>{codeLabel(row.movementType)}</strong> <span className="text-slate-400">{row.movementType}</span> · {copy("Batch {id}", { id: row.postingBatchId })}<div className="mt-1 text-slate-500">{copy("In {in} / out {out}", { in: row.quantityIn, out: row.quantityOut })} · {codeLabel(row.balanceType)}:{row.balanceId}</div></div>)}
+        {movements.map((row) => <div key={row.id} className="rounded-lg bg-blue-50 p-3 text-xs"><strong>{codeLabel(row.movementType)}</strong> <span className="text-slate-500">{row.movementType}</span> · {copy("Batch {id}", { id: row.postingBatchId })}<div className="mt-1 text-slate-500">{copy("In {in} / out {out}", { in: row.quantityIn, out: row.quantityOut })} · {codeLabel(row.balanceType)}:{row.balanceId}</div></div>)}
       </div>
     </Card>
   );

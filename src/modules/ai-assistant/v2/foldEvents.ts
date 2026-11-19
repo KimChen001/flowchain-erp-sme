@@ -24,6 +24,9 @@ export type AssistantV2Message = {
   body: Record<string, unknown> | null;
 };
 
+// Notices that inform beside the answer instead of explaining why there is none.
+const INFORMING_NOTICES: ReadonlySet<AssistantV2NoticeCode> = new Set<AssistantV2NoticeCode>(["context_restarted"]);
+
 export function emptyAssistantV2Message(): AssistantV2Message {
   return { parts: [], toolStatus: null, notices: [], error: null, done: false, body: null };
 }
@@ -116,7 +119,9 @@ export function foldAssistantV2Event(message: AssistantV2Message, event: Assista
       if (event.status >= 400) return { ...finished, error: message.error || failureOfStatus(event.status) };
       const summary = summaryOf(event.body);
       // After an error (withheld, say) the summary may hold what the error stopped.
-      const parts = !message.parts.length && !message.notices.length && !message.error && Array.isArray(event.body.parts) && summary
+      // A notice that only informs (the server restarted the conversation)
+      // does not stand in for the answer.
+      const parts = !message.parts.length && !message.notices.some((code) => !INFORMING_NOTICES.has(code)) && !message.error && Array.isArray(event.body.parts) && summary
         ? [{ id: "summary", kind: "text" as const, text: summary, flags: [] }]
         : message.parts;
       return { ...finished, parts: chipsLast(parts), body: event.body };

@@ -137,6 +137,24 @@ test('Pilot workspace APIs provision users, protect admin actions, and enforce w
       await execFileAsync(process.execPath, [setupScript, `--tenant-id=${setupTenantId}`, '--workspace-name=Must Not Overwrite'], { env: process.env })
       assert.equal((await prisma.tenant.findUnique({ where: { id: setupTenantId } })).name, 'Preserved Workspace')
       await prisma.userWarehouseScope.deleteMany({ where: { tenantId: setupTenantId } }); await prisma.user.deleteMany({ where: { tenantId: setupTenantId } }); await prisma.auditLog.deleteMany({ where: { tenantId: setupTenantId } }); await prisma.warehouse.deleteMany({ where: { tenantId: setupTenantId } }); await prisma.tenant.delete({ where: { id: setupTenantId } })
+
+      // Design audit L11-27: en-GB is a regional format of its own (the
+      // database accepts it), and once posted transactions exist the timezone
+      // locks with the base currency. The regional format, which only changes
+      // how dates and numbers are written, stays open.
+      const open = (await call(admin, 'GET', '/api/workspace')).payload
+      assert.ok(open.options.locales.includes('en-GB'))
+      assert.deepEqual([open.baseCurrencyLocked, open.timezoneLocked], [false, false])
+      const british = await call(admin, 'PATCH', '/api/workspace', { ...open, locale: 'en-GB' })
+      assert.deepEqual([british.status, british.payload.locale], [200, 'en-GB'])
+      assert.equal((await prisma.tenant.findUnique({ where: { id: scenario.tenantId } })).locale, 'en-GB')
+      await prisma.tenant.update({ where: { id: scenario.tenantId }, data: { openingBalanceLockedAt: new Date() } })
+      const posted = (await call(admin, 'GET', '/api/workspace')).payload
+      assert.deepEqual([posted.baseCurrencyLocked, posted.timezoneLocked], [true, true])
+      const moved = await call(admin, 'PATCH', '/api/workspace', { ...posted, timezone: 'Europe/London' })
+      assert.deepEqual([moved.status, moved.payload.code], [409, 'TIMEZONE_LOCKED'])
+      const rewritten = await call(admin, 'PATCH', '/api/workspace', { ...posted, locale: 'en-US' })
+      assert.deepEqual([rewritten.status, rewritten.payload.locale, rewritten.payload.timezone], [200, 'en-US', open.timezone])
     } finally {
       await prisma.workspaceInvitation.deleteMany({ where: { tenantId: scenario.tenantId } })
       await prisma.userWarehouseScope.deleteMany({ where: { tenantId: scenario.tenantId } })

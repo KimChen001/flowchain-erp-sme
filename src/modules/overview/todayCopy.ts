@@ -1,6 +1,8 @@
 import { useCallback } from "react";
+import { A } from "../../components/ui";
 import { useI18n } from "../../i18n/I18n";
 import { statusCodeLabel } from "../../i18n/statusLabels";
+import { nameSaysRole } from "./partnerName";
 
 // Display copy for Today (/app/overview/risks). English is the source; zh-CN
 // is chosen by the interface language. The server sends codes, ids, dates and
@@ -14,9 +16,15 @@ const COPY = {
     loading: "Loading",
     refresh: "Refresh overview",
     workTitle: "Today's work",
-    workNote: "Earliest date first. Each row opens its record.",
+    workNote: "One line per kind of work, the earliest first. Open a kind to see its rows; each row opens its record.",
+    kindAll: "{n} in all",
+    groupEarliest: "Earliest: {label}",
+    changesCount: "{n} updated today",
+    kindOnly: "Show only these",
+    kindShowing: "Showing only: {kind}",
+    kindShowEvery: "Show every kind",
     noWork: "Nothing needs action right now",
-    noWorkHint: "Overdue or due purchase orders, items to reorder, supplier invoices, customer invoices, overdue receivables and sales orders to reserve or ship appear here.",
+    noWorkHint: "Overdue or due purchase orders, items to reorder, supplier invoices, customer invoices, overdue receivables and payables, and sales orders to reserve or ship appear here.",
     noOverdueWork: "Nothing is overdue",
     showAll: "Show all {n}",
     showFewer: "Show fewer",
@@ -28,17 +36,20 @@ const COPY = {
     hiddenSalesOrders: "sales orders",
     hiddenCustomerInvoices: "customer invoices",
     hiddenReceivables: "receivables",
+    hiddenPayables: "payables",
     hiddenContracts: "contracts",
     reorderScope: "Stock to reorder is worked out across every warehouse, and your role sees only some of them, so items to reorder are not listed here.",
     notChecked: "Could not be checked just now: {sources}.",
     sourceReorder: "stock to reorder",
     sourceCustomerInvoices: "customer invoices",
     sourceReceivables: "receivables",
+    sourcePayables: "payables",
     sourcePurchaseOrders: "purchase orders",
     sourceContracts: "contracts",
     sourceSetup: "setup steps",
-    sourceDatabase: "stock to reorder, customer invoices and receivables",
+    sourceDatabase: "stock to reorder, customer invoices, receivables and payables",
     truncated: "Not every record could be read ({subjects}), so the list may be incomplete.",
+    heldInvoicesTruncated: "More than 100 supplier invoices are held at the match; the next step is prepared for the 100 oldest.",
     kind_purchase_order_overdue: "Purchase order overdue",
     kind_purchase_order_due: "Purchase order due",
     kind_reorder_now: "Reorder now",
@@ -48,6 +59,7 @@ const COPY = {
     kind_bill_awaiting_receipt: "Supplier invoice waiting for its receipt",
     kind_customer_invoice_to_issue: "Customer invoice approved, not issued",
     kind_receivable_overdue: "Receivable overdue",
+    kind_payable_overdue: "Payable overdue",
     kind_sales_order_to_reserve: "Sales order to reserve",
     kind_sales_order_to_ship: "Sales order to ship",
     kind_purchase_order_to_approve: "Purchase order awaiting approval",
@@ -86,11 +98,15 @@ const COPY = {
     position: "Stock position {position}, reorder point {reorderPoint}",
     belowSafety: "Below safety stock",
     shortage: "Open sales orders exceed available stock",
+    createRequest: "Create purchase request",
     openReorderList: "Open reorder list",
     billAwaitingReceipt: "Link the receipt, then match",
     billToMatch: "Ready for the three-way match",
     billToApprove: "Matched; waiting for approval",
     billException: "Review the match exception",
+    pastDue: "{n} days past its due date",
+    pastDueOne: "1 day past its due date",
+    paymentHeld: "Payment on hold",
     amount: "Amount {amount}",
     issueToCustomer: "Approved; issue it to the customer",
     owed: "{amount} still owed",
@@ -110,7 +126,7 @@ const COPY = {
     recordOutcome: "Record a renewal, or terminate it",
     renewByAgreement: "Renews by agreement",
     tileWork: "Needs action",
-    tileWorkNote: "Every row in Today's work",
+    tileWorkNote: "Today's work and the decisions waiting on it",
     tileOverdue: "Overdue",
     tileOverdueNote: "Past their date. Select to list only these",
     tileChanges: "Documents updated today",
@@ -154,9 +170,15 @@ const COPY = {
     loading: "加载中",
     refresh: "刷新首页",
     workTitle: "今日需处理",
-    workNote: "按日期从早到晚排列，每行可打开对应记录。",
+    workNote: "每类事项一行，最早的在前；展开一类查看其中的事项，每行可打开对应记录。",
+    kindAll: "共 {n} 项",
+    groupEarliest: "最早：{label}",
+    changesCount: "今日更新 {n} 张",
+    kindOnly: "只看这一类",
+    kindShowing: "只显示：{kind}",
+    kindShowEvery: "显示全部类型",
     noWork: "暂无待处理事项",
-    noWorkHint: "逾期或即将到期的采购订单、需补货物料、采购发票、销售发票、逾期应收款，以及待预留或待发货的销售订单会显示在这里。",
+    noWorkHint: "逾期或即将到期的采购订单、需补货物料、采购发票、销售发票、逾期应收款和应付款，以及待预留或待发货的销售订单会显示在这里。",
     noOverdueWork: "暂无逾期事项",
     showAll: "显示全部 {n} 项",
     showFewer: "收起",
@@ -168,17 +190,20 @@ const COPY = {
     hiddenSalesOrders: "销售订单",
     hiddenCustomerInvoices: "销售发票",
     hiddenReceivables: "应收款",
+    hiddenPayables: "应付款",
     hiddenContracts: "合同",
     reorderScope: "补货按全部仓库计算，你的角色只能查看部分仓库，因此这里不列出需补货物料。",
     notChecked: "暂时无法检查：{sources}。",
     sourceReorder: "需补货物料",
     sourceCustomerInvoices: "销售发票",
     sourceReceivables: "应收款",
+    sourcePayables: "应付款",
     sourcePurchaseOrders: "采购订单",
     sourceContracts: "合同",
     sourceSetup: "设置步骤",
-    sourceDatabase: "需补货物料、销售发票和应收款",
+    sourceDatabase: "需补货物料、销售发票、应收款和应付款",
     truncated: "部分记录未能全部读取（{subjects}），列表可能不完整。",
+    heldInvoicesTruncated: "被三方匹配扣住的供应商发票超过 100 张，只为最早的 100 张准备了下一步。",
     kind_purchase_order_overdue: "采购订单逾期",
     kind_purchase_order_due: "采购订单即将到期",
     kind_reorder_now: "需立即补货",
@@ -188,6 +213,7 @@ const COPY = {
     kind_bill_awaiting_receipt: "采购发票待关联收货",
     kind_customer_invoice_to_issue: "销售发票已批准未开出",
     kind_receivable_overdue: "应收款逾期",
+    kind_payable_overdue: "应付款逾期",
     kind_sales_order_to_reserve: "销售订单待预留",
     kind_sales_order_to_ship: "销售订单待发货",
     kind_purchase_order_to_approve: "采购订单待审批",
@@ -223,14 +249,18 @@ const COPY = {
     notIssued: "尚未下达给供应商",
     supplier: "供应商 {name}",
     customer: "客户 {name}",
-    position: "库存头寸 {position}，再订货点 {reorderPoint}",
+    position: "库存位置（含在途）{position}，再订货点 {reorderPoint}",
     belowSafety: "低于安全库存",
     shortage: "未结销售订单超过可用库存",
+    createRequest: "创建采购申请",
     openReorderList: "打开补货清单",
     billAwaitingReceipt: "先关联收货单，再匹配",
     billToMatch: "可进行三单匹配",
     billToApprove: "已匹配，等待审批",
     billException: "复核匹配异常",
+    pastDue: "已过到期日 {n} 天",
+    pastDueOne: "已过到期日 1 天",
+    paymentHeld: "已暂停付款",
     amount: "金额 {amount}",
     issueToCustomer: "已批准，待开给客户",
     owed: "仍欠 {amount}",
@@ -250,7 +280,7 @@ const COPY = {
     recordOutcome: "请记录续约，或终止合同",
     renewByAgreement: "协商续约",
     tileWork: "待处理",
-    tileWorkNote: "今日需处理中的全部事项",
+    tileWorkNote: "今日事项及待你决定的事项",
     tileOverdue: "已逾期",
     tileOverdueNote: "已过日期；点选后只列出这些",
     tileChanges: "今日更新的单据",
@@ -303,27 +333,47 @@ export function todayCount(language: string, key: TodayCopyKey, count: number, p
   return todayText(language, count === 1 && one in COPY["en-US"] ? one : key, { n: count, ...params });
 }
 
-// Statuses the shared labels do not cover, for the document types Today lists.
-const EXTRA_STATUS: Record<string, [string, string]> = {
-  confirmed: ["Confirmed", "已确认"],
-  fulfilled: ["Fulfilled", "已完成"],
-  matching: ["Matching", "匹配中"],
-  held: ["Held", "已暂停"],
-  paid: ["Paid", "已付款"],
-  void: ["Voided", "已作废"],
-  voided: ["Voided", "已作废"],
-  export_ready: ["Export ready", "可导出"],
-  settled: ["Paid", "已结清"],
-  partially_settled: ["Partly paid", "部分付款"],
-  recorded: ["Recorded", "已登记"],
-  overdue: ["Overdue", "已逾期"],
-  not_reserved: ["Not reserved", "未预留"],
-  partially_reserved: ["Partially reserved", "部分预留"],
-  fully_reserved: ["Reserved", "已预留"],
-  not_fulfilled: ["Not fulfilled", "未履约"],
-  partially_fulfilled: ["Partially fulfilled", "部分履约"],
-  fully_fulfilled: ["Fulfilled", "已履约"],
+// A workspace calendar day (YYYY-MM-DD) in the interface locale. The day is
+// already the workspace's, so it is formatted as a date, not an instant.
+export function formatTodayDay(day: string, locale: string) {
+  const date = new Date(`${day}T00:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(date.getTime())) return day;
+  try {
+    return new Intl.DateTimeFormat(locale || "en-US", { timeZone: "UTC", dateStyle: "medium" }).format(date);
+  } catch {
+    return day;
+  }
+}
+
+// What a row of Today's work says about its date, and its colours, as Today
+// and AI priorities both show them.
+export type TodayDated = {
+  kind: string;
+  date: string | null;
+  dateKind: "due" | "order_by" | "invoice" | "promised" | "required" | "notice_by" | "ends" | "ended";
+  overdueDays: number;
 };
+export function todayDateText(language: string, locale: string, item: TodayDated, today: string) {
+  const t = (key: TodayCopyKey, params?: Record<string, string | number>) => todayText(language, key, params);
+  const day = (value: string) => formatTodayDay(value, locale);
+  if (!item.date) return t("noDate");
+  if (item.dateKind === "due") return item.overdueDays > 0 ? todayCount(language, "overdueDays", item.overdueDays) : item.date === today ? t("dueToday") : t("dueOn", { date: day(item.date) });
+  if (item.dateKind === "order_by") return item.date <= today ? t("orderToday") : t("orderBy", { date: day(item.date) });
+  if (item.dateKind === "promised") return item.overdueDays > 0 ? todayCount(language, "lateDays", item.overdueDays) : item.date === today ? t("promisedToday") : t("promisedOn", { date: day(item.date) });
+  if (item.dateKind === "required") return t("neededBy", { date: day(item.date) });
+  if (item.dateKind === "notice_by") return item.date === today ? t("noticeToday") : t("noticeBy", { date: day(item.date) });
+  if (item.dateKind === "ends") return item.date === today ? t("endsToday") : t("endsOn", { date: day(item.date) });
+  if (item.dateKind === "ended") return todayCount(language, "endedDays", item.overdueDays);
+  return t("invoiceOn", { date: day(item.date) });
+}
+// Red for what is late or an exception, orange for today and for approvals
+// and stock warnings, blue for the rest, gray without a date.
+export function todayDateTone(item: TodayDated, today: string) {
+  if (item.overdueDays > 0 || item.kind === "bill_exception") return { color: "#b91c1c", background: "#fef2f2" };
+  if (item.date === today || item.kind === "reorder_now" || item.kind.endsWith("_to_approve")) return { color: "#b45309", background: "#fffbeb" };
+  if (!item.date) return { color: A.gray1, background: A.gray6 };
+  return { color: "#1d4ed8", background: "#eff6ff" };
+}
 
 // A stored status code as a label. A code no table knows reads as words in
 // English ("ready_to_ship" is "Ready to ship") and as "其他状态" in Chinese;
@@ -331,14 +381,20 @@ const EXTRA_STATUS: Record<string, [string, string]> = {
 export function todayStatusLabel(code: string, language: string) {
   const value = String(code || "").trim();
   if (!value) return "—";
+  // The one status table (statusLabels.ts, design audit L6-14).
   const shared = statusCodeLabel(value, language);
   if (shared) return shared;
-  const extra = EXTRA_STATUS[value];
-  if (extra) return extra[language === "en-US" ? 0 : 1];
   if (!/^[a-z]+(_[a-z]+)*$/.test(value)) return value;
   if (language !== "en-US") return "其他状态";
   const words = value.replace(/_/g, " ");
   return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+// "Supplier {name}" or "Customer {name}", unless the stored name already
+// says what it is (nameSaysRole). The name stays as recorded.
+export function todayPartner(language: string, role: "supplier" | "customer", name: string) {
+  const value = String(name || "").trim();
+  return nameSaysRole(role, value) ? value : todayText(language, role, { name: value });
 }
 
 export function useTodayCopy() {
@@ -346,5 +402,6 @@ export function useTodayCopy() {
   const t = useCallback((key: TodayCopyKey, params?: Record<string, string | number>) => todayText(language, key, params), [language]);
   const count = useCallback((key: TodayCopyKey, n: number, params?: Record<string, string | number>) => todayCount(language, key, n, params), [language]);
   const status = useCallback((code: string) => todayStatusLabel(code, language), [language]);
-  return Object.assign(t, { count, status, language });
+  const partner = useCallback((role: "supplier" | "customer", name: string) => todayPartner(language, role, name), [language]);
+  return Object.assign(t, { count, status, partner, language });
 }

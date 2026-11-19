@@ -42,14 +42,32 @@ test('item checks keep their fields and messages and add codes', () => {
     { field: 'purchaseLeadTimeDays', code: 'WHOLE_NUMBER_REQUIRED', message: 'Lead time must be a whole number, zero or greater.' },
   ])
   assert.equal(values.sku, 'BAD SKU')
-  assert.deepEqual(itemInputIssues({}).issues.map((row) => row.code), ['SKU_REQUIRED', 'NAME_REQUIRED'])
+  // A new item needs a unit: none is made up (design audit L4-20).
+  assert.deepEqual(itemInputIssues({}).issues.map((row) => row.code), ['SKU_REQUIRED', 'NAME_REQUIRED', 'UNIT_REQUIRED'])
   // An existing item keeps its SKU, unit and status unless they are sent.
   const edit = itemInputIssues({ sku: 'OTHER' }, { sku: 'SKU-1', name: 'Valve', unit: 'EA', status: 'active' })
   assert.deepEqual(edit.issues.map((row) => row.code), ['SKU_LOCKED'])
   assert.deepEqual([edit.values.sku, edit.values.unit, edit.values.status], ['SKU-1', 'EA', 'active'])
   // Empty number fields are "not recorded", never zero.
-  const empty = itemInputIssues({ sku: 'SKU-2', itemName: 'Pump', safetyStock: '', reorderPoint: null })
+  const empty = itemInputIssues({ sku: 'SKU-2', itemName: 'Pump', baseUnit: 'pcs', safetyStock: '', reorderPoint: null })
   assert.deepEqual([empty.issues, empty.values.safetyStock, empty.values.reorderPoint, empty.values.leadTimeDays], [[], null, null, undefined])
+})
+
+test('an order-up-to level must be above the reorder point it sits with; a lot size is positive (design audit C3)', () => {
+  const stored = { sku: 'SKU-1', name: 'Valve', unit: 'EA', status: 'active', reorderPoint: '238.0000' }
+  const codes = (input, old = stored) => itemInputIssues(input, old).issues.map((row) => `${row.field}:${row.code}`)
+  assert.deepEqual(codes({ orderUpToLevel: 317, lotSize: 24 }), [])
+  assert.deepEqual(itemInputIssues({ orderUpToLevel: '317.5', lotSize: '24' }, stored).values.orderUpToLevel, 317.5)
+  // At or below the stored reorder point, or below one sent with it.
+  assert.deepEqual(codes({ orderUpToLevel: 238 }), ['orderUpToLevel:ORDER_UP_TO_NOT_ABOVE_REORDER_POINT'])
+  assert.deepEqual(codes({ orderUpToLevel: 300, reorderPoint: 320 }), ['orderUpToLevel:ORDER_UP_TO_NOT_ABOVE_REORDER_POINT'])
+  // Without a reorder point any positive level is kept; emptied, it is none.
+  assert.deepEqual(codes({ orderUpToLevel: 50 }, { ...stored, reorderPoint: null }), [])
+  assert.equal(itemInputIssues({ orderUpToLevel: '', lotSize: null }, stored).values.orderUpToLevel, null)
+  // Changing only the reorder point never fails on a stored level: the
+  // reorder list then assumes a level instead.
+  assert.deepEqual(codes({ reorderPoint: 500 }, { ...stored, orderUpToLevel: '400' }), [])
+  assert.deepEqual(codes({ orderUpToLevel: 0, lotSize: -1 }), ['orderUpToLevel:POSITIVE_NUMBER_REQUIRED', 'lotSize:POSITIVE_NUMBER_REQUIRED'])
 })
 
 test('saveItemMaster still refuses with the same fields and messages', async () => {

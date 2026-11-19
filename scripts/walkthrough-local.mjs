@@ -135,6 +135,10 @@ const sharedEnv = {
   FLOWCHAIN_LOCAL_SESSION_SECRET: secrets.session,
   FLOWCHAIN_SYNC_CURSOR_SECRET: secrets.syncCursor,
   FLOWCHAIN_MAIL_PROVIDER: "outbox",
+  // Local only: the sign-in page signs the local administrator in by itself
+  // (owner 11/11: signing in each time was a chore). --no-auto-sign-in turns
+  // it off to see the sign-in page.
+  FLOWCHAIN_LOCAL_AUTO_SIGN_IN: process.argv.includes("--no-auto-sign-in") ? "false" : "true",
   // The US trial capability set (deploy/README.md).
   FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING: "true",
   FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING: "true",
@@ -163,6 +167,9 @@ const envFor = (workspace) => ({
   FLOWCHAIN_ARTIFACT_STORAGE_ROOT: join(dataRoot, workspace.dataset, "artifacts"),
   FLOWCHAIN_UPLOAD_STORAGE_DIR: join(dataRoot, workspace.dataset, "uploads"),
   FLOWCHAIN_MAIL_OUTBOX_PATH: join(dataRoot, workspace.dataset, "mail-outbox.json"),
+  // Thumbs on assistant answers, with the question and answer, for the
+  // question set (scripts/assistant-feedback-cases.mjs).
+  FLOWCHAIN_ASSISTANT_FEEDBACK_LOG: join(dataRoot, workspace.dataset, "assistant-feedback.jsonl"),
   FLOWCHAIN_VITE_CACHE_DIR: join(dataRoot, workspace.dataset, "vite-cache"),
   // The Vite dev server proxies /api to the workspace's API.
   PLAYWRIGHT_APP_PORT: String(workspace.appPort),

@@ -3,6 +3,17 @@ import {
   financeUnits as units,
 } from "./operational-finance-policy.mjs";
 import { SHIPMENT_HOLDING_CUSTOMER_INVOICE_STATUSES } from "./outbound-transaction-policy.mjs";
+import {
+  CREDIT_HOLDING_STATUSES,
+  creditedQuantities,
+  proportionalTaxCap,
+} from "./return-credit-rules.mjs";
+import { uncreditedReturnedQuantities } from "./return-quantity-ledger.mjs";
+
+// A customer credit note may name an invoice that was approved, issued or is
+// disputed: one approved before it is issued is taken off the receivable when
+// the invoice is issued.
+export const CREDITABLE_CUSTOMER_INVOICE_STATUSES = Object.freeze(["approved", "issued", "disputed"]);
 
 const SCALE = 10_000n;
 const ZERO = 0n;
@@ -153,6 +164,15 @@ export async function buildCustomerInvoicePlan({
   const shipmentById = new Map(
     shipment.lines.map((line) => [line.id, line]),
   );
+  // Goods the customer already sent back are not invoiced, unless an
+  // approved credit note already took them off an invoice (L8-08). Posted
+  // returns are facts, so they count for drafts too.
+  const returnsByLine = await uncreditedReturnedQuantities({
+    prisma,
+    tenantId,
+    sourceDocumentType: "ShipmentDocument",
+    sourceLineIds: lineIds,
+  });
   let subtotal = ZERO;
   let tax = ZERO;
   const lines = [];
@@ -196,19 +216,26 @@ export async function buildCustomerInvoicePlan({
     );
     const posted = units(shipmentLine.postedQuantity);
     const previouslyInvoiced = previousByLine.get(shipmentLine.id) || ZERO;
+    const returnedNotCredited =
+      returnsByLine.get(shipmentLine.id)?.uncredited || ZERO;
     if (
       quantity !== null &&
-      quantity + previouslyInvoiced > posted
+      quantity + previouslyInvoiced + returnedNotCredited > posted
     )
       blockingIssues.push(
         issue(
           "CUSTOMER_INVOICE_QUANTITY_EXCEEDS_SHIPPED",
-          `Line ${index + 1} exceeds shipped not-yet-invoiced quantity.`,
+          returnedNotCredited > ZERO
+            ? `Line ${index + 1} exceeds shipped quantity less what was invoiced and what the customer returned.`
+            : `Line ${index + 1} exceeds shipped not-yet-invoiced quantity.`,
           409,
           {
             shipmentLineId: shipmentLine.id,
             shippedQuantity: fixed(posted),
             previouslyInvoicedQuantity: fixed(previouslyInvoiced),
+            ...(returnedNotCredited > ZERO
+              ? { returnedNotCreditedQuantity: fixed(returnedNotCredited) }
+              : {}),
           },
         ),
       );
@@ -335,7 +362,7 @@ export async function buildCustomerCreditNotePlan({
       },
     },
   });
-  if (!invoice || !["approved", "issued", "disputed"].includes(invoice.status))
+  if (!invoice || !CREDITABLE_CUSTOMER_INVOICE_STATUSES.includes(invoice.status))
     blockingIssues.push(
       issue(
         "CUSTOMER_INVOICE_REQUIRED",
@@ -364,22 +391,27 @@ export async function buildCustomerCreditNotePlan({
     return plan("customer_credit_note", blockingIssues, { lines: [] });
   const invoiceById = new Map(invoice.lines.map((line) => [line.id, line]));
   const postingById = new Map(posting.lines.map((line) => [line.id, line]));
+  // Earlier draft and approved credits on these invoice lines or these
+  // return lines, on any invoice: one shipment line can be invoiced in parts.
   const prior = await prisma.customerCreditNoteLine.findMany({
     where: {
       customerCreditNote: {
         tenantId,
-        status: { in: ["draft", "approved"] },
+        status: { in: [...CREDIT_HOLDING_STATUSES] },
       },
-      customerInvoiceLineId: {
-        in: requested.map((line) => text(line.customerInvoiceLineId)),
-      },
+      OR: [
+        { customerInvoiceLineId: { in: [...new Set(requested.map((line) => text(line.customerInvoiceLineId)))] } },
+        { returnPostingLineId: { in: [...new Set(requested.map((line) => text(line.returnPostingLineId)))] } },
+      ],
+    },
+    select: {
+      customerInvoiceLineId: true,
+      returnPostingLineId: true,
+      quantity: true,
     },
   });
-  const priorByPair = new Map();
-  for (const row of prior) {
-    const key = `${row.customerInvoiceLineId}|${row.returnPostingLineId}`;
-    priorByPair.set(key, (priorByPair.get(key) || ZERO) + units(row.quantity));
-  }
+  // Lines of this credit count against each other as well.
+  const credited = creditedQuantities(prior, "customerInvoiceLineId", units);
   let subtotal = ZERO;
   let tax = ZERO;
   const lines = [];
@@ -419,29 +451,51 @@ export async function buildCustomerCreditNotePlan({
       `Credit note line ${index + 1} quantity`,
       true,
     );
-    const key = `${invoiceLine.id}|${postingLine.id}`;
-    const credited = priorByPair.get(key) || ZERO;
+    // At most what came back on the return line, across every invoice, and
+    // at most what was invoiced on the invoice line, across every return.
+    const onReturnLine = credited.byReturnLine.get(postingLine.id) || ZERO;
+    const onInvoiceLine = credited.byInvoiceLine.get(invoiceLine.id) || ZERO;
     if (
       quantity !== null &&
-      (quantity + credited > units(postingLine.quantity) ||
-        quantity + credited > units(invoiceLine.quantity))
+      (quantity + onReturnLine > units(postingLine.quantity) ||
+        quantity + onInvoiceLine > units(invoiceLine.quantity))
     )
       blockingIssues.push(
         issue(
           "CUSTOMER_CREDIT_QUANTITY_EXCEEDED",
           `Credit note line ${index + 1} exceeds returned or originally invoiced quantity.`,
           409,
+          {
+            returnedQuantity: fixed(units(postingLine.quantity)),
+            creditedOnReturnLine: fixed(onReturnLine),
+            invoicedQuantity: fixed(units(invoiceLine.quantity)),
+            creditedOnInvoiceLine: fixed(onInvoiceLine),
+          },
         ),
       );
+    if (quantity !== null && quantity > ZERO) {
+      credited.byReturnLine.set(postingLine.id, onReturnLine + quantity);
+      credited.byInvoiceLine.set(invoiceLine.id, onInvoiceLine + quantity);
+    }
     const pricingSource = text(row.pricingSource) || "original_invoice";
-    let unitPrice = units(invoiceLine.unitPrice);
-    if (pricingSource === "manual_reviewed")
+    const originalPrice = units(invoiceLine.unitPrice);
+    let unitPrice = originalPrice;
+    if (pricingSource === "manual_reviewed") {
       unitPrice = decimal(
         row.unitPrice,
         blockingIssues,
         `Credit note line ${index + 1} reviewed price`,
       );
-    else if (pricingSource !== "original_invoice")
+      // A reviewed price may credit less than the invoice charged, never more.
+      if (unitPrice !== null && unitPrice > originalPrice)
+        blockingIssues.push(
+          issue(
+            "CUSTOMER_CREDIT_PRICE_EXCEEDS_INVOICE",
+            `Credit note line ${index + 1} reviewed price is above the invoice's price of ${fixed(originalPrice)}.`,
+            409,
+          ),
+        );
+    } else if (pricingSource !== "original_invoice")
       blockingIssues.push(
         issue(
           "CUSTOMER_CREDIT_PRICING_SOURCE_INVALID",
@@ -453,6 +507,23 @@ export async function buildCustomerCreditNotePlan({
       blockingIssues,
       `Credit note line ${index + 1} entered tax`,
     );
+    // Tax follows the invoice line's tax in proportion to the quantity credited.
+    const taxCap =
+      quantity === null
+        ? null
+        : proportionalTaxCap(
+            units(invoiceLine.enteredTaxAmount || 0),
+            quantity,
+            units(invoiceLine.quantity),
+          );
+    if (enteredTax !== null && taxCap !== null && enteredTax > taxCap)
+      blockingIssues.push(
+        issue(
+          "CUSTOMER_CREDIT_TAX_EXCEEDS_INVOICE",
+          `Credit note line ${index + 1} tax is above the invoice's tax for that quantity, ${fixed(taxCap)}.`,
+          409,
+        ),
+      );
     const lineAmount =
       quantity === null || unitPrice === null ? ZERO : multiply(quantity, unitPrice);
     subtotal += lineAmount;

@@ -46,7 +46,7 @@ export type FormLine = {
   override: { reasonCode: string; note: string };
 };
 type Block = "quantity" | "supplier" | "override" | "reason" | "terms" | "price";
-type CatalogItem = { itemId?: string; id?: string; sku: string; itemName?: string; name?: string; purchaseUnit?: string; baseUnit?: string; defaultWarehouseId?: string };
+type CatalogItem = { itemId?: string; id?: string; sku: string; itemName?: string; name?: string; purchaseUnit?: string; baseUnit?: string; stockUnit?: string; defaultWarehouseId?: string };
 export type ItemSupplier = { id: string; name?: string; supplierName?: string; preferred?: boolean; referencePrice?: number | string | null; currency?: string | null; leadTimeDays?: number | string | null; restrictedFields?: string[] };
 // A supplier as the Suppliers list sends it (GET /api/master-data/suppliers).
 export type WorkspaceSupplier = { id: string; name?: string; supplierName?: string; status?: string; defaultCurrency?: string | null };
@@ -200,7 +200,8 @@ export function draftRequestBody(ticked: FormLine[], props: PrFormProps, ids: { 
     };
   });
   return {
-    departmentId: props.departmentId || "operations",
+    // Empty: the server takes the requester's own department (L5-24).
+    departmentId: props.departmentId || "",
     defaultCurrency: ticked.map((line) => priceOf(line).currency).find(Boolean) || undefined,
     defaultNeedByDate: ticked.map((line) => line.needByDate).sort()[0],
     lines,
@@ -259,6 +260,12 @@ export async function createFormRequest({ ticked, props, ids, post, linked = {} 
   } catch (failure) {
     return { status: "request_failed", linked: done, failure, added };
   }
+}
+
+// The new suppliers this form made approved suppliers of their items (on this
+// click or an earlier one), by name, for the message when the request then fails.
+export function supplierNamesLinked(ticked: FormLine[], linked: Record<string, string>) {
+  return [...new Set(ticked.filter((line) => isNewSupplier(line) && linked[line.key] === line.supplierId).map((line) => optionOf(line)?.name || "").filter(Boolean))];
 }
 
 function errorText(error: unknown, copy: PartCopy) {
@@ -359,7 +366,10 @@ export function addedFormRow(item: CatalogItem, sources: ItemSupplier[], today: 
   const masked = sources.some((source) => source.restrictedFields?.includes("referencePrice"));
   const lead = chosen?.leadTimeDays ?? null;
   return {
-    item: { id: itemId, sku: item.sku, name: item.itemName || item.name || "", unit: item.purchaseUnit || item.baseUnit || null },
+    // In the stock unit, as the classic form builds a line: no conversion between
+    // units is recorded, so the server refuses any other unit. An item without
+    // a recorded stock unit keeps its purchase unit, as the server does.
+    item: { id: itemId, sku: item.sku, name: item.itemName || item.name || "", unit: item.stockUnit || item.purchaseUnit || item.baseUnit || null },
     suggestedQuantity: { value: null, source: "user_named" },
     supplier: chosen ? { id: chosen.id, name: chosen.name, source: chosen.preferred ? "preferred" : "only_approved" } : null,
     suppliers,
@@ -455,7 +465,7 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
   const update = (key: string, patch: Partial<FormLine>) => setLines((current) => current.map((line) => line.key === key ? { ...line, ...patch } : line));
   // A date the user asked for or changed is kept; otherwise it follows the supplier's lead time.
   const needByFor = (line: FormLine, lead: number | null | undefined) =>
-    !line.needByEdited && line.row.needByDate.source !== "user_named" && lead !== null && lead !== undefined ? addCalendarDays(todayInTimeZone(copy.timezone), lead) : line.needByDate;
+    !line.needByEdited && line.row.needByDate.source !== "user_named" && lead !== null && lead !== undefined ? addCalendarDays(copy.workspaceToday || todayInTimeZone(copy.timezone), lead) : line.needByDate;
   const chooseSupplier = (line: FormLine, supplierId: string, extra: ApprovedSupplier[] = line.added) => {
     const option = supplierOptions({ ...line, added: extra }).find((supplier) => supplier.id === supplierId);
     const fresh = option?.link === "new";
@@ -514,7 +524,10 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
         return;
       }
       if (outcome.status === "request_failed") {
-        setError(errorText(outcome.failure, copy));
+        // A supplier this form added stays added: say so, since the request
+        // was not created (design audit L5-24).
+        const names = supplierNamesLinked(ticked, outcome.linked);
+        setError([names.length ? copy.t("ai.v2.form.requestFailedAfterSupplier", { names: names.join(copy.language === "zh-CN" ? "、" : ", ") }) : "", errorText(outcome.failure, copy)].filter(Boolean).join(" "));
         return;
       }
       const { created } = outcome;
@@ -528,12 +541,16 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
     }
   };
 
-  const transition = async (action: "submit" | "cancel" | "withdraw") => {
+  // Cancelling a submitted request says why, as on the request page (design
+  // audit L1-16); null while not asking.
+  const [cancelReason, setCancelReason] = useState<string | null>(null);
+  const transition = async (action: "submit" | "cancel" | "withdraw", reason = "") => {
     if (!receipt || busy) return;
     setBusy(true);
     setError("");
     try {
-      const next = await apiJson<PrReceipt>(`/api/procurement/requests/${encodeURIComponent(receipt.id)}/${action}`, { method: "POST", body: JSON.stringify({ expectedVersion: receipt.version }) });
+      const next = await apiJson<PrReceipt>(`/api/procurement/requests/${encodeURIComponent(receipt.id)}/${action}`, { method: "POST", body: JSON.stringify({ expectedVersion: receipt.version, ...(reason ? { reason } : {}) }) });
+      setCancelReason(null);
       record({ id: next.id || receipt.id, number: next.number || receipt.number, version: next.version, status: next.status || receipt.status });
     } catch (failure) {
       setError(errorText(failure, copy));
@@ -564,9 +581,19 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
           {draft ? primaryButton(busy ? copy.t("ai.v2.form.working") : copy.t("ai.v2.form.submit"), busy, () => void transition("submit"), "ai-v2-pr-submit") : null}
           {draft ? secondary(copy.t("ai.v2.form.cancelDraft"), () => void transition("cancel"), "ai-v2-pr-cancel") : null}
           {submitted ? secondary(copy.t("ai.v2.form.withdraw"), () => void transition("withdraw"), "ai-v2-pr-withdraw") : null}
-          {submitted ? secondary(copy.t("ai.v2.form.cancelRequest"), () => void transition("cancel"), "ai-v2-pr-cancel") : null}
+          {submitted && cancelReason === null ? secondary(copy.t("ai.v2.form.cancelRequest"), () => setCancelReason(""), "ai-v2-pr-cancel") : null}
           {open}
         </div>
+        {submitted && cancelReason !== null ? (
+          <div className="flex flex-wrap items-end gap-2" data-testid="ai-v2-pr-cancel-ask">
+            <label className="flex min-w-0 flex-1 flex-col gap-1">
+              <span style={{ color: A.sub }}>{copy.t("ai.v2.form.cancelReason")}</span>
+              <input data-testid="ai-v2-pr-cancel-reason" value={cancelReason} maxLength={500} onChange={(event) => setCancelReason(event.target.value)} className="rounded-md border px-2 py-1" style={{ borderColor: A.border }} />
+            </label>
+            {secondary(copy.t("ai.v2.form.cancelRequest"), () => { if (cancelReason.trim()) void transition("cancel", cancelReason.trim()); }, "ai-v2-pr-cancel-confirm")}
+            {secondary(copy.t("ai.v2.form.keepRequest"), () => setCancelReason(null), "ai-v2-pr-cancel-back")}
+          </div>
+        ) : null}
       </section>
     );
   }
@@ -602,7 +629,7 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
           // unchanged, then "Edited", or "Your choice" where nothing was suggested.
           const quantitySource = !line.quantity ? ""
             : row.suggestedQuantity.value !== null && line.quantity === String(row.suggestedQuantity.value)
-              ? copy.t(`ai.v2.form.source.${row.suggestedQuantity.source}`, { minimum: copy.number(row.suggestedQuantity.minimum ?? row.suggestedQuantity.value), days: copy.number(row.suggestedQuantity.coverDays ?? 0) })
+              ? copy.t(`ai.v2.form.source.${row.suggestedQuantity.source}`, { minimum: copy.number(row.suggestedQuantity.minimum ?? row.suggestedQuantity.value), requested: copy.number(row.suggestedQuantity.requested ?? 0), days: copy.number(row.suggestedQuantity.coverDays ?? 0) })
               : copy.t(row.suggestedQuantity.value !== null ? "ai.v2.form.source.edited" : "ai.v2.form.source.chosen");
           const supplierSource = !line.supplierId ? ""
             : row.supplier && line.supplierId === row.supplier.id ? copy.t(`ai.v2.form.source.${row.supplier.source}`)

@@ -220,6 +220,27 @@ try {
       },
     },
   });
+  if (process.env.PLAYWRIGHT_OUTBOUND_CAPABILITY_DISABLED === "true") {
+    // A posted shipment for the read-only run: the shipment list and page
+    // must still open with outbound writes off (design audit L4-28).
+    await prisma.salesOrder.create({
+      data: {
+        id: "outbound-browser-shipped-order",
+        tenantId,
+        orderNumber: "SO-SHIPPED",
+        customerName: "Shipped Customer",
+        workflowStatus: "confirmed",
+        currency: "CNY",
+        lines: { create: { id: "outbound-browser-shipped-line", itemId: "outbound-browser-item", sku: "OUT-BROWSER-SKU", itemName: "浏览器出库物料", orderedQuantity: "1", unitPrice: "5", unit: "EA" } },
+      },
+    });
+    const { createOutboundPostingCommandService } = await import("../server/domain/outbound-posting-command-service.mjs");
+    const seedCommands = createOutboundPostingCommandService({ prisma, env: { ...process.env, FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING: "true" } });
+    const seedActor = { identity: { authenticated: true, tenantId, userId: actorId, role: "manager", source: "signed-session" } };
+    const reserved = await seedCommands.reserveSalesOrderInventory({ salesOrderId: "outbound-browser-shipped-order", expectedOrderVersion: 0, idempotencyKey: "seed-shipped-reserve", allocations: [{ salesOrderLineId: "outbound-browser-shipped-line", warehouseId: "outbound-browser-warehouse", location: "A-01", quantity: "1" }] }, seedActor);
+    const drafted = await seedCommands.createShipmentDraft({ salesOrderId: "outbound-browser-shipped-order", expectedOrderVersion: reserved.salesOrder.version, idempotencyKey: "seed-shipped-draft", lines: [{ salesOrderLineId: "outbound-browser-shipped-line", allocations: [{ reservationId: reserved.reservations[0].id, quantity: "1" }] }] }, seedActor);
+    await seedCommands.postShipment({ shipmentId: drafted.shipment.id, expectedShipmentVersion: drafted.shipment.version, idempotencyKey: "seed-shipped-post" }, seedActor);
+  }
   const { createScmServer } = await import("../server/scm-api.mjs");
   // Production mode refuses the email-only sign-in; the harness answers it
   // through a real email-link confirm so the browser specs keep working.

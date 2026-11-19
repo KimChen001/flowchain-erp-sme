@@ -18,6 +18,9 @@ const error = (ctx, caught) => {
 // it is staged with purpose "contract" (contracts.contract.manage, read with
 // a size limit that fits a 20 MB file in base64), bound and removed through
 // /api/contracts, and downloaded here with contracts.contract.read.
+// Storage health and orphan checks are operator scripts
+// (npm run attachment:health-check, attachment:orphan-check), not HTTP routes:
+// they read every workspace's uploads and the server's storage path.
 export async function handleAttachmentRoute(ctx) {
   const path = ctx.url.pathname;
   if (path.startsWith("/api/contracts/")) return false;
@@ -30,8 +33,6 @@ export async function handleAttachmentRoute(ctx) {
   if (!legacy && !contracts) return unavailable();
   try {
     const prisma = ctx.attachmentPrisma || await getPrismaClient(env), service = ctx.attachmentService || createAttachmentService({ prisma, env });
-    if (ctx.req.method === "GET" && path === "/api/attachments/health") { ctx.send(ctx.res, 200, await service.healthCheck()); return true; }
-    if (ctx.req.method === "GET" && path === "/api/attachments/orphans") { ctx.send(ctx.res, 200, await service.orphanCheck()); return true; }
     if (ctx.req.method === "POST" && path === "/api/uploads/stage") {
       // With contracts on, a staged file may be a contract's, so the body is
       // read with the contract reader's limit; without them, with the upload

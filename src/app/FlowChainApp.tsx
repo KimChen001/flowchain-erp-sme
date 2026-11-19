@@ -3,16 +3,14 @@ import { useBackLabel } from "../components/navigation/backLabel";
 import { FadeIn, PageSkeleton, PageTransition } from "../components/motion/Motion";
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { Toaster, toast } from "sonner";
+import { Toaster } from "sonner";
 import {
   AlertTriangle,
-  Bell,
   LogOut,
   Search,
   Settings,
   User,
   Activity,
-  Sparkles,
   Loader2,
   ShieldCheck,
   ShieldAlert,
@@ -81,7 +79,6 @@ import {
 import ReceivingPostingWorkbench from "../modules/receiving/ReceivingPostingWorkbench";
 import InventoryPanel from "../modules/inventory/Page";
 import BinListPage from "../modules/master-data/BinListPage";
-import ForecastPanel from "../modules/forecast/Page";
 import OverviewPanel from "../modules/overview/Page";
 import ProcurementPanel from "../modules/procurement/Page";
 import { CanonicalRfqDetailPage } from "../modules/procurement/CanonicalRfqDetailPage";
@@ -97,18 +94,10 @@ import DataImportPage from "../modules/master-data/DataImportPage";
 import ItemSupplierPricesPage from "../modules/master-data/ItemSupplierPricesPage";
 import ContractsPage from "../modules/contracts/Page";
 import AiPanel, { type ActiveContext } from "../modules/ai-assistant/Panel";
-import {
-  ActionDraftReviewShell,
-  type ActionDraftPreview,
-  type ActionDraftPreviewRequest,
-} from "../modules/action-drafts/ActionDraftReviewShell";
-import { isStructuredDraftType, structuredDraftTarget } from "../modules/action-drafts/structuredDraftHandoff";
-import ExceptionCasesPage from "../modules/exception-cases/Page";
+// The records the assistant's panel can name as the page's record.
+const ASSISTANT_RECORD_TYPES = new Set(["supplier", "item", "rfq", "purchase_request", "purchase_order", "sales_order", "supplier_invoice", "receiving_doc"]);
 import SalesDemandPage from "../modules/sales/Page";
-import CollaborationDraftsPage from "../modules/collaboration-drafts/Page";
 import SettingsPage from "../modules/settings/Page";
-import AuditHistoryPage from "../modules/audit-history/Page";
-import PilotReadinessPage from "../modules/pilot-readiness/Page";
 import { ReviewFirstActionWorkflowV2 } from "../components/actions/ReviewFirstActionWorkflowV2";
 import { BusinessEntityDetailPage } from "../components/business/BusinessEntityDetailPage";
 import {
@@ -129,32 +118,13 @@ import {
   AcceptInvitationScreen,
   SignInConfirmScreen,
   SIGNED_OUT_REASON_KEY,
+  LOCAL_SIGNED_OUT_KEY,
   type LocalDevelopmentStatus,
 } from "./SignInScreens";
 import { PublicDataNoteBanner } from "./PublicDataNote";
 
 const ReportsPanel = React.lazy(() => import("../modules/reports/Page"));
-const ImportsPanel = React.lazy(() => import("../modules/imports/Page"));
 const UniversalIntakePanel = React.lazy(() => import("../modules/intake/Page"));
-
-const DRAFT_MESSAGES = {
-  unavailable: { en: "A draft preview is not available yet. Add more context and try again.", zh: "草稿预览暂不可用，请补充上下文后重试。" },
-  unsupported: { en: "This action needs human review and has no draft preview yet.", zh: "当前动作需要人工复核，尚未接入草稿预览。" },
-  previewBoundary: { en: "Draft preview problem: the service did not confirm the draft is preview-only.", zh: "草稿预览边界异常：接口未返回 previewOnly。" },
-  saved: { en: "Draft saved", zh: "草稿已保存" },
-  savedDetail: { en: "Only a draft for review was kept. No business document was created.", zh: "仅保存待复核草稿，不会创建业务单据。" },
-  createsDocument: { en: "Draft problem: the service said saving would create a business document, so nothing was kept.", zh: "留存边界异常：接口声明会创建业务单据。" },
-};
-const draftMessage = (key: keyof typeof DRAFT_MESSAGES, language: string) => DRAFT_MESSAGES[key][language === "en-US" ? "en" : "zh"];
-
-function actionDraftErrorMessage(error: unknown, language: string) {
-  const message = error instanceof Error ? error.message.trim() : "";
-  if (!message) return draftMessage("unavailable", language);
-  if (/^\s*[{[]/.test(message) || /<html|stack|trace| at /i.test(message)) {
-    return draftMessage("unsupported", language);
-  }
-  return message;
-}
 
 type GlobalSearchResult = {
   id: string;
@@ -245,7 +215,6 @@ const FOCUS_ENTITY_LABELS: Record<string, LabelPair> = {
   receiving_doc: { en: "Receipt", zh: "收货单" },
   supplier: { en: "Supplier", zh: "供应商" },
   supplier_invoice: { en: "Supplier invoice", zh: "采购发票" },
-  exception_case: { en: "Exception case", zh: "异常工单" },
   // Any other record.
   record: { en: "Business record", zh: "业务对象" },
 };
@@ -434,12 +403,6 @@ export default function FlowChainApp() {
   useEffect(() => {
     apiJson<LocalDevelopmentStatus>("/api/dev/local-status").then(setLocalStatus).catch(() => setLocalStatus(null));
   }, []);
-  const [draftShellOpen, setDraftShellOpen] = useState(false);
-  const [draftPreview, setDraftPreview] = useState<ActionDraftPreview | null>(
-    null,
-  );
-  const [draftLoading, setDraftLoading] = useState(false);
-  const [draftError, setDraftError] = useState("");
   const [aiOpenSignal, setAiOpenSignal] = useState(0);
   const [aiActiveContext, setAiActiveContext] = useState<ActiveContext | null>(
     null,
@@ -502,22 +465,7 @@ export default function FlowChainApp() {
     Set<string>
   >(() => readExperimentalModuleIds());
   const [enabledModuleIds, setEnabledModuleIds] = useState<Set<string> | null>(
-    () => {
-      try {
-        const saved = JSON.parse(
-          localStorage.getItem("flowchain:module-settings") || "null",
-        );
-        return saved?.items
-          ? new Set(
-              saved.items
-                .filter((item: { enabled: boolean }) => item.enabled)
-                .map((item: { id: string }) => item.id),
-            )
-          : null;
-      } catch {
-        return null;
-      }
-    },
+    null,
   );
   const [user, setUser] = useState<WorkspaceUser | null>(() => {
     try {
@@ -529,25 +477,6 @@ export default function FlowChainApp() {
   });
 
   useEffect(() => {
-    const refreshModuleSettings = () => {
-      try {
-        const saved = JSON.parse(
-          localStorage.getItem("flowchain:module-settings") || "null",
-        );
-        setEnabledModuleIds(
-          saved?.items
-            ? new Set(
-                saved.items
-                  .filter((item: { enabled: boolean }) => item.enabled)
-                  .map((item: { id: string }) => item.id),
-              )
-            : null,
-        );
-      } catch {
-        setEnabledModuleIds(null);
-      }
-    };
-    window.addEventListener("flowchain:module-settings", refreshModuleSettings);
     const refreshExperiments = () =>
       setExperimentalModuleIds(readExperimentalModuleIds());
     window.addEventListener(
@@ -555,10 +484,6 @@ export default function FlowChainApp() {
       refreshExperiments,
     );
     return () => {
-      window.removeEventListener(
-        "flowchain:module-settings",
-        refreshModuleSettings,
-      );
       window.removeEventListener(
         "flowchain:experimental-modules",
         refreshExperiments,
@@ -569,6 +494,9 @@ export default function FlowChainApp() {
   useEffect(() => {
     if (location.pathname === "/" || location.pathname === "/app") {
       routerNavigate("/app/overview", { replace: true });
+    } else if (/^\/app\/today\/?$/.test(location.pathname)) {
+      // The sidebar calls the home page "Today"; its address opens it too.
+      routerNavigate(`/app/overview/risks${location.search}${location.hash}`, { replace: true });
     } else {
       const route = routeByPath(location.pathname);
       if (
@@ -613,6 +541,14 @@ export default function FlowChainApp() {
   const activeRoute = routeByPath(location.pathname);
   const active = activeRoute?.id || "not-found";
   const activeModule = activeRoute?.moduleId || "overview";
+  // The record a detail page's address names, for the assistant when the page
+  // sets no context of its own (design audit 2026-11-15, L5-08: only the PO
+  // and supplier pages gave the assistant their record). No label: the
+  // address holds the record's id, and the assistant names it by its number.
+  const routeRecordId = activeRoute?.entityType && activeRoute.entityIdParam && ASSISTANT_RECORD_TYPES.has(activeRoute.entityType) ? entityIdForRoutePath(activeRoute, location.pathname) : "";
+  const routeRecordContext = useMemo<ActiveContext | null>(() => (routeRecordId && activeRoute?.entityType
+    ? { module: activeModule, entityType: activeRoute.entityType as ActiveContext["entityType"], entityId: routeRecordId, route: location.pathname }
+    : null), [routeRecordId, activeRoute?.entityType, activeModule, location.pathname]);
   const activeView = activeRoute?.viewId;
   const panelModule = activeRoute?.panelId || activeModule;
 
@@ -624,14 +560,17 @@ export default function FlowChainApp() {
         const byId = Object.fromEntries(rows.map((row) => [row.id, row]));
         setCapabilities(byId);
         setCapabilityLoadState("ready");
+        // The same rule as the route guard (resolveCapabilityRouteAccess): a
+        // preview opens only when turned on in this browser, so the menu does
+        // not show a preview the guard would then lock (design audit L6-09).
         setEnabledModuleIds(
           new Set(
             rows
               .filter(
                 (row) =>
-                  row.enabled ||
-                  (row.maturity === "preview" &&
-                    experimentalModuleIds.has(row.id)),
+                  row.maturity === "preview"
+                    ? experimentalModuleIds.has(row.id)
+                    : row.enabled,
               )
               .map((row) => row.id),
           ),
@@ -827,18 +766,29 @@ export default function FlowChainApp() {
       experimentalModuleIds,
     ],
   );
+  // The way on from a page that is not available here: the module's own
+  // first page when it can be opened, else Today. Never a dead end. (Menus &
+  // modules cannot turn a feature on yet, so it is not offered.)
+  const blockedRouteLinks = (route: NonNullable<typeof activeRoute>) => {
+    const english = language === "en-US";
+    const home = defaultRouteForModule(route.moduleId);
+    const moduleHome = home && home.id !== route.id && canOpenRoute(home.id) ? home : null;
+    return (
+      <div className="mt-5 flex flex-wrap justify-center gap-2" data-testid="blocked-route-links">
+        <button type="button" className="fc-action-button fc-action-primary" onClick={() => routerNavigate(moduleHome?.path || "/app/today")} data-testid="blocked-route-home">
+          {moduleHome ? (english ? `Go to ${routeLabel(moduleHome)}` : `前往${routeLabel(moduleHome)}`) : english ? "Go to Today" : "前往今日"}
+        </button>
+      </div>
+    );
+  };
   const contentMaxWidthClass =
     ["srm", "supplier-evaluation", "supplier-risks", "contracts"].includes(panelModule)
       ? "max-w-[1440px]"
       : [
             "overview",
             "reports",
-            "imports",
             "universal-intake",
             "review-actions",
-            "collaboration-drafts",
-            "audit-history",
-            "pilot-readiness",
             "settings",
           ].includes(activeModule)
         ? "max-w-[1360px]"
@@ -1028,53 +978,6 @@ export default function FlowChainApp() {
     );
   }
 
-  async function openActionDraftReview(request: ActionDraftPreviewRequest) {
-    if (isStructuredDraftType(request.type)) {
-      const target = structuredDraftTarget(request.type, request.payload, request.source);
-      navigateTo(target.moduleId, null, { returnTo: "ai", entityLabel: request.title, source: "ai", query: target.query });
-      return;
-    }
-    setDraftShellOpen(true);
-    setDraftPreview(null);
-    setDraftError("");
-    setDraftLoading(true);
-    try {
-      const response = await apiJson<{
-        draft: ActionDraftPreview;
-        previewOnly: boolean;
-      }>("/api/action-drafts/preview", {
-        method: "POST",
-        body: JSON.stringify(request),
-      });
-      setDraftPreview(response.draft);
-      if (!response.previewOnly)
-        setDraftError(draftMessage("previewBoundary", language));
-    } catch (error) {
-      setDraftError(actionDraftErrorMessage(error, language));
-    } finally {
-      setDraftLoading(false);
-    }
-  }
-
-  async function saveActionDraftReview(draft: ActionDraftPreview) {
-    const response = await apiJson<{
-      draft: ActionDraftPreview;
-      persisted: boolean;
-      createsBusinessDocument: boolean;
-      requiresConfirmation: boolean;
-    }>("/api/action-drafts/save", {
-      method: "POST",
-      body: JSON.stringify({ draft }),
-    });
-    if (response.createsBusinessDocument) {
-      throw new Error(draftMessage("createsDocument", language));
-    }
-    setDraftPreview(response.draft);
-    toast.success(draftMessage("saved", language), {
-      description: draftMessage("savedDetail", language),
-    });
-  }
-
   function openSearchResult(result: GlobalSearchResult) {
     // A result with its own page opens that page, with a way back to the page
     // the search was made from.
@@ -1107,7 +1010,6 @@ export default function FlowChainApp() {
         initialView={activeView}
         onNavigate={navigateTo}
         onOpenAi={() => setAiOpenSignal(Date.now())}
-        onReviewActionDraft={openActionDraftReview}
       />
     ),
     sales: (
@@ -1125,14 +1027,6 @@ export default function FlowChainApp() {
         focus={searchFocus}
         onNavigate={navigateTo}
         onActiveContextChange={setAiActiveContext}
-        onReviewActionDraft={openActionDraftReview}
-      />
-    ),
-    forecast: (
-      <ForecastPanel
-        initialView={activeView as any}
-        onNavigate={navigateTo}
-        onReviewActionDraft={openActionDraftReview}
       />
     ),
     // Compatibility aliases for older dashboard/report actions; sidebar uses module:view ids.
@@ -1223,15 +1117,8 @@ export default function FlowChainApp() {
     reports: (
       <ReportsPanel initialView={activeView as any} onNavigate={navigateTo} />
     ),
-    imports: (
-      <ImportsPanel initialView={activeView as any} onNavigate={navigateTo} />
-    ),
     "universal-intake": <UniversalIntakePanel />,
-    "exception-cases": <ExceptionCasesPage onNavigate={navigateTo} />,
-    "collaboration-drafts": <CollaborationDraftsPage onNavigate={navigateTo} />,
     "review-actions": <ReviewFirstActionWorkflowV2 onNavigate={navigateTo} />,
-    "audit-history": <AuditHistoryPage onNavigate={navigateTo} />,
-    "pilot-readiness": <PilotReadinessPage onNavigate={navigateTo} />,
     settings: (
       <SettingsPage initialView={activeView as any} onNavigate={navigateTo} />
     ),
@@ -1305,7 +1192,7 @@ export default function FlowChainApp() {
                       }))
                     }
                     className={`${rail ? "hidden xl:flex" : "flex"} w-full items-center justify-between gap-2 fc-caption font-semibold uppercase tracking-widest px-2 mb-2`}
-                    style={{ color: "rgba(148,163,184,0.58)" }}
+                    style={{ color: "rgba(148,163,184,0.82)" }}
                   >
                     <span>{groupLabel}</span>
                     <ChevronRight
@@ -1321,7 +1208,7 @@ export default function FlowChainApp() {
                 ) : (
                   <div
                     className={`${rail ? "hidden xl:block" : ""} fc-caption font-semibold uppercase tracking-widest px-2 mb-2`}
-                    style={{ color: "rgba(148,163,184,0.58)" }}
+                    style={{ color: "rgba(148,163,184,0.82)" }}
                   >
                     {groupLabel}
                   </div>
@@ -1383,25 +1270,8 @@ export default function FlowChainApp() {
             );
           })}
         </nav>
-
-        <div
-          className={rail ? "space-y-1 p-2 xl:p-3" : "space-y-1 p-3"}
-          style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}
-        >
-          <button
-            type="button"
-            title={rail ? t("nav.ai") : undefined}
-            onClick={() => {
-              setMobileNavOpen(false);
-              setAiOpenSignal(Date.now());
-            }}
-            className={`w-full flex items-center gap-2.5 rounded-md py-2 text-sm font-medium transition-colors duration-150 ${rail ? "justify-center px-0 xl:justify-start xl:px-2.5" : "px-2.5"}`}
-            style={{ background: "transparent", color: A.sidebarSub }}
-          >
-            <Sparkles size={rail ? 17 : 15} className="shrink-0" strokeWidth={1.8} />
-            <span className={label}>{t("nav.ai")}</span>
-          </button>
-        </div>
+        {/* The assistant opens from its own button at the bottom right of
+            every page, so the sidebar carries no second entry to it. */}
       </>
     );
   }
@@ -1415,6 +1285,9 @@ export default function FlowChainApp() {
   function logout() {
     // End the server session too; the local sign-out happens either way.
     apiJson("/api/auth/logout", { method: "POST" }).catch(() => {});
+    // A local walkthrough signs in by itself; after a deliberate sign-out the
+    // sign-in page stays, so another local account can be chosen.
+    try { sessionStorage.setItem(LOCAL_SIGNED_OUT_KEY, "true"); } catch { /* optional */ }
     localStorage.removeItem(AUTH_TOKEN_KEY);
     localStorage.removeItem(CURRENT_USER_KEY);
     setAuthToken("");
@@ -1440,7 +1313,7 @@ export default function FlowChainApp() {
   }
 
   if (!authToken || !user) {
-    return <LoginScreen localStatus={localStatus} />;
+    return <LoginScreen localStatus={localStatus} onSignedIn={handleLogin} />;
   }
 
   return (
@@ -1498,7 +1371,7 @@ export default function FlowChainApp() {
             borderBottom: `1px solid ${A.border}`,
           }}
         >
-          <div className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden text-sm">
             <button
               ref={mobileNavButtonRef}
               type="button"
@@ -1537,7 +1410,7 @@ export default function FlowChainApp() {
               className="relative hidden sm:block"
             >
               <div
-                className="flex items-center gap-2 w-72 px-3 py-1.5 rounded-lg text-xs"
+                className="flex items-center gap-2 w-52 xl:w-72 px-3 py-1.5 rounded-lg text-xs focus-within:ring-2 focus-within:ring-blue-500/50"
                 style={{ color: A.gray1, background: A.gray6 }}
               >
                 <button
@@ -1593,6 +1466,7 @@ export default function FlowChainApp() {
                       openSearchResult(visibleSearchResults[activeSearchIndex]);
                     }
                   }}
+                  aria-label={t("top.search")}
                   placeholder={t("top.search")}
                   className="w-full bg-transparent outline-none text-xs"
                   style={{ color: A.label }}
@@ -1787,16 +1661,7 @@ export default function FlowChainApp() {
                 </div>
               )}
             </form>
-            <button
-              type="button"
-              disabled
-              aria-label={language === 'en-US' ? 'Notifications unavailable' : '通知中心尚未接入'}
-              title={language === 'en-US' ? 'Notifications unavailable' : '通知中心尚未接入'}
-              className="relative hidden p-2 rounded-md opacity-45 sm:block"
-              style={{ color: A.gray1 }}
-            >
-              <Bell size={15} strokeWidth={1.8} />
-            </button>
+            {/* No notification bell: one that is always disabled only distracts (design audit L6-15); Today lists what needs attention. */}
             <div className="relative">
               <button
                 onClick={() => setProfileOpen((value) => !value)}
@@ -1928,6 +1793,7 @@ export default function FlowChainApp() {
                       <Lock className="mx-auto text-slate-500" size={34} />
                       <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Capability unavailable" : "能力暂不可用"}</h2>
                       <p className="mt-2 text-sm text-slate-500">{language === "en-US" ? "This part of FlowChain is not available." : "FlowChain 的这部分功能暂不提供。"}</p>
+                      {blockedRouteLinks(activeRoute)}
                     </Card>
                   ) : activeRoute.requiredPermission &&
                     authorizationLoadState === "loading" ? (
@@ -1971,6 +1837,7 @@ export default function FlowChainApp() {
                       <Lock className="mx-auto text-slate-500" size={34} />
                       <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Capability unavailable" : "能力暂不可用"}</h2>
                       <p className="mt-2 text-sm text-slate-500">{language === "en-US" ? "You have access, but this feature is turned off for this workspace." : "你有访问权限，但此功能在当前工作区未开启。"}</p>
+                      {blockedRouteLinks(activeRoute)}
                     </Card>
                   ) : (
                     <PanelErrorBoundary
@@ -2044,26 +1911,12 @@ export default function FlowChainApp() {
       <PanelErrorBoundary moduleLabel={language === "en-US" ? "AI assistant" : "AI 助手"} language={language}>
         <AiPanel
           moduleId={activeModule}
-          activeContext={aiActiveContext}
+          activeContext={aiActiveContext || routeRecordContext}
           openSignal={aiOpenSignal}
           userName={user.name}
           onNavigate={navigateTo}
         />
       </PanelErrorBoundary>
-      <ActionDraftReviewShell
-        open={draftShellOpen}
-        loading={draftLoading}
-        error={draftError}
-        draft={draftPreview}
-        onClose={() => setDraftShellOpen(false)}
-        onCancelPreview={() => {
-          setDraftPreview(null);
-          setDraftError("");
-          setDraftShellOpen(false);
-        }}
-        onSaveDraft={saveActionDraftReview}
-        onNavigate={navigateTo}
-      />
     </div>
   );
 }

@@ -45,13 +45,17 @@ export type SupplierScorecardRow = {
     onTime: LineRate; onTimeCurrent: LineRate; early: LineRate; inFull: LineRate; otif: LineRate; otifCurrent: LineRate;
     // Quantities are null when the lines are for more than one SKU or unit.
     rejection: { rejectedQuantity: number | null; receivedQuantity: number | null; unit: string | null; mixedUnits: boolean; multipleSkus?: boolean; rate: number | null; interval: Interval };
+    // Receipt lines with a rejection: counted, so it holds across SKUs and units.
+    rejectedLines?: { count: number; of: number; rate: number | null; interval: Interval };
     averageDelayDays: { value: number | null; lateCount: number };
     priceVariances: { count: number | null; visible: boolean; amounts: MoneyByCurrency };
   };
   orderedValue: MoneyByCurrency; obligations: ScorecardObligation[]; lines: ScorecardLine[]; pendingObligations: ScorecardObligation[]; originalNotRecordedLines: ScorecardLine[]; invoices: ScorecardInvoice[];
   notSentCount?: number; notSentPurchaseOrders?: NotSentPurchaseOrder[];
+  // Deliveries left out: received in a warehouse the reader cannot see.
+  withheldCount?: number;
 };
-// promiseBasis "po_date": the original promise is the date on the PO at approval.
+// promiseBasis "po_date": the original promise is the date on the PO when it was issued or first received.
 export type SupplierScorecard = { version: string; asOf: string; timeZone: string; period: { from: string; to: string }; rules: { graceDays: number; earlyDays: number; minimumSample: number; promiseBasis?: string }; limitations: string[]; suppliers: SupplierScorecardRow[] };
 
 // English source copy with its Chinese translation.
@@ -70,28 +74,34 @@ const COPY: Record<string, [string, string]> = {
   graceInvalid: ["Grace days must be a whole number from 0 to {n}.", "宽限天数必须是 0 到 {n} 之间的整数。"],
   supplier: ["Supplier", "供应商"], lines: ["Deliveries", "交付次数"], delivery: ["Delivery", "交付"],
   onTime: ["On time", "准时率"], onTimeOriginal: ["On time vs the date on the PO", "按采购订单日期准时率"], onTimeCurrent: ["vs current date", "按当前日期"], onTimeCurrentFull: ["On time vs current date", "按当前日期准时率"],
-  overdueCount: ["{n} overdue with a line not received", "{n} 次交付逾期，有行未到货"],
+  overdueCount: ["{n} overdue with a line not received", "{n} 次交付逾期，有行未到货"], overdueCountOne: ["1 overdue with a line not received", "1 次交付逾期，有行未到货"],
   inFull: ["In full", "足量率"], otif: ["OTIF", "OTIF"], otifOriginal: ["OTIF vs the date on the PO", "按采购订单日期 OTIF"], otifCurrentFull: ["OTIF vs current date", "按当前日期 OTIF"], pendingCount: ["{n} not in full yet", "{n} 次交付尚未足量"], pendingLines: ["Not in full yet", "尚未足量"], early: ["Early", "过早到货"], rejection: ["Rejection rate", "拒收率"],
   averageDelay: ["Average delay", "平均延迟"], priceVariances: ["Price variances", "价格差异"],
   insufficient: ["Fewer than 5 deliveries", "交付少于 5 次"], noDeliveries: ["No deliveries due in this period with a date on the PO", "本期没有按采购订单日期应交付的记录"],
   // Enough deliveries, but fewer than 5 of them settled for this figure.
   fewerSettled: ["Fewer than 5 settled deliveries", "已判定的交付少于 5 次"],
   waiting: ["No deliveries judged yet; {n} waiting for lines not yet due", "暂无已判定的交付；{n} 次交付仍有行未到期"],
-  linesCount: ["{n} deliveries", "{n} 次交付"], days: ["{n} days", "{n} 天"], lateLines: ["{n} late", "迟到 {n} 次"],
+  linesCount: ["{n} deliveries", "{n} 次交付"], linesCountOne: ["1 delivery", "1 次交付"], days: ["{n} days", "{n} 天"], daysOne: ["1 day", "1 天"], lateLines: ["{n} late", "迟到 {n} 次"],
   interval: ["95% range {low}–{high}", "95% 区间 {low}–{high}"],
   hidden: ["Hidden", "无权查看"], mixedUnits: ["Mixed units", "单位不同"], multipleSkus: ["Multiple SKUs", "多个 SKU"],
+  rejectedLines: ["{count} of {of} receipt lines with a rejection", "{of} 个收货行中有 {count} 个有拒收"],
+  withheld: ["{n} deliveries received in warehouses you cannot see are left out of every figure.", "有 {n} 次交付在你无权查看的仓库收货，未计入任何指标。"],
+  withheldOne: ["1 delivery received in a warehouse you cannot see is left out of every figure.", "有 1 次交付在你无权查看的仓库收货，未计入任何指标。"],
   notRecorded: ["{n} received lines have no original promise recorded and are not counted.", "有 {n} 个已收货订单行没有记录原始承诺交期，未计入统计。"],
+  notRecordedOne: ["1 received line has no original promise recorded and is not counted.", "有 1 个已收货订单行没有记录原始承诺交期，未计入统计。"],
   pending: ["{n} deliveries still have a line open with a shortfall: not in full yet, and left out of the in-full rate until every line is fully received or closed.", "有 {n} 次交付仍有订单行未收齐且未关闭：尚未足量，在各行收齐或关闭前不计入足量率。"],
+  pendingOne: ["1 delivery still has a line open with a shortfall: not in full yet, and left out of the in-full rate until every line is fully received or closed.", "有 1 次交付仍有订单行未收齐且未关闭：尚未足量，在各行收齐或关闭前不计入足量率。"],
   revisedNote: ["{n} lines had their promised date revised after the PO was issued.", "有 {n} 个订单行在下达后修改过承诺交期。"],
+  revisedNoteOne: ["1 line had its promised date revised after the PO was issued.", "有 1 个订单行在下达后修改过承诺交期。"],
   hiddenInvoices: ["Price variances are hidden: you cannot view supplier invoices.", "价格差异已隐藏：你没有查看采购发票的权限。"],
   warehouseScoped: ["Only receipts in your warehouses are counted.", "仅统计你有权限的仓库的收货。"],
   definitionTitle: ["How these figures are calculated", "指标口径"],
   definition: [
-    "Each figure counts deliveries: the lines of one PO that share an original promised date, the date on the PO when it was approved. That date may be the buyer's need date rather than a date the supplier confirmed, and only POs the supplier actually got count: issued to the supplier, or with a posted receipt. A PO approved but not sent, with nothing received, is left out of every figure and listed as not sent to the supplier. A delivery counts when its original promised date falls in the period and every line has a posted receipt, or that date plus the grace days has passed; a delivery with a line not yet due and not received waits. A line ordered at zero, or closed with nothing received before it was due, is left out. A delivery past its original promised date plus the grace days with a line not received is overdue: late, not OTIF, and not in full yet. On time: every line's first receipt arrived by the original promised date plus the grace days; a partial first receipt counts. When the last line's first receipt is more than 3 days early, the delivery counts as early, not as a failure. In full: every line's accepted quantity eventually reached its ordered quantity. A delivery with a line still open with a shortfall is not in full yet; it is listed as pending and left out of the in-full rate until every line is fully received or closed. OTIF: every line's accepted quantity reached its ordered quantity by the original promised date plus the grace days; a delivery still short inside that window is undecided and left out of the OTIF rate. Rejection rate: rejected ÷ received quantity over the lines of these deliveries; it is not shown when the lines are for more than one SKU or use different units. Average delay: mean days from the original promised date to the last line's first receipt, over the late deliveries; for a line not received, to today, or to the day it was closed. Price variances: supplier invoices dated in the period with a price variance. \"vs current date\" repeats on time and OTIF against each line's current expected date, with the same grace days; a line not yet due against its current date counts as on time against it, and a line closed with nothing received counts as late. The current date moves when a supplier revises, so the gap shows how much the revisions hide. Fewer than 5 deliveries is an insufficient sample, and a rate whose own settled deliveries number fewer than 5 is not shown. Ranges are Wilson 95% intervals over deliveries.",
-    "统计单位是交付：同一采购订单中原始承诺交期相同的各行。原始承诺交期是采购订单审批时的日期，可能是采购方的需求日期，而非供应商确认的日期；只统计供应商实际收到的采购订单：已下达，或已有过账收货；已批准但未下达且没有收货的采购订单不计入任何指标，单独列为未下达。原始承诺交期在统计期内、且每一行都已过账收货或已超过该日期加宽限天数的交付计入统计；仍有行未到期且未收货的交付暂不判定。订购数量为 0 的行，以及到期前关闭且未收货的行不计入。超过原始承诺交期加宽限天数仍有行未收货的交付为逾期：记为迟到、非 OTIF，并列为尚未足量。准时：每一行第一次收货都在原始承诺交期加宽限天数之内到货，部分到货也算；最后一行的第一次收货提前超过 3 天记为过早到货，不算违约。足量：每一行累计合格收货最终达到订购数量；仍有行未收齐且未关闭的交付记为尚未足量，列为待定，在各行收齐或关闭前不计入足量率。OTIF：截至原始承诺交期加宽限天数，每一行累计合格收货都已达到订购数量；仍在该期限内且尚未收齐的交付暂不判定，不计入 OTIF。拒收率：这些交付各行的拒收数量 ÷ 收货数量；各行涉及多个 SKU 或单位不同时不显示。平均延迟：迟到交付从原始承诺交期到最后一行第一次收货的平均天数；有行未收货的算到今天，已关闭的算到关闭当天。价格差异：统计期内开具且存在价格差异的采购发票张数。“按当前日期”用每一行的当前预计交期和相同宽限天数重复准时和 OTIF 判断；按当前日期尚未到期的行视为准时，未收货即关闭的行视为迟到。供应商改期时当前日期会随之变化，两者的差距就是改期掩盖的延迟。少于 5 次交付为样本不足；某项指标自身已判定的交付少于 5 次时也不显示比率。区间为按交付计算的 Wilson 95% 置信区间。",
+    "Each figure counts deliveries: the lines of one PO that share an original promised date, the date on the PO when it was issued to the supplier or first received. That date may be the buyer's need date rather than a date the supplier confirmed, and only POs the supplier actually got count: issued to the supplier, or with a posted receipt. A PO approved but not sent, with nothing received, is left out of every figure and listed as not sent to the supplier. A delivery counts when its original promised date falls in the period and every line has a posted receipt, or that date plus the grace days has passed; a delivery with a line not yet due and not received waits. A line ordered at zero, or closed with nothing received before it was due, is left out. A delivery past its original promised date plus the grace days with a line not received is overdue: late, not OTIF, and not in full yet. On time: every line's first receipt arrived by the original promised date plus the grace days; a partial first receipt counts. When the last line's first receipt is more than 3 days early, the delivery counts as early, not as a failure. In full: every line's accepted quantity eventually reached its ordered quantity. A delivery with a line still open with a shortfall is not in full yet; it is listed as pending and left out of the in-full rate until every line is fully received or closed. OTIF: every line's accepted quantity reached its ordered quantity by the original promised date plus the grace days; a delivery still short inside that window is undecided and left out of the OTIF rate. Rejection rate: rejected ÷ received quantity over the lines of these deliveries. When the lines are for more than one SKU or use different units, whose quantities cannot be added, it is the share of receipt lines (one PO line on one receipt) with a quantity rejected. Average delay: mean days from the original promised date to the last line's first receipt, over the late deliveries; for a line not received, to today, or to the day it was closed. Price variances: supplier invoices dated in the period with a price variance. \"vs current date\" repeats on time and OTIF against each line's current expected date, with the same grace days; a line not yet due against its current date counts as on time against it, and a line closed with nothing received counts as late. The current date moves when a supplier revises, so the gap shows how much the revisions hide. Fewer than 5 deliveries is an insufficient sample, and a rate whose own settled deliveries number fewer than 5 is not shown. Ranges are Wilson 95% intervals over deliveries.",
+    "统计单位是交付：同一采购订单中原始承诺交期相同的各行。原始承诺交期是采购订单审批时的日期，可能是采购方的需求日期，而非供应商确认的日期；只统计供应商实际收到的采购订单：已下达，或已有过账收货；已批准但未下达且没有收货的采购订单不计入任何指标，单独列为未下达。原始承诺交期在统计期内、且每一行都已过账收货或已超过该日期加宽限天数的交付计入统计；仍有行未到期且未收货的交付暂不判定。订购数量为 0 的行，以及到期前关闭且未收货的行不计入。超过原始承诺交期加宽限天数仍有行未收货的交付为逾期：记为迟到、非 OTIF，并列为尚未足量。准时：每一行第一次收货都在原始承诺交期加宽限天数之内到货，部分到货也算；最后一行的第一次收货提前超过 3 天记为过早到货，不算违约。足量：每一行累计合格收货最终达到订购数量；仍有行未收齐且未关闭的交付记为尚未足量，列为待定，在各行收齐或关闭前不计入足量率。OTIF：截至原始承诺交期加宽限天数，每一行累计合格收货都已达到订购数量；仍在该期限内且尚未收齐的交付暂不判定，不计入 OTIF。拒收率：这些交付各行的拒收数量 ÷ 收货数量。各行涉及多个 SKU 或单位不同、数量无法相加时，改为有拒收的收货行（一张收货单上的一个订单行）占全部收货行的比例。平均延迟：迟到交付从原始承诺交期到最后一行第一次收货的平均天数；有行未收货的算到今天，已关闭的算到关闭当天。价格差异：统计期内开具且存在价格差异的采购发票张数。“按当前日期”用每一行的当前预计交期和相同宽限天数重复准时和 OTIF 判断；按当前日期尚未到期的行视为准时，未收货即关闭的行视为迟到。供应商改期时当前日期会随之变化，两者的差距就是改期掩盖的延迟。少于 5 次交付为样本不足；某项指标自身已判定的交付少于 5 次时也不显示比率。区间为按交付计算的 Wilson 95% 置信区间。",
   ],
   drilldown: ["Deliveries behind {metric}", "{metric} 对应的交付"], allLines: ["All deliveries", "全部交付"], close: ["Close", "关闭"],
-  deliveryLines: ["{n} lines", "{n} 行"],
+  deliveryLines: ["{n} lines", "{n} 行"], deliveryLinesOne: ["1 line", "1 行"],
   po: ["PO", "采购订单"], sku: ["SKU", "SKU"], original: ["Date on the PO", "采购订单日期"], current: ["Current date", "当前交期"],
   arrived: ["First receipt", "首次到货"], fullOn: ["In full on", "足量日期"], otifShort: ["OTIF", "OTIF"], received: ["Received", "收货"], rejected: ["Rejected", "拒收"], lateBy: ["Days late", "迟到天数"],
   result: ["Result", "结果"], resultOnTime: ["On time", "准时"], resultLate: ["Late", "迟到"], resultEarly: ["Early", "过早"],
@@ -105,10 +115,13 @@ const COPY: Record<string, [string, string]> = {
   view: ["View lines", "查看订单行"],
 };
 
+// A message with a count n of 1 takes its "One" form when it has one ("1 day",
+// not "1 days").
 function useCopy() {
   const { language } = useI18n();
   return (key: string, values: Record<string, string | number> = {}) => {
-    const entry = COPY[key];
+    const one = `${key}One`;
+    const entry = String(values.n) === "1" && COPY[one] ? COPY[one] : COPY[key];
     const template = entry ? entry[language === "en-US" ? 0 : 1] : key;
     return Object.entries(values).reduce((result, [name, value]) => result.replace(`{${name}}`, String(value)), template);
   };
@@ -249,11 +262,13 @@ function rateText(metric: LineRate | { rate: number | null }, sampleStatus: stri
   return format.percent(metric.rate);
 }
 
+// The quantity rate for one SKU in one unit; otherwise the share of receipt
+// lines with a rejection, which needs no adding (design audit L9-04).
 function rejectionText(row: SupplierScorecardRow, format: ReturnType<typeof useFormat>, tr: ReturnType<typeof useCopy>) {
   const rejection = row.metrics.rejection;
+  const lines = row.metrics.rejectedLines;
   if (row.sampleStatus !== "ok") return tr("insufficient");
-  if (rejection.multipleSkus) return tr("multipleSkus");
-  if (rejection.mixedUnits) return tr("mixedUnits");
+  if (rejection.multipleSkus || rejection.mixedUnits) return lines && lines.rate !== null ? format.percent(lines.rate) : tr(rejection.multipleSkus ? "multipleSkus" : "mixedUnits");
   return format.percent(rejection.rate);
 }
 
@@ -375,6 +390,7 @@ function Notes({ row, limitations }: { row: SupplierScorecardRow; limitations: s
     row.inFullPendingCount ? tr("pending", { n: row.inFullPendingCount }) : "",
     limitations.includes("price_variances_hidden_by_permission") ? tr("hiddenInvoices") : "",
     limitations.includes("receipts_limited_to_your_warehouses") ? tr("warehouseScoped") : "",
+    row.withheldCount ? tr("withheld", { n: row.withheldCount }) : "",
   ].filter(Boolean);
   if (!notes.length) return null;
   return <ul className="mt-3 list-disc space-y-0.5 pl-4 text-[11px]" style={{ color: A.sub }}>{notes.map((note) => <li key={note}>{note}</li>)}</ul>;
@@ -397,6 +413,9 @@ function SupplierFigures({ row, limitations }: { row: SupplierScorecardRow; limi
   const status = row.sampleStatus;
   const rejectionValue = rejectionText(row, format, tr);
   const rejectionAdded = m.rejection.rejectedQuantity !== null && m.rejection.receivedQuantity !== null;
+  const rejectionDetail = rejectionAdded
+    ? `${format.number(m.rejection.rejectedQuantity)} / ${format.number(m.rejection.receivedQuantity)}${m.rejection.unit ? ` ${m.rejection.unit}` : ""}`
+    : m.rejectedLines ? tr("rejectedLines", { count: format.number(m.rejectedLines.count), of: format.number(m.rejectedLines.of) }) : undefined;
   return (
     <div>
       {status === "insufficient_sample" && <div className="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800" data-testid="supplier-performance-insufficient">{tr("insufficient")} · {tr("linesCount", { n: row.sampleSize })}</div>}
@@ -405,7 +424,7 @@ function SupplierFigures({ row, limitations }: { row: SupplierScorecardRow; limi
         <Tile testId="supplier-performance-in-full" label={tr("inFull")} value={rateText(m.inFull, status, format, tr)} detail={[`${m.inFull.count}/${m.inFull.of}`, row.inFullPendingCount ? tr("pendingCount", { n: row.inFullPendingCount }) : ""].filter(Boolean).join(" · ")} onClick={() => setMetric(row.inFullPendingCount ? "pending" : "inFull")} />
         <Tile testId="supplier-performance-otif" label={`${tr("otifOriginal")} · ${tr("onTimeCurrent")}`} value={status === "ok" ? `${rateText(m.otif, status, format, tr)} · ${format.percent(m.otifCurrent.rate)}` : tr("insufficient")} detail={`${m.otif.count}/${m.otif.of} · ${m.otifCurrent.count}/${m.otifCurrent.of}`} onClick={() => setMetric("otif")} />
         <Tile testId="supplier-performance-early" label={tr("early")} value={rateText(m.early, status, format, tr)} detail={`${m.early.count}/${m.early.of}`} onClick={() => setMetric("early")} />
-        <Tile testId="supplier-performance-rejection" label={tr("rejection")} value={rejectionValue} detail={!rejectionAdded ? undefined : `${format.number(m.rejection.rejectedQuantity)} / ${format.number(m.rejection.receivedQuantity)}${m.rejection.unit ? ` ${m.rejection.unit}` : ""}`} onClick={() => setMetric("rejection")} />
+        <Tile testId="supplier-performance-rejection" label={tr("rejection")} value={rejectionValue} detail={rejectionDetail} onClick={() => setMetric("rejection")} />
         <Tile testId="supplier-performance-delay" label={tr("averageDelay")} value={m.averageDelayDays.value === null ? "—" : tr("days", { n: format.number(m.averageDelayDays.value) })} detail={tr("lateLines", { n: m.averageDelayDays.lateCount })} onClick={() => setMetric("averageDelay")} />
         <Tile testId="supplier-performance-price-variances" label={tr("priceVariances")} value={m.priceVariances.visible ? format.number(m.priceVariances.count) : tr("hidden")} detail={m.priceVariances.amounts.map((item) => format.money(item.amount, item.currency)).join(" · ") || undefined} onClick={() => setMetric("priceVariances")} />
         <Tile testId="supplier-performance-lines" label={tr("lines")} value={format.number(row.sampleSize)} detail={[tr("deliveryLines", { n: format.number(row.lineCount) }), ...row.orderedValue.map((item) => format.money(item.amount, item.currency))].join(" · ")} onClick={() => setMetric("all")} />

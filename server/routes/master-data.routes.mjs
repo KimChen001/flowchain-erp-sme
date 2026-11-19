@@ -1,10 +1,11 @@
-import { assertAuthorized } from '../auth/authorization-service.mjs'
+import { assertAuthorized, can } from '../auth/authorization-service.mjs'
 import { selectMasterData } from '../domain/master-data-selectors.mjs'
 import { maskReferencePrice, maskSupplier, masterDataReadAccess } from '../domain/master-data-read-access.mjs'
 import { PilotIdentityError, hasWarehouseAccess, resolveProvisionedActor } from '../domain/pilot-identity.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { MASTER_DATA_LIST_LIMIT } from '../repositories/db-master-data-repository.mjs'
 import { createSupplierInsightsReadService } from '../domain/supplier-insights.mjs'
+import { itemRequestUnit } from '../domain/item-stock-unit.mjs'
 
 // Writes are decided by Roles & permissions, never by the legacy User.role, so
 // an administrator who narrows someone's roles narrows what they can change.
@@ -85,6 +86,13 @@ export async function handleMasterDataRoute(ctx) {
   const suppliersFor = async (rows) => { const visible = await readAccess(); return rows.map((row) => maskSupplier(row, visible)) }
   const supplierFor = async (row) => maskSupplier(row, await readAccess())
   const pricesFor = async (rows) => { const visible = await readAccess(); return (rows || []).map((row) => maskReferencePrice(row, visible)) }
+  // A supplier write changes the registration, tax and bank details only when
+  // the writer may read them (supplierInputIssues in supplier-master-command).
+  // Its bank details also need master_data.supplier.bank.manage (design audit C4).
+  const supplierWriteScope = async () => tenantScope({
+    sensitiveFieldsWritable: (await readAccess()).partner === true,
+    bankFieldsWritable: can({ actor: await provisionedActor(), permission: 'master_data.supplier.bank.manage', tenantId: ctx.identity.tenantId }),
+  })
 
   const selectorMatch = url.pathname.match(/^\/api\/master-data\/(departments|currencies|units|commodities|warehouses|payment-terms|tax-codes)\/select$/)
   if (req.method === 'GET' && selectorMatch) {
@@ -153,8 +161,15 @@ export async function handleMasterDataRoute(ctx) {
   const customerMatch = url.pathname.match(
     /^\/api\/master-data\/customers\/([^/]+)$/,
   )
+  // A name two records share answers 409 with the candidates (design audit L4-18).
+  const ambiguous = (error) => {
+    if (error?.code !== 'NAME_AMBIGUOUS') throw error
+    send(res, 409, { code: error.code, message: error.message, details: error.details || [] })
+    return true
+  }
   if (req.method === 'GET' && customerMatch) {
-    const customer = await repository.getCustomer(customerMatch[1], tenantScope())
+    let customer
+    try { customer = await repository.getCustomer(customerMatch[1], tenantScope()) } catch (error) { return ambiguous(error) }
     send(
       res,
       customer ? 200 : 404,
@@ -164,15 +179,24 @@ export async function handleMasterDataRoute(ctx) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/master-data/items') {
+    const purchasable = url.searchParams.get('purchasable') === 'true'
     const managed =
       url.searchParams.get('managed') === 'true' ||
-      url.searchParams.get('purchasable') === 'true'
+      purchasable
+    const items = await (managed && repository.listManagedItems
+      ? repository.listManagedItems
+      : repository.listItems)(everyRecord({
+      purchasableOnly: purchasable,
+    }))
+    // The purchasable list feeds the purchase request forms. purchaseUnit is
+    // the item's recorded purchase unit. A request line is built in the stock
+    // unit, since no conversion from another unit is recorded
+    // (item-stock-unit.mjs), so this list also gives stockUnit: the recorded
+    // stock unit, '' when none is (such a line keeps the purchase unit).
     send(res, 200, {
-      items: await (managed && repository.listManagedItems
-        ? repository.listManagedItems
-        : repository.listItems)(everyRecord({
-        purchasableOnly: url.searchParams.get('purchasable') === 'true',
-      })),
+      items: purchasable
+        ? items.map((item) => ({ ...item, stockUnit: itemRequestUnit(item).stockUnit }))
+        : items,
     })
     return true
   }
@@ -206,7 +230,8 @@ export async function handleMasterDataRoute(ctx) {
     const managedItem = repository.getManagedItem
       ? await repository.getManagedItem(itemId, tenantScope())
       : null
-    const item = managedItem || await repository.getItem(itemId, tenantScope())
+    let item = managedItem
+    if (!item) try { item = await repository.getItem(itemId, tenantScope()) } catch (error) { return ambiguous(error) }
     if (!item) {
       send(res, 404, { error: 'Item not found' })
       return true
@@ -330,12 +355,45 @@ export async function handleMasterDataRoute(ctx) {
     return true
   }
 
+  // The supplier's indicators as the person deciding its tier sees them (on
+  // time, OTIF, overdue orders, open issues, with their own access), kept on
+  // the tier change or review audit row (design audit L9-12). Read here,
+  // never taken from the request. null when they cannot be read.
+  const tierIndicators = async (supplierId) => {
+    try {
+      const service = ctx.supplierInsightsService || createSupplierInsightsReadService({ prisma: await getPrismaClient(ctx.env || process.env), listPurchaseOrders: ctx.repositories?.procurementRuntime?.listForReport })
+      const read = await service.read(ctx)
+      const row = read?.suppliers?.[decodeURIComponent(String(supplierId || ''))]
+      if (!row) return null
+      const rate = (value) => (value ? { rate: value.rate, count: value.count, of: value.of } : null)
+      return { asOf: read.asOf, onTime: rate(row.onTime), otif: rate(row.otif), overduePos: row.overduePos ?? null, openIssues: row.openIssues ?? null }
+    } catch {
+      return null
+    }
+  }
+
   const supplierTierMatch = url.pathname.match(/^\/api\/master-data\/suppliers\/([^/]+)\/(tier|owner)$/)
   if (req.method === 'PATCH' && supplierTierMatch) {
     if (!(await authorizeWrite('supplier-master'))) return true
-    const change = supplierTierMatch[2] === 'tier' ? repository.setSupplierTier : repository.setSupplierOwner
+    const isTier = supplierTierMatch[2] === 'tier'
+    const change = isTier ? repository.setSupplierTier : repository.setSupplierOwner
     try {
-      send(res, 200, { supplier: await supplierFor(await change(supplierTierMatch[1], await readBody(req), actor(), tenantScope())) })
+      const body = await readBody(req)
+      const options = isTier ? { indicators: await tierIndicators(supplierTierMatch[1]) } : undefined
+      send(res, 200, { supplier: await supplierFor(await change(supplierTierMatch[1], body, actor(), tenantScope(), options)) })
+    } catch (error) {
+      send(res, error.status || 500, { code: error.code || 'PERSISTENCE_ERROR', message: error.message, details: error.details || [] })
+    }
+    return true
+  }
+
+  // Records a review that keeps the supplier's tier (design audit L9-12).
+  const supplierTierReviewMatch = url.pathname.match(/^\/api\/master-data\/suppliers\/([^/]+)\/tier-review$/)
+  if (req.method === 'POST' && supplierTierReviewMatch && typeof repository.reviewSupplierTier === 'function') {
+    if (!(await authorizeWrite('supplier-master'))) return true
+    try {
+      const body = await readBody(req)
+      send(res, 200, { supplier: await supplierFor(await repository.reviewSupplierTier(supplierTierReviewMatch[1], body, actor(), tenantScope(), { indicators: await tierIndicators(supplierTierReviewMatch[1]) })) })
     } catch (error) {
       send(res, error.status || 500, { code: error.code || 'PERSISTENCE_ERROR', message: error.message, details: error.details || [] })
     }
@@ -356,10 +414,12 @@ export async function handleMasterDataRoute(ctx) {
     const query = String(url.searchParams.get('query') || '').trim().toLowerCase()
     const suppliers = await suppliersFor(await repository.listSuppliers(everyRecord()))
     send(res, 200, {
-      suppliers: suppliers.filter(row => !query || [row.id, row.name].some(value => String(value || '').toLowerCase().includes(query))).map(row => ({
+      // The supplier's own code, which people type and imports match on, not
+      // its row id (design audit L4-17).
+      suppliers: suppliers.filter(row => !query || [row.id, row.supplierCode, row.name].some(value => String(value || '').toLowerCase().includes(query))).map(row => ({
         ...row,
         supplierName: row.name,
-        supplierCode: row.id,
+        supplierCode: row.supplierCode || row.id,
       })),
     })
     return true
@@ -368,7 +428,7 @@ export async function handleMasterDataRoute(ctx) {
   if (req.method === 'POST' && url.pathname === '/api/master-data/suppliers') {
     if (!(await authorizeWrite('supplier-master'))) return true
     if (!repository.createSupplier) { send(res,501,{code:'ADAPTER_WRITE_UNSUPPORTED',message:'Supplier writes are not available in this workspace.'}); return true }
-    try { send(res,201,{supplier:await supplierFor(await repository.createSupplier(await readBody(req),actor(),tenantScope()))}) } catch(error) { send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]}) }
+    try { send(res,201,{supplier:await supplierFor(await repository.createSupplier(await readBody(req),actor(),await supplierWriteScope()))}) } catch(error) { send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]}) }
     return true
   }
 
@@ -376,7 +436,8 @@ export async function handleMasterDataRoute(ctx) {
     /^\/api\/master-data\/suppliers\/([^/]+)$/,
   )
   if (req.method === 'GET' && supplierMatch) {
-    const supplier = await repository.getSupplier(supplierMatch[1], tenantScope())
+    let supplier
+    try { supplier = await repository.getSupplier(supplierMatch[1], tenantScope()) } catch (error) { return ambiguous(error) }
     if (!supplier) {
       send(res, 404, { error: 'Supplier not found' })
       return true
@@ -388,7 +449,7 @@ export async function handleMasterDataRoute(ctx) {
 
   if (req.method === 'PATCH' && supplierMatch) {
     if (!(await authorizeWrite('supplier-master'))) return true
-    try { send(res,200,{supplier:await supplierFor(await repository.updateSupplier(decodeURIComponent(supplierMatch[1]),await readBody(req),actor(),tenantScope()))}) } catch(error) { send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]}) }
+    try { send(res,200,{supplier:await supplierFor(await repository.updateSupplier(decodeURIComponent(supplierMatch[1]),await readBody(req),actor(),await supplierWriteScope()))}) } catch(error) { send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]}) }
     return true
   }
 

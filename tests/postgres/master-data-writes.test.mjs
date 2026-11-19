@@ -85,11 +85,21 @@ test('items, customers and item suppliers can be created and edited in PostgreSQ
     const edited = await call('PATCH', `/api/master-data/items/${item.itemId}`, { itemName: 'Flow Valve 2in', expectedVersion: 1 })
     assert.equal(edited.status, 200, JSON.stringify(edited.payload))
     assert.deepEqual([edited.payload.item.itemName, edited.payload.item.version, edited.payload.item.sku], ['Flow Valve 2in', 2, 'NEW-100'])
+    // The order-up-to level and lot size are columns (design audit C3): saved,
+    // read back, cleared; a level at or below the reorder point is refused.
+    const levels = await call('PATCH', `/api/master-data/items/${item.itemId}`, { orderUpToLevel: 30, lotSize: 12, expectedVersion: 2 })
+    assert.equal(levels.status, 200, JSON.stringify(levels.payload))
+    assert.deepEqual([levels.payload.item.orderUpToLevel, levels.payload.item.lotSize, levels.payload.item.recorded.orderUpToLevel, levels.payload.item.recorded.lotSize], [30, 12, 30, 12])
+    assert.deepEqual([Number((await prisma.item.findFirst({ where: { id: item.itemId } })).orderUpToLevel), Number((await prisma.item.findFirst({ where: { id: item.itemId } })).lotSize)], [30, 12])
+    const tooLow = await call('PATCH', `/api/master-data/items/${item.itemId}`, { orderUpToLevel: 8, expectedVersion: 3 })
+    assert.deepEqual([tooLow.status, tooLow.payload.details.map((row) => row.code)], [422, ['ORDER_UP_TO_NOT_ABOVE_REORDER_POINT']])
+    const levelsCleared = await call('PATCH', `/api/master-data/items/${item.itemId}`, { orderUpToLevel: null, lotSize: '', expectedVersion: 3 })
+    assert.deepEqual([levelsCleared.status, levelsCleared.payload.item.orderUpToLevel, levelsCleared.payload.item.lotSize, levelsCleared.payload.item.version], [200, null, null, 4])
     const stale = await call('PATCH', `/api/master-data/items/${item.itemId}`, { itemName: 'Lost update', expectedVersion: 1 })
     assert.deepEqual([stale.status, stale.payload.code], [409, 'VERSION_CONFLICT'])
     const duplicate = await call('POST', '/api/master-data/items', { sku: 'NEW-100', itemName: 'Twin', baseUnit: 'EA' })
     assert.deepEqual([duplicate.status, duplicate.payload.code], [409, 'DUPLICATE_SKU'])
-    const renamedSku = await call('PATCH', `/api/master-data/items/${item.itemId}`, { sku: 'OTHER-1', expectedVersion: 2 })
+    const renamedSku = await call('PATCH', `/api/master-data/items/${item.itemId}`, { sku: 'OTHER-1', expectedVersion: 4 })
     assert.deepEqual([renamedSku.status, renamedSku.payload.details.map((row) => row.field)], [422, ['sku']])
     const invalid = await call('POST', '/api/master-data/items', { sku: 'BAD 1', itemName: '', baseUnit: 'EA', safetyStock: -1, defaultSupplierId: 'SUP-B' })
     assert.equal(invalid.status, 422)
@@ -98,6 +108,20 @@ test('items, customers and item suppliers can be created and edited in PostgreSQ
     const foreign = await call('PATCH', '/api/master-data/items/ITEM-B', { itemName: 'Taken over', expectedVersion: 1 })
     assert.equal(foreign.status, 404)
     assert.equal((await prisma.item.findFirst({ where: { id: 'ITEM-B' } })).name, 'Item B')
+
+    // The stock unit is locked like the SKU once the item has stock (design
+    // audit L4-04): no conversion between units is recorded, so the balance
+    // would silently change meaning. An item nothing holds yet can change it.
+    await prisma.inventoryBalance.create({ data: { id: 'BAL-A', tenantId: tenantA, itemId: 'ITEM-A', sku: 'SKU-A', warehouseId: 'WH-A', warehouseKey: 'WH-A', location: 'A-01', locationKey: 'a-01', onHandQuantity: '40', availableQuantity: '40', reservedQuantity: '0', unit: 'EA', version: 1 } })
+    const lockedUnit = await call('PATCH', '/api/master-data/items/ITEM-A', { baseUnit: 'BOX', expectedVersion: 1 })
+    assert.deepEqual([lockedUnit.status, lockedUnit.payload.code, lockedUnit.payload.details.map((row) => [row.field, row.code])], [409, 'UNIT_LOCKED', [['baseUnit', 'UNIT_LOCKED']]])
+    const stillEa = await prisma.item.findFirst({ where: { id: 'ITEM-A' } })
+    assert.deepEqual([stillEa.unit, stillEa.metadata?.version ?? 1], ['EA', 1])
+    const sameUnitRenamed = await call('PATCH', '/api/master-data/items/ITEM-A', { baseUnit: 'ea', itemName: 'Item A, renamed', expectedVersion: 1 })
+    assert.equal(sameUnitRenamed.status, 200, JSON.stringify(sameUnitRenamed.payload))
+    const unheld = await call('POST', '/api/master-data/items', { sku: 'NEW-UNIT', itemName: 'Carton', baseUnit: 'EA' })
+    const unheldBox = await call('PATCH', `/api/master-data/items/${unheld.payload.item.itemId}`, { baseUnit: 'BOX', expectedVersion: 1 })
+    assert.deepEqual([unheldBox.status, unheldBox.payload.item?.baseUnit], [200, 'BOX'])
 
     // Customers: create, edit, deactivate, duplicates and validation.
     const customer = await call('POST', '/api/master-data/customers', { code: 'CUST-RED', name: 'Redwood Retail', currency: 'usd', email: 'buyer@redwood.example', paymentTerms: 'NET30' })
@@ -179,6 +203,32 @@ test('items, customers and item suppliers can be created and edited in PostgreSQ
     assert.equal(resaved.status, 200, JSON.stringify(resaved.payload))
     const kept = (await prisma.supplier.findUnique({ where: { id: 'SUP-A' } })).metadata
     assert.deepEqual([kept.creditCode, kept.taxIdentificationNumber, kept.bankAccountName, kept.bankAccountNumber, kept.contactName], ['91310000MA1K', '12-3456789', 'Supplier A LLC', '000123456789', 'Dana Lee'])
+    // Design audit V-B-01: what the specialist cannot read it cannot write
+    // either. A new account number or a cleared tax ID is not saved, the rest
+    // of the change is, and the audit row names the fields that were sent.
+    const blind = await asSpecialist('PATCH', '/api/master-data/suppliers/SUP-A', { bankAccountNumber: '999900001111', bankAccountName: 'Someone Else', taxIdentificationNumber: '', telephone: '+1 617 555 0100', expectedVersion: resaved.payload.supplier.version })
+    assert.equal(blind.status, 200, JSON.stringify(blind.payload))
+    assert.equal(blind.payload.supplier.bankAccountNumber, '****6789')
+    const unchanged = (await prisma.supplier.findUnique({ where: { id: 'SUP-A' } })).metadata
+    assert.deepEqual([unchanged.creditCode, unchanged.taxIdentificationNumber, unchanged.bankAccountName, unchanged.bankAccountNumber, unchanged.telephone], ['91310000MA1K', '12-3456789', 'Supplier A LLC', '000123456789', '+1 617 555 0100'])
+    const specialistAudits = await prisma.auditLog.findMany({ where: { tenantId: tenantA, source: 'supplier-master', entityId: 'SUP-A', actorId: `${tenantA}-specialist` } })
+    assert.deepEqual(specialistAudits.map((row) => row.metadata.restrictedFieldsKept).filter(Boolean), [['taxIdentificationNumber', 'bankAccountName', 'bankAccountNumber']])
+    // A new supplier from the specialist gets no bank details.
+    const blindNew = await asSpecialist('POST', '/api/master-data/suppliers', { supplierCode: 'SUP-BLIND', supplierName: 'Blind Supplier', defaultCurrency: 'USD', bankAccountNumber: '999900001111' })
+    assert.equal(blindNew.status, 201, JSON.stringify(blindNew.payload))
+    assert.equal(Object.hasOwn((await prisma.supplier.findFirst({ where: { tenantId: tenantA, code: 'SUP-BLIND' } })).metadata, 'bankAccountNumber'), false)
+    // The manager reads them, but changing the bank details needs
+    // master_data.supplier.bank.manage, which a new workspace's operations
+    // manager does not have (design audit C4): refused, field by field.
+    const managerRefused = await call('PATCH', '/api/master-data/suppliers/SUP-A', { bankAccountNumber: '555500002222', expectedVersion: blind.payload.supplier.version })
+    assert.equal(managerRefused.status, 422, JSON.stringify(managerRefused.payload))
+    assert.deepEqual(managerRefused.payload.details.map((issue) => [issue.field, issue.code]), [['bankAccountNumber', 'BANK_DETAILS_PERMISSION_REQUIRED']])
+    // Once an administrator grants it to the manager's role, the change is saved.
+    const managerRole = await prisma.tenantRole.findFirst({ where: { tenantId: tenantA, roleKey: 'operations-manager' } })
+    await prisma.tenantRolePermission.create({ data: { id: `${tenantA}-bank-grant`, tenantId: tenantA, roleId: managerRole.id, permissionCode: 'master_data.supplier.bank.manage' } })
+    const managerEdit = await call('PATCH', '/api/master-data/suppliers/SUP-A', { bankAccountNumber: '555500002222', expectedVersion: blind.payload.supplier.version })
+    assert.equal(managerEdit.status, 200, JSON.stringify(managerEdit.payload))
+    assert.equal((await prisma.supplier.findUnique({ where: { id: 'SUP-A' } })).metadata.bankAccountNumber, '555500002222')
     const hiddenPrices = await asSpecialist('GET', `/api/master-data/items/${item.itemId}/suppliers`)
     assert.ok(hiddenPrices.payload.relationships.length > 0)
     assert.ok(hiddenPrices.payload.relationships.every((row) => row.referencePrice === null && row.restrictedFields.includes('referencePrice')))
@@ -377,7 +427,8 @@ test('the master data permissions migration grants the new codes to existing def
     await client.query(migration)
 
     const after = await grants()
-    const expected = Object.fromEntries(defaultRoleTemplates.map((template) => [template.roleKey, template.permissions.filter((code) => code.startsWith('master_data.')).sort()]).sort(([a], [b]) => a.localeCompare(b)))
+    // The supplier bank code came later, with its own migration (C4), so this one does not grant it.
+    const expected = Object.fromEntries(defaultRoleTemplates.map((template) => [template.roleKey, template.permissions.filter((code) => code.startsWith('master_data.') && code !== 'master_data.supplier.bank.manage').sort()]).sort(([a], [b]) => a.localeCompare(b)))
     assert.deepEqual(masterDataGrants(after.filter((row) => row.tenantId === tenantExisting)), expected)
     assert.deepEqual(masterDataGrants(after.filter((row) => row.tenantId === tenantCustomOnly)), {})
     // Every other grant is untouched, and the new ones have deterministic ids.

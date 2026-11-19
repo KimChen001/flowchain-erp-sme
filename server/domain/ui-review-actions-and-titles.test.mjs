@@ -35,6 +35,16 @@ test("Add supplied item is disabled until an item is picked", () => {
   assert.match(source, /data-testid="add-supplied-item"[\s\S]{0,120}disabled=\{!relationForm\.itemId\}/);
 });
 
+test("Supplied items are paged 25 at a time with the shared list pager and the true total", () => {
+  const source = read("src/modules/srm/Page.tsx");
+  assert.match(source, /const SUPPLIED_ITEM_PAGE_SIZE = 25;/);
+  assert.match(source, /usePagedRows\(relationships, SUPPLIED_ITEM_PAGE_SIZE, selected\?\.id \|\| ""\)/);
+  assert.match(source, /suppliedItems\.pageRows\.map\(\(r, index\) =>/);
+  assert.match(source, /<ListPager page=\{suppliedItems\.page\} pageSize=\{SUPPLIED_ITEM_PAGE_SIZE\} total=\{relationships\.length\}[^>]*testId="supplied-item-pager"/);
+  // The add-supplied-item row stays above the table.
+  assert.ok(source.indexOf('data-testid="add-supplied-item"') < source.indexOf("suppliedItems.pageRows.map"));
+});
+
 test("PO list filters use date inputs and the current PO number format", () => {
   const source = read("src/modules/purchasing/Page.tsx");
   assert.match(source, /<input type="date" value=\{filters\.etaFrom\}/);
@@ -68,9 +78,11 @@ test("detail page titles are one H1 in the shared page-title style", () => {
     "src/modules/procurement/ProcurementDocumentDetailPage.tsx": /<h1 className="fc-page-title"[^>]*data-testid="procurement-document-heading">\{heading\}<\/h1>/,
     "src/modules/sales/OutboundWorkbench.tsx": /<h1 className="fc-page-title">\{data\.order\.orderNumber\}<\/h1>/,
     "src/modules/srm/Page.tsx": /<h1 className="fc-page-title">\{selected\.supplierName\}<\/h1>/,
-    "src/modules/purchase-requests/CanonicalProcurementPanel.tsx": /<h1 className="fc-page-title"[^>]*>\{numberOf\(selected\)\}<\/h1>/,
+    // The request's header is the PO's (DocumentShell, design audit U-09).
+    "src/modules/purchase-requests/CanonicalProcurementPanel.tsx": /<DocumentShell\s+title=\{numberOf\(selected\)\}/,
     "src/modules/receiving/ReceivingPostingWorkbench.tsx": /<h1 className="fc-page-title">\{grn\.documentNumber\}<\/h1>/,
-    "src/modules/procurement/CanonicalRfqDetailPage.tsx": /<h1 className="fc-page-title mt-1">/,
+    // The status beside the title since design audit U-17.
+    "src/modules/procurement/CanonicalRfqDetailPage.tsx": /<h1 className="fc-page-title">\{record\.title \|\| rfqNumber\}<\/h1>/,
     "src/modules/procurement/CanonicalRfqComparisonPage.tsx": /<h1 className="fc-page-title mt-1">/,
     "src/components/business/BusinessEntityDetailPage.tsx": /<h1 className="fc-page-title mt-1 tabular-nums"/,
   };
@@ -78,5 +90,6 @@ test("detail page titles are one H1 in the shared page-title style", () => {
   // The item is the H1 on its own page, an H2 when opened in place under the list's H1.
   const item = read("src/modules/master-data/ItemMasterWorkbench.tsx");
   assert.match(item, /const ItemTitle = onDetailRoute \? "h1" : "h2"/);
-  assert.match(item, /<ItemTitle className=\{onDetailRoute \? "fc-page-title mt-2"/);
+  // "Back to items" sits above the card since UI review 9, so the title starts the card.
+  assert.match(item, /<ItemTitle className=\{onDetailRoute \? "fc-page-title"/);
 });

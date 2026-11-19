@@ -58,7 +58,8 @@ async function approvedBill(prisma, command, suffix, invoiceDate = '2026-09-01')
   const bill = await command.createSupplierInvoice({ invoiceNumber: `PR-BILL-${suffix}`, supplierId: 'PR-SUP', currency: 'USD', invoiceDate, dueDate: '2026-10-01', totalAmount: '105.0000', idempotencyKey: `pr-create-${suffix}`, lines: [{ purchaseOrderLineId: `PR-POL-${suffix}`, receivingLineId: `PR-GRNL-${suffix}`, quantity: '10.0000', unitPrice: '10.0000', lineAmount: '100.0000', enteredTaxAmount: '5.0000' }] }, admin)
   await command.submitSupplierInvoice(bill.entityId, { expectedVersion: 0, idempotencyKey: `pr-submit-${suffix}` }, admin)
   await command.matchSupplierInvoice(bill.entityId, { expectedVersion: 1, idempotencyKey: `pr-match-${suffix}` }, admin)
-  const approved = await command.approveSupplierInvoice(bill.entityId, { expectedVersion: 2, idempotencyKey: `pr-approve-${suffix}` }, admin)
+  // A second person approves what the administrator submitted (design audit C4).
+  const approved = await command.approveSupplierInvoice(bill.entityId, { expectedVersion: 2, idempotencyKey: `pr-approve-${suffix}` }, as('finance'))
   return { billId: bill.entityId, payableId: approved.payable.id }
 }
 
@@ -69,7 +70,7 @@ async function issuedInvoice(prisma, o2c, suffix) {
   const admin = as('admin')
   const created = await o2c.createCustomerInvoice({ shipmentId: `PR-SHIP-${suffix}`, currency: 'USD', invoiceDate: '2026-09-01T00:00:00.000Z', dueDate: '2026-10-01T00:00:00.000Z', totalAmount: '52', idempotencyKey: `pr-inv-create-${suffix}`, lines: [{ shipmentLineId: `PR-SHIPL-${suffix}`, quantity: '4.0000', enteredTaxAmount: '2.0000' }] }, admin)
   await o2c.submitCustomerInvoice(created.invoice.id, { expectedVersion: 0, idempotencyKey: `pr-inv-submit-${suffix}` }, admin)
-  await o2c.approveCustomerInvoice(created.invoice.id, { expectedVersion: 1, idempotencyKey: `pr-inv-approve-${suffix}` }, admin)
+  await o2c.approveCustomerInvoice(created.invoice.id, { expectedVersion: 1, idempotencyKey: `pr-inv-approve-${suffix}` }, as('finance'))
   const issued = await o2c.issueCustomerInvoice(created.invoice.id, { expectedVersion: 2, obligationNumber: `AR-PR-${suffix}`, idempotencyKey: `pr-inv-issue-${suffix}` }, admin)
   return { invoiceId: created.invoice.id, receivableId: issued.receivable.id }
 }

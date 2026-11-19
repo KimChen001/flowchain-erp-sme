@@ -15,6 +15,13 @@ export const NARROW_ROWS = 5;
 type Row = TableProps["rows"][number];
 type Column = TableProps["columns"][number];
 
+// A cell's text as a card shows it: a string, or a record's label.
+function cardText(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (value && typeof value === "object" && "label" in value) return String((value as { label?: unknown }).label ?? "").trim();
+  return "";
+}
+
 // What a cell sorts by: its number, or its text as shown.
 function sortKey(cell: TableCell, copy: PartCopy): number | string | null {
   if (cell === null || cell === undefined) return null;
@@ -106,7 +113,17 @@ export function DataTablePart({ props, language, onNavigate }: { props: TablePro
         {cards.map((row, index) => {
           const present = rest.filter((column) => row[column.code] !== null && row[column.code] !== undefined && row[column.code] !== "");
           const statuses = present.filter((column) => column.kind === "status");
-          const filled = present.filter((column) => column.kind !== "status");
+          // A text or record cell that repeats one already on the card is left
+          // out (2026-11-08: "21166 · 21166", a SKU as the record and again as a column).
+          const shown = new Set([cardText(row[lead.code])].filter(Boolean));
+          const filled = present.filter((column) => column.kind !== "status").filter((column) => {
+            if (column.kind !== "text" && column.kind !== "ref") return true;
+            const value = cardText(row[column.code]);
+            if (!value) return true;
+            if (shown.has(value)) return false;
+            shown.add(value);
+            return true;
+          });
           return (
             <li key={index} data-testid="ai-v2-table-card" className="py-1.5 text-[13px] leading-5" style={{ borderColor: A.gray5 }}>
               <div className="flex flex-wrap items-center gap-x-2 font-medium" style={{ color: A.label }}>{cell(row, lead)}{statuses.map((column) => <span key={column.code}>{cell(row, column)}</span>)}</div>

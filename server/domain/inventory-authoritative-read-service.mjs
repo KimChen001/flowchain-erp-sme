@@ -287,10 +287,11 @@ function movementModel(row, numbers = () => ({})) {
 }
 
 // Safety stock and reorder point are recorded on the item (the item form and
-// the import write them there). A stock record carries its own pair only from
-// older data, so the item's value wins and the record's is the fallback, as
-// in the runtime stock status, the reorder list and the assistant. Without
-// this the stock pages read 0 / 0 for every item imported with thresholds.
+// the import write them there), and only there: a stock record's own pair is
+// older data, and reading it when the item had none brought back a reorder
+// point set to 0 on purpose (design audit L3-21, L12-07). null when the item
+// records none; the runtime stock status, the reorder list and the assistant
+// read the same.
 export function withItemStockThresholds(rows, items) {
   const byId = new Map(items.map((item) => [item.id, item]));
   const bySku = new Map(items.map((item) => [item.sku, item]));
@@ -300,8 +301,8 @@ export function withItemStockThresholds(rows, items) {
     const item = (row.itemId && byId.get(row.itemId)) || bySku.get(row.sku);
     return {
       ...row,
-      safetyStock: recorded(item?.safetyStock) ?? row.safetyStock,
-      reorderPoint: recorded(item?.reorderPoint) ?? row.reorderPoint,
+      safetyStock: recorded(item?.safetyStock),
+      reorderPoint: recorded(item?.reorderPoint),
     };
   });
 }

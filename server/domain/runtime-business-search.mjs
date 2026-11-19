@@ -1,6 +1,27 @@
 const array = value => Array.isArray(value) ? value : []
 const text = value => String(value ?? '').trim()
 const lower = value => text(value).toLowerCase()
+
+// A query that matches a record's words however they are spaced or plural:
+// "cake stand" and "cakestands" find "Regency Cakestand 3 Tier" (2026-11-11
+// on Flash: "Order 100 cakestands" answered that no cake stand was found).
+// Spaces, hyphens and slashes are left out, a word's plural s or es is
+// dropped, and every word of the query must be there.
+const squeeze = value => value.replace(/[\s\-_/]+/g, '')
+const singular = word => (word.length > 4 && word.endsWith('es') && !word.endsWith('ses') ? word.slice(0, -2) : word.length > 3 && word.endsWith('s') && !word.endsWith('ss') ? word.slice(0, -1) : word)
+function looseMatch(haystack, query) {
+  const words = query.split(/[\s\-_/]+/).filter(Boolean)
+  if (!words.length || squeeze(query).length < 3) return false
+  const flat = squeeze(haystack)
+  // A query with digits is a code or number: whole, however it is spaced
+  // ("SKU-2" never finds SKU-1).
+  if (/\d/.test(query)) return flat.includes(squeeze(query))
+  if (flat.includes(squeeze(query)) || flat.includes(words.map(singular).join(''))) return true
+  // A letter on its own ("t light holder") says nothing to look for.
+  const meaningful = words.filter(word => word.length >= 2)
+  if (!meaningful.some(word => word.length >= 3)) return false
+  return meaningful.every(word => haystack.includes(singular(word)) || flat.includes(singular(word)))
+}
 const idOf = (row, keys) => text(keys.map(key => row?.[key]).find(Boolean))
 
 // Purchase requests, RFQs and purchase orders are found by the number they
@@ -39,7 +60,8 @@ export function searchRuntimeBusinessContext(context, query, { limit = 15 } = {}
       const number = NUMBERED.has(entityType) ? numberOf(row) || entityId : entityType === 'sales_order' ? numberOf(row) : ''
       const code = text((CODE_KEYS[entityType] || []).map(key => row?.[key]).find(Boolean))
       const haystack = lower([entityId, number, label, ...Object.values(row).filter(value => typeof value !== 'object')].join(' '))
-      if (!haystack.includes(normalized)) continue
+      const loose = !haystack.includes(normalized)
+      if (loose && !looseMatch(haystack, normalized)) continue
       const exact = lower(entityId) === normalized || lower(label) === normalized || (number && lower(number) === normalized)
       const canonicalRoute = route.endsWith('=') ? `${route}${encodeURIComponent(entityId)}` : `${route}/${encodeURIComponent(entityId)}`
       results.push({
@@ -56,7 +78,7 @@ export function searchRuntimeBusinessContext(context, query, { limit = 15 } = {}
         canonicalRoute,
         deepLink: canonicalRoute,
         sourceRepository,
-        score: exact ? 120 : lower(entityId).includes(normalized) || lower(number).includes(normalized) ? 95 : 72,
+        score: exact ? 120 : lower(entityId).includes(normalized) || lower(number).includes(normalized) ? 95 : loose ? 60 : 72,
         matchedFields: exact ? [number && lower(number) === normalized ? 'number' : 'entityId'] : ['runtimeRecord'],
         // sourceRepository names the internal repository the row came from; it is
         // for diagnostics and never shown, so the result carries no evidence row.

@@ -18,11 +18,17 @@ import { DEFAULT_TENANT_TIMEZONE, instantCalendarDay, tenantCalendarDay } from '
 //                     safety stock, at the reorder point) labels the row.
 //   bills             the bills page's next step: submitted and waiting for
 //                     the receipt or the match, matched and waiting for
-//                     approval, or a match exception to review.
+//                     approval, or a match exception to review. A bill held
+//                     by a match exception past its due date counts as
+//                     overdue (design audit L2-01): it is owed and no payable
+//                     reminds anyone of it.
 //   invoices          customer invoices approved and not yet issued (the
 //                     finance landing's "awaiting issue").
 //   receivables       money still owed after the due date (the finance
 //                     landing's overdue rule, by calendar day).
+//   payables          money we still owe after the due date, held or not (the
+//                     payables list's overdue rule, overduePayableWhere;
+//                     design audit L7-12 / L7-18).
 //   sales orders      confirmed orders with quantity still to reserve or ship.
 //   purchasing        purchase requests to approve or convert, purchase orders
 //                     to approve and draft purchase orders to review.
@@ -47,6 +53,7 @@ import { DEFAULT_TENANT_TIMEZONE, instantCalendarDay, tenantCalendarDay } from '
 export const TODAY_WORK_KINDS = Object.freeze([
   'purchase_order_overdue',
   'receivable_overdue',
+  'payable_overdue',
   'sales_order_to_ship',
   'sales_order_to_reserve',
   'purchase_order_due',
@@ -67,6 +74,10 @@ export const TODAY_WORK_KINDS = Object.freeze([
 const KIND_RANK = new Map(TODAY_WORK_KINDS.map((kind, index) => [kind, index]))
 // How many rows the response carries; the total is always reported.
 export const TODAY_WORK_LIMIT = 100
+// The earliest rows of every kind the response keeps past that limit, so a
+// long run of one kind (sixty overdue receivables) never pushes another kind
+// (the items to reorder) out of the response.
+export const TODAY_WORK_PER_KIND = 10
 
 const array = (value) => (Array.isArray(value) ? value : [])
 const text = (value) => String(value ?? '').trim()
@@ -115,7 +126,7 @@ export function purchaseOrderSignalRows(purchaseOrders, now, timeZone) {
     const lines = array(po.lines)
     const openLines = lines.flatMap((line) => {
       const read = purchaseOrderReportLine(line, po)
-      return read.open ? [{ sku: text(line.sku) || null, itemId: text(line.itemId) || null, remaining: read.remaining, unit: read.unit || null, promisedDate: read.due || null }] : []
+      return read.open ? [{ sku: text(line.sku) || null, itemId: text(line.itemId) || null, itemName: text(line.itemName) || null, remaining: read.remaining, unit: read.unit || null, promisedDate: read.due || null }] : []
     })
     return {
       id: entry.id, orderNumber: entry.orderNumber, supplierId: entry.supplierId, supplier: entry.supplier, status: entry.status,
@@ -170,6 +181,10 @@ function stockSignalBySku(signals) {
   return bySku
 }
 
+// Each row also carries what the reorder list's "Create purchase request"
+// opens the form with for that item (reorder-list.mjs purchaseRequest: the
+// item, its supplier and the shortfall in the request's unit), so the page
+// links to the same prefilled request rather than to the whole list.
 function reorderWork(reorder, stockSignals) {
   return array(reorder?.rows)
     .filter((entry) => entry.orderNow)
@@ -186,34 +201,60 @@ function reorderWork(reorder, stockSignals) {
         shortfall: quantity(entry.shortfall),
         unit: text(entry.unit) || null,
         stockSignal: stockSignals.get(text(entry.sku)) || null,
+        purchaseRequest: entry.purchaseRequest?.itemId ? {
+          itemId: text(entry.purchaseRequest.itemId),
+          supplierId: text(entry.purchaseRequest.supplierId) || null,
+          quantity: quantity(entry.purchaseRequest.quantity),
+          raisedToMinimum: Boolean(entry.purchaseRequest.raisedToMinimum),
+        } : null,
       },
     }))
 }
 
+// The match status of an invoice whose every match exception was approved
+// (MATCH_VARIANCE_APPROVED in operational-finance-command-service.mjs).
+const MATCH_VARIANCE_APPROVED = 'variance_approved'
+
 // The next step a bill waits for, as the bills page offers it
-// (operational-finance-read-service.mjs actions).
+// (operational-finance-read-service.mjs actions). An exception bill whose
+// every difference was approved (matchStatus variance_approved, written when
+// the last match exception is approved) keeps its status until it is
+// approved itself: it waits for approval, as the bills page and the approval
+// email say, and has nothing left to review (design audit L11-07).
 export function billNextStep(invoice) {
   const status = text(invoice?.status).toLowerCase()
   const links = { status, relatedPoId: invoice?.relatedPoId ?? invoice?.poId ?? invoice?.relatedPo ?? null, relatedGrnId: invoice?.relatedGrnId ?? invoice?.receiptId ?? invoice?.relatedGrn ?? null }
   if (status === 'submitted' && awaitingReceipt(links)) return 'bill_awaiting_receipt'
   if (status === 'submitted' || status === 'matching') return 'bill_to_match'
   if (status === 'matched') return 'bill_to_approve'
-  if (status === 'exception') return 'bill_exception'
+  if (status === 'exception') return text(invoice?.matchStatus).toLowerCase() === MATCH_VARIANCE_APPROVED ? 'bill_to_approve' : 'bill_exception'
   return null
 }
 
-function billWork(supplierInvoices, timeZone) {
+function billWork(supplierInvoices, timeZone, today) {
   return array(supplierInvoices).flatMap((invoice) => {
     const kind = billNextStep(invoice)
     if (!kind) return []
     const id = text(invoice.id)
+    // A bill the match held (stored status "exception": a difference to
+    // review, or every difference approved and the bill still to approve) is
+    // owed although it has no payable yet: past its due date it is overdue
+    // (design audit L2-01). It keeps its invoice date, so the row stays where
+    // it was and a decision on it still holds.
+    const due = text(invoice.status).toLowerCase() === 'exception' ? calendarDay(invoice.dueDate) : ''
+    const pastDue = daysLate(due, today)
     return [row(kind, 'supplier_invoice', id, {
       label: text(invoice.invoiceNumber) || id,
       name: text(invoice.supplierName) || null,
       href: `/app/procurement/bills/${encode(id)}`,
       date: calendarDay(invoice.invoiceDate) || instantCalendarDay(invoice.createdAt, timeZone) || null,
       dateKind: 'invoice',
-      detail: { amount: quantity(invoice.totalAmount ?? invoice.amount), currency: text(invoice.currency) || null },
+      overdueDays: pastDue,
+      detail: {
+        amount: quantity(invoice.totalAmount ?? invoice.amount),
+        currency: text(invoice.currency) || null,
+        ...(pastDue ? { dueDate: due } : {}),
+      },
     })]
   })
 }
@@ -258,6 +299,31 @@ function receivableWork(receivables, today) {
   })
 }
 
+// Overdue as the payables list counts it (overduePayableWhere): money we
+// still owe on an approved, export-ready, held or partly paid payable past
+// its due date, by calendar day (design audit L7-12 / L7-18). A held payable
+// is still owed, and says it is on hold. A bill has a payable only once it
+// is approved, so no bill is also a bill_* row.
+const OVERDUE_PAYABLE_STATUSES = new Set(['approved', 'export_ready', 'held', 'partially_settled'])
+function payableWork(payables, today) {
+  return array(payables).flatMap((payable) => {
+    const due = calendarDay(payable.dueDate)
+    const outstanding = quantity(payable.outstandingAmount)
+    const owed = outstanding === null ? payable.amountHidden === true : outstanding > 0
+    if (!OVERDUE_PAYABLE_STATUSES.has(text(payable.status)) || !owed || !due || due >= today) return []
+    const invoiceId = text(payable.supplierInvoiceId)
+    return [row('payable_overdue', 'supplier_invoice', invoiceId || text(payable.id), {
+      label: text(payable.supplierInvoiceNumber) || text(payable.obligationNumber) || text(payable.id),
+      name: text(payable.supplierName) || null,
+      href: invoiceId ? `/app/procurement/bills/${encode(invoiceId)}` : '/app/finance/payables?status=overdue',
+      date: due,
+      dateKind: 'due',
+      overdueDays: daysLate(due, today),
+      detail: { outstanding, currency: text(payable.currency) || null, held: text(payable.status) === 'held' },
+    })]
+  })
+}
+
 // Confirmed sales orders with quantity still to reserve, else still to ship.
 // Quantities are added only across lines in one unit; otherwise the row
 // counts lines.
@@ -291,12 +357,22 @@ function salesOrderWork(salesOrders, today) {
   })
 }
 
-function purchasingWork(purchaseRequests, purchaseOrders) {
+// An approved request with an RFQ that is neither cancelled nor closed cannot
+// be turned into a purchase order yet (design audit L11-06): Today leaves it
+// out until the RFQ is cancelled.
+const RFQ_DONE = new Set(['cancelled', 'closed'])
+function requestsWithOpenRfq(rfqs) {
+  return new Set(array(rfqs).filter((rfq) => !RFQ_DONE.has(text(rfq.status))).map((rfq) => text(rfq.linkedPr || rfq.sourceRequest || rfq.sourceRequestId)).filter(Boolean))
+}
+
+function purchasingWork(purchaseRequests, purchaseOrders, rfqs) {
+  const openRfqFor = requestsWithOpenRfq(rfqs)
   const requestRows = array(purchaseRequests).flatMap((request) => {
     const status = text(request.status)
     const kind = status === 'submitted' ? 'purchase_request_to_approve' : status === 'approved' ? 'purchase_request_to_convert' : null
     if (!kind) return []
     const id = text(request.id)
+    if (kind === 'purchase_request_to_convert' && openRfqFor.has(id)) return []
     return [row(kind, 'purchase_request', id, {
       label: text(request.number) || id,
       href: `/app/procurement/requests/${encode(id)}`,
@@ -360,9 +436,55 @@ export function compareTodayWork(a, b) {
     || a.recordId.localeCompare(b.recordId, 'en')
 }
 
+// The rows the response carries, still earliest date first: the first
+// TODAY_WORK_PER_KIND of each kind, then the earliest of the rest up to
+// TODAY_WORK_LIMIT.
+export function todayWorkResponseRows(items, { limit = TODAY_WORK_LIMIT, perKind = TODAY_WORK_PER_KIND } = {}) {
+  if (items.length <= limit) return items
+  const kept = new Set()
+  const byKind = new Map()
+  items.forEach((item, index) => {
+    const count = byKind.get(item.kind) || 0
+    if (count < perKind) { kept.add(index); byKind.set(item.kind, count + 1) }
+  })
+  for (let index = 0; index < items.length && kept.size < limit; index += 1) kept.add(index)
+  return items.filter((_, index) => kept.has(index))
+}
+
 // sources: what the reader may read, already scoped (see buildHomeOverview).
-export function buildTodayWork(sources = {}, { now = new Date(), timeZone = DEFAULT_TENANT_TIMEZONE } = {}) {
+// The rows that wait for an approval, and the permission that gives it.
+export const APPROVAL_ROW_PERMISSIONS = Object.freeze({
+  purchase_request_to_approve: 'procurement.purchase_request.approve',
+  purchase_order_to_approve: 'procurement.purchase_order.approve',
+  bill_to_approve: 'finance.supplier_invoice.approve',
+})
+
+// An approval row goes to someone who may give the approval (design audit
+// L11-12): a reader with the permission, and not who raised or submitted the
+// request, order or bill unless no one else may approve it, as the approval
+// itself rules (self-approval.mjs). approver = { userId, permissionCodes:
+// Set, soleApprover: Set of the permissions only this reader holds }; without
+// one (no database) every row stays. authorsOf(recordId, kind) gives the
+// record's authors (an id or a list).
+export function rowForApprover(row, approver, authorsOf = () => []) {
+  const permission = APPROVAL_ROW_PERMISSIONS[row.kind]
+  if (!permission || !approver) return true
+  if (!approver.permissionCodes?.has(permission)) return false
+  const authors = [].concat(authorsOf(row.recordId, row.kind) ?? []).map(text)
+  return !authors.includes(text(approver.userId)) || Boolean(approver.soleApprover?.has(permission))
+}
+
+export function buildTodayWork(sources = {}, { now = new Date(), timeZone = DEFAULT_TENANT_TIMEZONE, approver = null } = {}) {
   const today = tenantCalendarDay(now, timeZone)
+  // Who raised or submitted each request, order and bill (the read model's
+  // approvalAuthorIds; a request read without them, its requester).
+  const authorsBy = (rows, fallback = () => []) => new Map(array(rows).map((entry) => [text(entry.id), Array.isArray(entry.approvalAuthorIds) ? entry.approvalAuthorIds : fallback(entry)]))
+  const authors = {
+    purchase_request_to_approve: authorsBy(sources.purchaseRequests, (request) => [request.requesterId, request.requester]),
+    purchase_order_to_approve: authorsBy(sources.purchaseOrders),
+    bill_to_approve: authorsBy(sources.supplierInvoices),
+  }
+  const authorsOf = (id, kind) => authors[kind]?.get(text(id)) || []
   const reportOrders = sources.reportPurchaseOrders ?? sources.purchaseOrders
   const { asOf, rows } = purchaseOrderSignalRows(reportOrders, now, timeZone)
   // The assistant's signals over the same facts it reads: open purchase
@@ -371,18 +493,22 @@ export function buildTodayWork(sources = {}, { now = new Date(), timeZone = DEFA
   const items = [
     ...purchaseOrderWork(signals, new Map(rows.map((entry) => [entry.id, entry]))),
     ...reorderWork(sources.reorder, stockSignalBySku(signals)),
-    ...billWork(sources.supplierInvoices, timeZone),
+    ...billWork(sources.supplierInvoices, timeZone, today),
     ...customerInvoiceWork(sources.customerInvoices, timeZone),
     ...receivableWork(sources.receivables, today),
+    ...payableWork(sources.payables, today),
     ...salesOrderWork(sources.salesOrders, today),
-    ...purchasingWork(sources.purchaseRequests, sources.purchaseOrders),
+    ...purchasingWork(sources.purchaseRequests, sources.purchaseOrders, sources.rfqs),
     ...contractWork(sources.contracts, today),
-  ].sort(compareTodayWork)
+  ].filter((row) => rowForApprover(row, approver, authorsOf)).sort(compareTodayWork)
   return {
     today,
-    items: items.slice(0, TODAY_WORK_LIMIT),
+    items: todayWorkResponseRows(items),
     total: items.length,
     overdue: items.filter((item) => item.overdueDays > 0).length,
+    // Every row, for the decision items (server/services/decision-item-service.mjs);
+    // the response carries only items.
+    all: items,
   }
 }
 

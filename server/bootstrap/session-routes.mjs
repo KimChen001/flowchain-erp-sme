@@ -49,7 +49,7 @@ export async function handleSessionRoutes({
   // Email sign-in links. The request answer never depends on the address.
   if (req.method === "POST" && url.pathname === "/api/auth/email-link") {
     const body = await readSignInBody(req);
-    await emailLinks.request({ email: body?.email, client: requestClient(req, env), req });
+    await emailLinks.request({ email: body?.email, language: body?.language, client: requestClient(req, env), req });
     send(res, 202, EMAIL_LINK_ACCEPTED);
     return true;
   }

@@ -215,3 +215,27 @@ declare module '../../../shared/contract-status.mjs' {
     options: { today: string; renewalActivated?: boolean },
   ): ContractShownState;
 }
+declare module '../../../shared/inventory-stock-signals.mjs' {
+  export type InventoryStockSignal = {
+    sku: string;
+    available: number;
+    safetyStock: number;
+    reorderPoint: number;
+    positionKnown: boolean;
+    position: number | null;
+    incoming: number | null;
+    needsReplenishment: boolean;
+    belowSafetyOnHand: boolean;
+    coveredByOpenOrders: boolean;
+    warned: boolean;
+    onOrder: boolean;
+  };
+  export type InventoryStockState = 'out' | 'replenish' | 'below_safety' | 'on_order' | 'ok';
+  export type InventoryStockSignalFilter = 'replenish' | 'below_safety' | 'covered';
+  export const STOCK_STATES: readonly InventoryStockState[];
+  export const STOCK_SIGNAL_FILTERS: Readonly<Record<InventoryStockSignalFilter, keyof InventoryStockSignal>>;
+  export function stockSignalMatches(signal: InventoryStockSignal | null | undefined, filter: string): boolean;
+  export function inventoryStockSignals(input: { balances?: unknown[]; reorderList?: { rows?: unknown[]; notJudged?: unknown[] } | null }): Map<string, InventoryStockSignal>;
+  export function stockStateOf(signal: InventoryStockSignal | null | undefined, row?: { availableQuantity?: unknown; onHandQuantity?: unknown } | null): InventoryStockState;
+  export function stockSignalCounts(signals: Map<string, InventoryStockSignal>): { warned: number; needsReplenishment: number; belowSafetyOnHand: number; coveredByOpenOrders: number; noneAvailable: number; positionUnknown: boolean };
+}

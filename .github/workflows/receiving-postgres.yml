@@ -63,18 +63,22 @@ jobs:
       - run: npm run test:db:walkthrough-scenario
       - run: npm run test:db:tenant-scoped-reads
       - run: npm run test:db:master-data-writes
+      - run: npm run test:db:master-data
+      - run: npm run test:db:master-data-every-record
       - run: npm run test:db:warehouse-writes
       - run: npm run test:db:data-import
       - run: npm run test:api:data-import
       - run: npm run test:db:golden-path
       - run: npm run test:db:reorder-list
       - run: npm run test:db:supplier-tiers
+      - run: npm run test:db:decision-items
       - run: npm run test:db:supplier-insights
       - run: npm run test:db:item-supplier-links
       - run: npm run test:db:ai-workspace-access
       - run: npm run test:db:ai-read-tools
       - run: npm run test:db:report-truncation
       - run: npm run test:db:inventory-allocation
+      - run: npm run test:db:allocation-inputs
       - run: npm run test:db:ai-knowledge
       - run: npm run test:ai:eval:knowledge
       - run: npm run test:db:ai-pgvector
@@ -103,12 +107,16 @@ jobs:
       - run: npm run test:db:procurement-flow
       - run: npm run test:db:supplier-choice
       - run: npm run test:db:original-promise
+      - run: npm run test:db:po-issued-at
+      - run: npm run test:db:procurement-document-numbers
       - run: npm run test:db:supplier-scorecard
       - run: npm run test:db:finance-read-permissions
       - run: npm run test:db:payment-records
       - run: npm run test:db:bill-before-receipt
+      - run: npm run test:db:three-way-match-rules
       - run: npm run test:db:supplier-invoice-duplicates
       - run: npm run test:db:sales-read-permissions
+      - run: npm run test:db:entry-picker-reach
       - run: npm run test:db:search-wildcards
       - run: npm run test:db:inventory-warehouse-scope
       - run: npm run test:db:search-graph-read-scope

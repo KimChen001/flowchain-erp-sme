@@ -50,7 +50,8 @@ test('finance reads check the read permission and hide amounts and suppliers by 
     await prisma.receivingDocument.create({ data: { id: 'FR-GRN', tenantId, documentNumber: 'FR-GRN', poId: 'FR-PO', supplierId: 'FR-SUP', supplierName: 'Harbor Supply', status: 'received', workflowStatus: 'posted', postingStatus: 'posted', postedAt: new Date(), postedById: users.admin.id, warehouseId: 'FR-WH', currency: 'USD', lines: { create: { id: 'FR-GRNL', purchaseOrderLineId: 'FR-POL', itemId: 'FR-ITEM', sku: 'FR-SKU', itemName: 'Valve', acceptedQty: '10.0000', rejectedQty: '0.0000', unit: 'EA', warehouseId: 'FR-WH', location: 'A-01', locationKey: 'a-01' } } } })
 
     // An overcharged invoice: 10 x 13.50 against a PO price of 10, so the match
-    // raises a price exception and an amount exception.
+    // raises a price exception (only that: a price difference is not raised
+    // again as an amount one, design audit B2).
     const admin = { identity: identityOf('admin') }
     const invoice = await command.createSupplierInvoice({ invoiceNumber: 'FR-INV-1', supplierId: 'FR-SUP', currency: 'USD', invoiceDate: '2026-09-01', dueDate: '2026-10-01', totalAmount: '144.0000', idempotencyKey: 'fr-create', lines: [{ purchaseOrderLineId: 'FR-POL', receivingLineId: 'FR-GRNL', quantity: '10.0000', unitPrice: '13.5000', lineAmount: '135.0000', enteredTaxAmount: '9.0000' }] }, admin)
     await command.submitSupplierInvoice(invoice.entityId, { expectedVersion: 0, idempotencyKey: 'fr-submit' }, admin)
@@ -83,7 +84,7 @@ test('finance reads check the read permission and hide amounts and suppliers by 
 
     const viewerExceptions = await call(prisma, 'viewer', '/api/finance/match-exceptions')
     assert.equal(viewerExceptions.status, 200)
-    assert.ok(viewerExceptions.body.items.length >= 2)
+    assert.equal(viewerExceptions.body.items.length, 1)
     for (const entry of viewerExceptions.body.items) assert.equal(entry.actualValue, null)
 
     // The procurement specialist has no finance read permission at all.

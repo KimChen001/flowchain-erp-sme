@@ -190,13 +190,17 @@ test('the reorder point is compared with the inventory position, so open supply 
   assert.equal(row.stockStatus, 'ok', '15 available + 30 in transit - 5 demand = 40, above the reorder point of 20')
 })
 
-test('without master thresholds the inventory balance values are used; unknown stock stays unknown', () => {
+// Design audit L3-21, L12-07: the balance rows' copies were added up when the
+// master had none, so a reorder point set to 0 came back from old balance
+// values and the reorder list (master only) disagreed with this model.
+test('thresholds come from the item master only: none there is none; unknown stock stays unknown', () => {
   const model = buildRuntimeInventoryAllocation(context({
     items: [master('BAL', 0, 0)],
     inventoryItems: [balance('BAL', 3, { safetyStock: 4, reorderPoint: 6 }), balance('NONE', 50), { sku: 'UNKNOWN' }],
   }))
-  assert.equal(getRuntimeSkuAvailability(model, 'BAL').stockStatus, 'below_safety_stock')
-  assert.equal(getRuntimeSkuAvailability(model, 'BAL').safetyStock, 4)
+  assert.equal(getRuntimeSkuAvailability(model, 'BAL').stockStatus, 'ok')
+  assert.equal(getRuntimeSkuAvailability(model, 'BAL').safetyStock, null)
+  assert.equal(getRuntimeSkuAvailability(model, 'BAL').reorderPoint, null)
   assert.equal(getRuntimeSkuAvailability(model, 'NONE').stockStatus, 'ok')
   assert.equal(getRuntimeSkuAvailability(model, 'NONE').safetyStock, null)
   assert.equal(getRuntimeSkuAvailability(model, 'UNKNOWN').stockStatus, 'unknown')
@@ -325,4 +329,80 @@ test('the stock unit comes from the recorded units, never from a truncated item 
     purchaseOrders: [unitPo('PO-K', [unitPoLine('LK', 'K-1', 5, 'KG'), unitPoLine('LK2', 'K-1', 2, 'pcs')])],
   }))
   assert.equal(getRuntimeSkuAvailability(byId, 'K-1').incomingApprovedPo, 5)
+})
+
+test('stock, demand and incoming added up per SKU (allocationInputs) give the same model as the listed records', () => {
+  // As the read context lists them: A in two warehouses, B in two with
+  // threshold values on the rows, a draft order for C, an order without lines,
+  // a draft PO for D, a fully received PO and a CASE line on an item kept in
+  // pcs. Orders are listed newest change first.
+  const items = [
+    { sku: 'A', itemId: 'ITEM-A', itemName: 'Valve', recordedUnit: 'pcs', safetyStock: 0, reorderPoint: 30 },
+    { sku: 'B', itemId: 'ITEM-B', itemName: 'Gasket', recordedUnit: 'pcs', safetyStock: 5, reorderPoint: 0 },
+  ]
+  const salesOrders = [
+    salesOrder('SO-2', [{ ...soLine('A', 20, 5), id: 'SO-2-A' }, { ...soLine('B', 4, 0, 4), id: 'SO-2-B' }]),
+    salesOrder('SO-1', [{ ...soLine('A', 10, 0, 2), id: 'SO-1-A' }]),
+    salesOrder('SO-DRAFT', [soLine('C', 7)], { workflowStatus: 'draft' }),
+    { id: 'SO-NOLINES', salesOrderId: 'SO-NOLINES', workflowStatus: 'confirmed', sku: '', itemId: '', orderedQty: 0, reservedQty: 0, fulfilledQty: 0, lines: [] },
+  ]
+  const purchaseOrders = [
+    unitPo('PO-1', [unitPoLine('PO-1-A', 'A', 15, 'pcs', { receivedQuantity: 5 }), unitPoLine('PO-1-CASE', 'A', 2, 'CASE')], { expectedDate: '2026-09-01T12:00:00.000Z' }),
+    unitPo('PO-2', [unitPoLine('PO-2-B', 'B', 10, 'pcs')], { status: 'approved', expectedDate: '2026-12-01T12:00:00.000Z' }),
+    unitPo('PO-3', [unitPoLine('PO-3-D', 'D', 8, 'pcs')], { status: 'draft' }),
+    unitPo('PO-4', [unitPoLine('PO-4-A', 'A', 20, 'pcs', { receivedQuantity: 20 })], { status: 'fully_received' }),
+  ]
+  const listed = context({
+    items,
+    inventoryItems: [
+      { sku: 'A', onHandQuantity: 40, reservedQuantity: 5, safetyStock: 0, reorderPoint: 0 },
+      { sku: 'A', onHandQuantity: 10, reservedQuantity: 0, safetyStock: 0, reorderPoint: 0 },
+      { sku: 'B', onHandQuantity: 3, reservedQuantity: 0, safetyStock: 4, reorderPoint: 6 },
+      { sku: 'B', onHandQuantity: 2, reservedQuantity: 1, safetyStock: 0, reorderPoint: 6 },
+    ],
+    salesOrders,
+    purchaseOrders,
+  })
+  // The same records as the database adds them up (listAllocationStock,
+  // summarizeDemandBySku, listCommittedPurchaseOrders): one stock row per SKU
+  // with the threshold values above 0 summed, demand per SKU in the order the
+  // SKUs first appear, the committed and the draft or pending-approval orders
+  // (design audit C2), and every order's line keys.
+  // The context's own lists are left empty: they are not read.
+  const totals = context({
+    allocationInputs: {
+      inventoryItems: [
+        { sku: 'A', onHandQuantity: 50, reservedQuantity: 5, safetyStock: 0, reorderPoint: 0 },
+        { sku: 'B', onHandQuantity: 5, reservedQuantity: 1, safetyStock: 4, reorderPoint: 12 },
+      ],
+      items,
+      itemUnits: [],
+      salesDemand: [
+        { sku: 'A', openLines: 2, openDemand: 28, unreservedDemand: 23, reserved: 5, salesOrderIds: ['SO-2', 'SO-1'] },
+        { sku: 'B', openLines: 1, openDemand: 0, unreservedDemand: 0, reserved: 0, salesOrderIds: [] },
+        { sku: 'C', openLines: 0, openDemand: 0, unreservedDemand: 0, reserved: 0, salesOrderIds: [] },
+        { sku: 'SO-NOLINES', openLines: 1, openDemand: 0, unreservedDemand: 0, reserved: 0, salesOrderIds: [] },
+      ],
+      purchaseOrders: purchaseOrders.slice(0, 3),
+      purchaseOrderKeys: ['A', 'B', 'D'],
+      truncatedSubjects: [],
+    },
+  })
+  const fromRecords = buildRuntimeInventoryAllocation(listed)
+  assert.deepEqual(buildRuntimeInventoryAllocation(totals), fromRecords)
+
+  // The fixture reaches every input: A's late line counts and its CASE line is
+  // left out; B's thresholds come from the master alone; D's draft order is
+  // pending, apart from incoming; C, D and the
+  // order without lines are listed as the records list them.
+  const a = getRuntimeSkuAvailability(fromRecords, 'A')
+  assert.deepEqual([a.onHand, a.reserved, a.openSalesDemand, a.unreservedSalesDemand, a.incomingApprovedPo, a.availableToPromise], [50, 5, 28, 23, 10, 32])
+  assert.deepEqual(a.incomingLines.map(line => [line.lineId, line.remaining, line.dueDay]), [['PO-1-A', 10, '2026-09-01']])
+  assert.deepEqual(a.incomingExcluded.map(line => line.lineId), ['PO-1-CASE'])
+  assert.deepEqual(a.salesOrderIds, ['SO-2', 'SO-1'])
+  const b = getRuntimeSkuAvailability(fromRecords, 'B')
+  assert.deepEqual([b.onHand, b.reserved, b.safetyStock, b.reorderPoint, b.incomingApprovedPo], [5, 1, 5, null, 10])
+  const d = getRuntimeSkuAvailability(fromRecords, 'D')
+  assert.deepEqual([d.incomingApprovedPo, d.pendingPurchaseQty, d.pendingLines.map(line => [line.orderNumber, line.status, line.remaining])], [0, 8, [['PO-3', 'draft', 8]]])
+  assert.deepEqual(fromRecords.availability.map(row => row.sku), ['A', 'B', 'C', 'SO-NOLINES', 'D'])
 })

@@ -12,8 +12,13 @@ import { createHash } from 'node:crypto'
 // thread is dropped, so a cached tool result never outlives a permission
 // removal. The client sends only its thread id; history and refs from the
 // client never authorize anything.
+//
+// `answers` keeps what each answer said (messageId → question, text, a
+// summary of its cards, the tools it called), the latest 40, so feedback on
+// an answer is recorded from what the server sent, not from what a client
+// says it was (design audit 2026-11-15, L5-23).
 
-export const ASSISTANT_V2_THREAD_LIMITS = Object.freeze({ ttlMs: 2 * 60 * 60 * 1000, turns: 20 })
+export const ASSISTANT_V2_THREAD_LIMITS = Object.freeze({ ttlMs: 2 * 60 * 60 * 1000, turns: 20, answers: 40 })
 
 const text = (value) => String(value ?? '').trim()
 const sorted = (values) => [...new Set([...(values || [])].map(text).filter(Boolean))].sort()
@@ -59,7 +64,7 @@ export function createAssistantV2ThreadStore({ now = () => Date.now(), limits = 
       }
       if (entry?.busy) {
         const stored = entry
-        const thread = { messages: [], results: new Map() }
+        const thread = { messages: [], results: new Map(), answers: stored.thread.answers }
         return {
           thread,
           forms: stored.forms,
@@ -73,7 +78,7 @@ export function createAssistantV2ThreadStore({ now = () => Date.now(), limits = 
         }
       }
       if (!entry) {
-        entry = { fingerprint, usedAt: at, busy: false, turnStarts: [], forms: new Map(), pendingNotes: [], thread: { messages: [], results: new Map() } }
+        entry = { fingerprint, usedAt: at, busy: false, turnStarts: [], forms: new Map(), pendingNotes: [], thread: { messages: [], results: new Map(), answers: new Map() } }
         threads.set(key, entry)
       }
       entry.busy = true
@@ -102,8 +107,17 @@ export function createAssistantV2ThreadStore({ now = () => Date.now(), limits = 
             }
             entry.turnStarts = entry.turnStarts.slice(1).map((index) => index - cut)
           }
+          const answers = entry.thread.answers
+          for (const key of [...answers.keys()].slice(0, Math.max(0, answers.size - (limits.answers ?? 40)))) answers.delete(key)
         },
       }
+    },
+    // One answer of this user's thread, as the server sent it, or null: an
+    // expired thread, another user's thread id or an unknown message.
+    answer({ tenantId, userId, threadId, messageId }) {
+      sweep(now())
+      const entry = threads.get(`${text(tenantId)}:${text(userId)}:${text(threadId)}`)
+      return entry?.thread.answers?.get(text(messageId)) || null
     },
   }
 }

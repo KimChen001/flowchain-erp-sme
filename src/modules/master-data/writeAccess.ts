@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiJson } from "../../lib/api-client";
+import { readAuthorizationContext } from "../../lib/authorizationContext";
 
 // What the signed-in user may change in master data, from the effective
 // permissions of their roles in Roles & permissions (never the legacy role).
@@ -14,7 +14,7 @@ export function useMasterDataWriteAccess(): MasterDataWriteAccess {
   const [access, setAccess] = useState<MasterDataWriteAccess>(NO_WRITES);
   useEffect(() => {
     let alive = true;
-    apiJson<{ effectivePermissions?: string[] }>("/api/authorization/context")
+    readAuthorizationContext()
       .then((context) => {
         if (!alive) return;
         const codes = new Set(context.effectivePermissions || []);

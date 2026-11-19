@@ -151,9 +151,12 @@ test("a manager records a draft, activates it and adds the signed file; Ending s
   await page.goto("/app/overview/risks");
   const todayList = page.getByTestId("today-work-list");
   await expect(todayList).toBeVisible();
-  const showAll = page.getByRole("button", { name: /^Show all \d+$/ });
+  // Today's work is one line per kind (owner 11/13); open the contracts' line.
+  const contractGroup = todayList.locator('[data-testid="today-work-group"][data-kind="contract_ending"]');
+  await contractGroup.getByTestId("today-work-group-toggle").click();
+  const showAll = contractGroup.getByTestId("today-work-group-all");
   if (await showAll.count()) await showAll.click();
-  const todayRow = todayList.locator('[data-kind="contract_ending"]').filter({ hasText: number });
+  const todayRow = contractGroup.getByTestId("today-work-item").filter({ hasText: number });
   await expect(todayRow).toContainText(title);
   await todayRow.getByRole("link", { name: number, exact: true }).first().click();
   await expect(page).toHaveURL(new RegExp(`/app/contracts/${contractId}$`));

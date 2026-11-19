@@ -12,6 +12,11 @@ export function requireTenantId(filters = {}) {
   })
 }
 
+// The most rows one read of the allocation model's inputs returns: SKUs with
+// stock or demand, items, open purchase orders. They are added up in the
+// database, so this is a safety bound, far above the list reads' 500.
+export const ALLOCATION_READ_LIMIT = 10000
+
 // Reads at most `limit` rows. One extra row is requested so the caller can be
 // told, through `onTruncated`, that more rows exist than were returned.
 export async function findManyWithinLimit(delegate, args, { limit, subject, onTruncated } = {}) {

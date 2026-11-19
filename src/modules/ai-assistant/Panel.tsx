@@ -1,4 +1,6 @@
 import { KnowledgeLibrary } from "./KnowledgeLibrary";
+import { TodayDecisionCards } from "../overview/DecisionCards";
+import { useDialogFocus } from "../../components/ui/useDialogFocus";
 import { translate, useI18n } from "../../i18n/I18n";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { BookOpen, Clock3, FilePlus2, ListChecks, Maximize2, MessageSquareText, Minimize2, MoreHorizontal, Send, Square, SquarePen, Sparkles, Truck, Upload, X, type LucideIcon } from "lucide-react";
@@ -11,10 +13,11 @@ import { emptyAssistantV2Message, finishAssistantV2Message, foldAssistantV2Event
 import type { PrReceipt, RecordActionReceipt, SetupReceipt } from "./v2/parts/types";
 import { setupCreatedRecords } from "./v2/parts/SetupRecordsPart";
 import { assistantV2Failure, newThreadId, streamAssistantV2, type AssistantV2FormResult } from "./v2/streamClient";
+import { previousTurnsOf } from "./v2/previousTurns";
 
 export type ActiveContext = {
   module?: string;
-  entityType?: "supplier" | "item" | "rfq" | "purchase_request" | "purchase_order" | "sales_order";
+  entityType?: "supplier" | "item" | "rfq" | "purchase_request" | "purchase_order" | "sales_order" | "supplier_invoice" | "receiving_doc";
   entityId?: string;
   entityLabel?: string;
   view?: string;
@@ -57,32 +60,30 @@ const EMPTY_STATE_ICONS: LucideIcon[] = [ListChecks, Clock3, FilePlus2, BookOpen
 const SETUP_STARTERS = ["ai.v2.starter.setup", "ai.v2.starter.suppliers", "ai.v2.starter.reorder", "ai.v2.starter.import"] as const;
 const SETUP_STARTER_ICONS: LucideIcon[] = [ListChecks, Truck, FilePlus2, Upload];
 
-const PO_EMPTY_PROMPTS = {
-  "en-US": ["Why does this PO need attention?", "Which receipt or invoice evidence is missing?", "What will a delay affect?", "What should happen next?"],
-  "zh-CN": ["这个 PO 为什么需要关注？", "还差哪些收货或发票证据？", "延误会影响什么？", "建议下一步是什么？"],
+// One assistant for the whole ERP (owner, 2026-11-12: "它其实是一个万能的助手"):
+// it answers about everything in the workspace whichever page it opens on. On a
+// PO or SKU page the welcome adds one question about the record, in the last
+// place, after the workspace cards.
+// Every record page the app opens gives one (design audit 2026-11-15, L5-08:
+// only the PO and supplier pages did).
+const RECORD_EMPTY_PROMPT: Record<string, { "en-US": string; "zh-CN": string }> = {
+  purchase_order: { "en-US": "Why does this PO need attention?", "zh-CN": "这个 PO 为什么需要关注？" },
+  item: { "en-US": "Does this SKU need replenishment?", "zh-CN": "这个 SKU 需要补货吗？" },
+  supplier: { "en-US": "How is this supplier performing?", "zh-CN": "这个供应商表现怎么样？" },
+  purchase_request: { "en-US": "What happens next with this purchase request?", "zh-CN": "这张采购申请下一步是什么？" },
+  rfq: { "en-US": "Which quote on this RFQ is best?", "zh-CN": "这个询价单哪个报价最好？" },
+  supplier_invoice: { "en-US": "Why is this supplier invoice held?", "zh-CN": "这张供应商发票为什么卡住？" },
+  receiving_doc: { "en-US": "Is anything wrong with this receipt?", "zh-CN": "这张收货单有什么问题吗？" },
+  sales_order: { "en-US": "Can this sales order ship on time?", "zh-CN": "这个销售订单能按时发货吗？" },
 };
-const SKU_EMPTY_PROMPTS = {
-  "en-US": ["Does this SKU need replenishment?", "What is the available inventory?", "Which orders will be affected?", "What action is recommended?"],
-  "zh-CN": ["这个 SKU 需要补货吗？", "当前可用库存是多少？", "哪些订单会受影响？", "建议如何处理？"],
+// On a page with no record, a question about what that page shows (design
+// audit 2026-11-15, L7-29: the report page offered the same four as Today).
+const MODULE_EMPTY_PROMPT: Record<string, { "en-US": string; "zh-CN": string }> = {
+  reports: { "en-US": "What stands out in our numbers this month?", "zh-CN": "这个月的数据里有什么值得注意的？" },
+  finance: { "en-US": "How much do we owe suppliers right now?", "zh-CN": "现在欠供应商多少钱？" },
+  inventory: { "en-US": "What needs reordering this week?", "zh-CN": "这周需要补什么货？" },
+  sales: { "en-US": "What was our gross profit last month?", "zh-CN": "上个月的毛利是多少？" },
 };
-
-const CONTEXT_ENTITY_LABELS: Record<string, { "en-US": string; "zh-CN": string }> = {
-  purchase_order: { "en-US": "Purchase order", "zh-CN": "采购单" },
-  item: { "en-US": "Inventory SKU", "zh-CN": "库存 SKU" },
-  rfq: { "en-US": "RFQ", "zh-CN": "询价单" },
-  supplier: { "en-US": "Supplier", "zh-CN": "供应商" },
-  purchase_request: { "en-US": "Purchase request", "zh-CN": "采购申请" },
-  sales_order: { "en-US": "Sales order", "zh-CN": "销售订单" },
-};
-// What the assistant answers about: always the whole workspace, which page or
-// module is open does not change it. On a record's page the record is named
-// too, since "this PO" then means it; the chip's clear button sets it aside.
-export function getAiContextLabel(activeContext?: ActiveContext | null, language: "en-US" | "zh-CN" = "en-US") {
-  const workspace = language === "zh-CN" ? "整个工作区" : "Whole workspace";
-  if (!activeContext?.entityId) return workspace;
-  const label = CONTEXT_ENTITY_LABELS[activeContext.entityType || ""]?.[language] || (language === "zh-CN" ? "业务对象" : "Business record");
-  return `${workspace} · ${language === "zh-CN" ? "本页：" : "this page: "}${label} ${activeContext.entityLabel || activeContext.entityId}`;
-}
 
 // How the placeholder names the page's record. The assistant answers about the
 // whole workspace; it uses this record only when the question says "this ...".
@@ -93,6 +94,8 @@ const CONTEXT_ENTITY_PHRASES: Record<string, { "en-US": string; "zh-CN": string 
   supplier: { "en-US": "this supplier", "zh-CN": "这个供应商" },
   sales_order: { "en-US": "this sales order", "zh-CN": "这个销售订单" },
   purchase_request: { "en-US": "this purchase request", "zh-CN": "这个采购申请" },
+  supplier_invoice: { "en-US": "this supplier invoice", "zh-CN": "这张供应商发票" },
+  receiving_doc: { "en-US": "this receipt", "zh-CN": "这张收货单" },
 };
 
 // The same on every page; a record's page only offers the record as well.
@@ -101,16 +104,6 @@ export function getAiInputPlaceholder(activeContext?: ActiveContext | null, lang
   const phrase = CONTEXT_ENTITY_PHRASES[activeContext?.entityType || ""]?.[language];
   if (phrase) return zh ? `问点什么（也可以问${phrase}），或让我帮你做…` : `Ask about ${phrase} or anything else, or tell me what to do…`;
   return zh ? "问点什么，或让我帮你做…" : "Ask a question, or tell me what to do…";
-}
-
-// The page's record in the header chip: its number only, a long one by its
-// last two parts ("…PO-001" for "LOCAL-DEMO-PO-001 · Acme Components"); the
-// chip's title has it whole.
-export function aiShortRecordLabel(label?: string | null) {
-  const value = String(label || "").split(" · ")[0].trim();
-  const parts = value.split("-");
-  if (value.length <= 12 || parts.length < 3 || !/\d/.test(parts.at(-1) || "")) return value;
-  return `…${parts.slice(-2).join("-")}`;
 }
 
 // Placeholder and role names a workspace starts with ("Initial Admin", "Admin
@@ -178,7 +171,7 @@ export default function FloatingAiAssistant({
   userName?: string | null;
   onNavigate?: AiNavigate;
 }) {
-  const { language } = useI18n();
+  const { language, locale } = useI18n();
   const zh = language === "zh-CN";
   const docked = useDocked();
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
@@ -188,7 +181,6 @@ export default function FloatingAiAssistant({
   const [input, setInput] = useState("");
   const [asking, setAsking] = useState(false);
   const [messages, setMessages] = useState<AiChatMessage[]>([]);
-  const [dismissedContextKey, setDismissedContextKey] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -241,6 +233,10 @@ export default function FloatingAiAssistant({
   useEffect(() => {
     if (open && docked) inputRef.current?.focus();
   }, [open, docked]);
+  // Narrower than the docked layout the panel covers the page, so it is a
+  // modal dialog: focus moves into it (to its first control, so a phone's
+  // keyboard does not pop up) and Tab stays inside. Escape is handled above.
+  useDialogFocus(open && !docked, panelRef, minimizeAssistant, { escape: false });
 
   // A new answer is shown from its first line, where it says what matters
   // most, not scrolled to its end. Anything else (a question, an answer still
@@ -287,26 +283,22 @@ export default function FloatingAiAssistant({
     };
   }, [open, docked]);
 
-  // The page's record, until the user sets it aside for this record. Opening
-  // another record brings its context back.
-  const pageContext = cleanActiveContext(activeContext);
-  const pageContextKey = pageContext ? `${pageContext.entityType}:${pageContext.entityId}` : null;
-  const currentContext = pageContext && pageContextKey !== dismissedContextKey ? pageContext : null;
-  const contextLabel = getAiContextLabel(currentContext, language);
+  // The page's record goes with each question, so "this PO" can mean it; any
+  // other question is about the whole workspace. The header names no record.
+  const currentContext = cleanActiveContext(activeContext);
   const inputPlaceholder = getAiInputPlaceholder(currentContext, language);
   // Why the assistant cannot answer in this workspace, said before the first
   // question; the welcome cards are left out, since each would get the same notice.
   const notice = readiness && readiness.assistantV2 === false && readiness.notice ? readiness.notice : null;
-  // On a PO or SKU page: two questions about the record, then two about the
-  // workspace, so the assistant never turns into a single-record bot.
+  // The workspace cards on every page; on a PO or SKU page one question about
+  // the record takes the last place, so the assistant never reads as a record bot.
   const workspacePrompts = AI_EMPTY_STATE_PROMPT_CHIPS.map((item) => language === "zh-CN" ? item.zhPrompt : item.prompt);
-  const recordPrompts = currentContext?.entityType === "purchase_order" ? PO_EMPTY_PROMPTS[language]
-    : currentContext?.entityType === "item" ? SKU_EMPTY_PROMPTS[language] : [];
-  const setupStarters = !recordPrompts.length && readiness?.assistantV2 === true && Boolean(readiness.setup?.open && readiness.setup.firstStepsOpen);
+  const recordPrompt = RECORD_EMPTY_PROMPT[currentContext?.entityType || ""]?.[language] || (currentContext ? null : MODULE_EMPTY_PROMPT[moduleId]?.[language]) || null;
+  const setupStarters = !recordPrompt && readiness?.assistantV2 === true && Boolean(readiness.setup?.open && readiness.setup.firstStepsOpen);
   const emptyPrompts = notice ? [] : setupStarters ? SETUP_STARTERS.map((key) => translate(language, key))
-    : recordPrompts.length ? [...recordPrompts.slice(0, 2), ...workspacePrompts.slice(0, 2)] : workspacePrompts;
+    : recordPrompt ? [...workspacePrompts.slice(0, 3), recordPrompt] : workspacePrompts;
   const emptyPromptIcons = setupStarters ? SETUP_STARTER_ICONS
-    : recordPrompts.length ? [MessageSquareText, MessageSquareText, ...EMPTY_STATE_ICONS.slice(0, 2)] : EMPTY_STATE_ICONS;
+    : recordPrompt ? [...EMPTY_STATE_ICONS.slice(0, 3), MessageSquareText] : EMPTY_STATE_ICONS;
   // The longest question the assistant reads; pasted rows fit. Longer text
   // stays in the box, unsent.
   const questionLimit = QUESTION_LIMITS.assistantV2;
@@ -382,6 +374,8 @@ export default function FloatingAiAssistant({
     const controller = new AbortController();
     const answerId = `answer-${requestId}`;
     const formResults = pendingFormResultsRef.current;
+    // The conversation so far, for a server that lost its thread (L5-07).
+    const previousTurns = previousTurnsOf(messages);
     let answer = emptyAssistantV2Message();
     let received = false;
     requestSeqRef.current = requestId;
@@ -401,9 +395,11 @@ export default function FloatingAiAssistant({
       const events = streamAssistantV2({
         threadId,
         message,
-        activeContext: { moduleId, entityType: context?.entityType ?? null, entityId: context?.entityId ?? null },
+        // The record's number ("PO-202611-0015"), so an answer names it as the page does, never by its id.
+        activeContext: { moduleId, entityType: context?.entityType ?? null, entityId: context?.entityId ?? null, entityLabel: context?.entityLabel ? context.entityLabel.split(" · ")[0].trim() || null : null },
         answerLanguage: language,
         ...(formResults.length ? { formResults } : {}),
+        ...(previousTurns.length ? { conversationContext: { previousTurns } } : {}),
       }, { signal: controller.signal });
       for await (const event of events) {
         received = true;
@@ -433,30 +429,17 @@ export default function FloatingAiAssistant({
           ref={panelRef}
           data-testid="ai-assistant-panel"
           data-docked={docked ? "true" : "false"}
+          role={docked ? undefined : "dialog"}
+          aria-modal={docked ? undefined : true}
+          tabIndex={-1}
           aria-label={zh ? "FlowChain 助手" : "FlowChain assistant"}
-          className={`fixed inset-0 z-50 flex flex-col bg-white sm:left-auto sm:w-[440px] sm:shadow-2xl lg:static lg:z-auto lg:h-screen lg:shrink-0 lg:shadow-none ${expanded ? "lg:w-[min(760px,55vw)]" : "lg:w-[440px]"}`}
+          className={`fixed inset-0 z-50 flex flex-col bg-white outline-none sm:left-auto sm:w-[440px] sm:shadow-2xl lg:static lg:z-auto lg:h-screen lg:shrink-0 lg:shadow-none ${expanded ? "lg:w-[min(760px,55vw)]" : "lg:w-[440px]"}`}
           style={{ borderLeft: `1px solid ${A.gray4}` }}
         >
           <header className="flex min-h-14 shrink-0 items-center gap-1.5 py-1.5 pl-4 pr-2" style={{ borderBottom: `1px solid ${A.gray4}` }}>
             <span className="mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg" style={{ background: "#EFF4FF" }}><Sparkles size={15} style={{ color: A.blue }} aria-hidden /></span>
             {/* A long first question wraps to a second line rather than being cut after a word. */}
             <h2 data-testid="ai-assistant-title" className="line-clamp-2 min-w-0 flex-1 break-words text-[14px] font-semibold leading-5" style={{ color: A.label }} title={panelTitle}>{panelTitle}</h2>
-            {/* Shown only when the panel was opened on a record: answers may use it ("this PO"). */}
-            {currentContext && pageContextKey ? (
-              <span data-testid="ai-context-chip" title={contextLabel} className="flex min-w-0 max-w-[96px] shrink-0 items-center gap-0.5 rounded-md py-0.5 pl-2 pr-0.5 text-xs font-medium" style={{ background: A.gray5, color: A.gray1 }}>
-                <span className="truncate">{aiShortRecordLabel(currentContext.entityLabel || currentContext.entityId)}</span>
-                <button
-                  type="button"
-                  data-testid="ai-context-clear"
-                  onClick={() => setDismissedContextKey(pageContextKey)}
-                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded hover:bg-slate-200"
-                  aria-label={zh ? "不限于这条记录，回答整个工作区" : "Stop using this record; answer about the whole workspace"}
-                  title={zh ? "不限于这条记录" : "Stop using this record"}
-                >
-                  <X size={12} />
-                </button>
-              </span>
-            ) : null}
             <HeaderButton label={zh ? "新对话" : "New conversation"} onClick={startNewConversation}><SquarePen size={16} /></HeaderButton>
             <div className="relative">
               <HeaderButton testId="ai-more-menu" label={zh ? "更多" : "More"} expanded={menuOpen} onClick={() => setMenuOpen((value) => !value)}><MoreHorizontal size={16} /></HeaderButton>
@@ -469,7 +452,7 @@ export default function FloatingAiAssistant({
                 </div>
               ) : null}
             </div>
-            {docked ? <HeaderButton label={expanded ? (zh ? "收起 AI 工作区" : "Collapse AI workspace") : (zh ? "展开 AI 工作区" : "Expand AI workspace")} onClick={() => setExpanded((value) => !value)}>{expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}</HeaderButton> : null}
+            {docked ? <HeaderButton label={expanded ? (zh ? "收起助手" : "Collapse assistant") : (zh ? "展开助手" : "Expand assistant")} onClick={() => setExpanded((value) => !value)}>{expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}</HeaderButton> : null}
             <button type="button" onClick={minimizeAssistant} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg hover:bg-slate-100" style={{ color: A.gray1 }} aria-label={language === "zh-CN" ? "最小化 AI 助手" : "Minimize AI assistant"}><X size={17} /></button>
           </header>
 
@@ -477,12 +460,14 @@ export default function FloatingAiAssistant({
             {messages.length === 0 && (
               <div data-testid="ai-welcome">
                 <h3 className="text-xl font-semibold" style={{ color: A.label }}>{greeting}</h3>
-                <p data-testid="ai-runtime-boundary" className="mt-1.5 text-sm leading-relaxed" style={{ color: A.gray1 }}>{zh ? "我能查采购、库存和发票，也能帮你起草单据，你确认后才会提交。" : "I can look up purchasing, inventory and invoices, and draft documents for you to confirm."}</p>
+                <p data-testid="ai-runtime-boundary" className="mt-1.5 text-sm leading-relaxed" style={{ color: A.gray1 }}>{zh ? "采购、销售、库存、财务都可以问，也能帮你起草单据和邮件，你确认后才会提交。" : "Ask about purchasing, sales, inventory or finance. I can also draft documents and emails; nothing is submitted until you confirm."}</p>
                 {notice ? (
                   <p role="status" data-testid="ai-readiness-notice" data-code={notice} className="mt-4 rounded-lg px-3 py-2 text-[13px] leading-relaxed" style={{ background: A.gray6, color: A.gray1 }}>
                     {translate(language, `ai.v2.notice.${notice}` as const)}
                   </p>
                 ) : null}
+                {/* The decisions waiting on Today, with their buttons (docs/drafted-decisions-design.md §4.8). */}
+                <div className="mt-5"><TodayDecisionCards /></div>
                 {emptyPrompts.length ? (
                   <div className="mt-5 grid grid-cols-2 gap-2.5">
                     {emptyPrompts.slice(0, 4).map((prompt, index) => {
@@ -576,25 +561,28 @@ export default function FloatingAiAssistant({
             </div>
             {inputTooLong ? (
               <p data-testid="ai-input-too-long" role="status" className="mt-1 px-1 text-[12px]" style={{ color: "#9A3412" }}>
-                {translate(language, "ai.v2.input.tooLong", { count: inputLength.toLocaleString(language), limit: questionLimit.toLocaleString(language) })}
+                {translate(language, "ai.v2.input.tooLong", { count: inputLength.toLocaleString(locale), limit: questionLimit.toLocaleString(locale) })}
               </p>
             ) : null}
           </div>
         </aside>
       )}
 
-      {/* The launcher only while the assistant is closed: open, it covers nothing. */}
+      {/* The launcher only while the assistant is closed: open, it covers nothing.
+          On a phone it is a 48 px round icon, so it hides less of the page;
+          its name is still read out. The main area's bottom padding (pb-20,
+          FlowChainApp) keeps the end of every page clear of it. */}
       {!open && (
         <button
           ref={restoreButtonRef}
           onClick={restoreAssistant}
           data-testid="ai-assistant-toggle"
-          className="fixed bottom-3 right-3 z-40 flex h-12 items-center gap-2 rounded-full pl-4 pr-5 text-sm font-semibold text-white shadow-xl transition-shadow hover:shadow-2xl sm:bottom-5 sm:right-5"
+          className="fixed bottom-3 right-3 z-40 flex h-12 w-12 items-center justify-center rounded-full text-sm font-semibold text-white shadow-xl transition-shadow hover:shadow-2xl sm:bottom-5 sm:right-5 sm:w-auto sm:justify-start sm:gap-2 sm:pl-4 sm:pr-5"
           style={{ background: A.blue }}
           aria-label={language === "zh-CN" ? "展开 AI 助手" : "Open AI assistant"}
         >
-          <Sparkles size={17} aria-hidden />
-          {language === "zh-CN" ? "AI 助手" : "AI assistant"}
+          <Sparkles size={20} aria-hidden className="sm:h-[17px] sm:w-[17px]" />
+          <span className="sr-only sm:not-sr-only">{language === "zh-CN" ? "AI 助手" : "AI assistant"}</span>
         </button>
       )}
     </div>

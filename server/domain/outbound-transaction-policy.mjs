@@ -1,3 +1,5 @@
+import { sourceDocumentReturnHolds } from './return-source-holds.mjs'
+
 const SCALE = 10_000n
 const ZERO = 0n
 
@@ -127,14 +129,20 @@ function projectOrderLines(order, impacts) {
   })
 }
 
+// Every line of an order being fulfilled refers to an item of the workspace
+// with the line's SKU. Whether the item is still active is not asked: a
+// reservation, shipment draft, posting or reversal finishes an order already
+// taken, so deactivating an item stops new orders, never the ones in
+// progress or the correction of a wrong shipment (design audit L4-03). New
+// and revised orders still need active items (sales-order-workbench-service).
 async function validateOrderItems(prisma, tenantId, order, blockingIssues) {
   const itemIds = sorted(order.lines.map((line) => outboundText(line.itemId)))
   const items = itemIds.length ? await prisma.item.findMany({ where: { tenantId, id: { in: itemIds } }, orderBy: { id: 'asc' } }) : []
   const itemMap = new Map(items.map((item) => [item.id, item]))
   for (const line of order.lines) {
     const item = itemMap.get(line.itemId)
-    if (!item || item.tenantId !== tenantId || item.id !== line.itemId || item.sku !== line.sku || item.status !== 'active') {
-      blockingIssues.push(policyError('SALES_ORDER_ITEM_INVALID', `Sales order line ${line.id} does not reference an active tenant item with the same SKU.`, 422))
+    if (!item || item.tenantId !== tenantId || item.id !== line.itemId || item.sku !== line.sku) {
+      blockingIssues.push(policyError('SALES_ORDER_ITEM_INVALID', `Sales order line ${line.id} does not reference a tenant item with the same SKU.`, 422))
     }
   }
   return itemMap
@@ -412,6 +420,12 @@ export async function buildShipmentReversalPlan({ prisma, tenantId, shipmentId, 
     orderBy: { id: 'asc' },
   })
   if (holdingInvoice) blockingIssues.push(policyError('SHIPMENT_REVERSAL_BLOCKED_BY_INVOICE', 'A customer invoice already bills this shipment, so it can no longer be reversed. To take these goods back, use a customer return and credit note.', 409, { customerInvoiceId: holdingInvoice.id, invoiceNumber: holdingInvoice.invoiceNumber, invoiceStatus: holdingInvoice.status }))
+  // A customer return that names this shipment holds it: reversing the
+  // shipment would put all of it back in stock while the returned part is
+  // also in quarantine. The return can always be cancelled, or its receipt
+  // reversed first (L8-07).
+  const returnHolds = await sourceDocumentReturnHolds({ prisma, tenantId, sourceDocumentType: 'ShipmentDocument', sourceLineIds: shipment.lines.map((line) => line.id) })
+  if (returnHolds.length) blockingIssues.push(policyError('SHIPMENT_REVERSAL_BLOCKED_BY_RETURN', `Customer return ${returnHolds.map((row) => row.requestNumber).join(', ')} is based on this shipment, so the shipment cannot be reversed. Cancel the return first, reversing its receipt if it was posted.`, 409, { returnRequests: returnHolds }))
   const allocations = shipment.lines.flatMap((line) => line.allocations.map((allocation) => ({ ...allocation, shipmentLine: line })))
   const originalMovements = await prisma.inventoryMovement.findMany({ where: { tenantId, sourceDocumentId: shipment.id, movementType: 'shipment_posting' }, orderBy: { sourceDocumentLineId: 'asc' } })
   const movementMap = new Map(originalMovements.map((movement) => [movement.sourceDocumentLineId, movement]))

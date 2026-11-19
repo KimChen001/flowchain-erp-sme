@@ -26,6 +26,16 @@ export function countActiveRoleManagers(db, tenantId, { userId } = {}) {
   } })
 }
 
+// A role manager grants only what they hold themselves (design audit L4-30):
+// otherwise settings.roles.manage or .assign on a custom role is a way to any
+// permission, administration included. An administrator holds every code,
+// so nothing changes for one.
+function assertGrantsHeld(actor, codes) {
+  const held = actor.permissionCodes instanceof Set ? actor.permissionCodes : new Set(actor.permissionCodes || [])
+  const beyond = unique(codes).filter((code) => !held.has(code)).sort()
+  if (beyond.length) fail("AUTHORIZATION_GRANT_EXCEEDS_OWN", `You can only grant permissions you hold yourself. Not held: ${beyond.join(", ")}.`, 403, { permissionCodes: beyond })
+}
+
 export async function tenantHasRoleManager(tx, tenantId) {
   return (await countActiveRoleManagers(tx, tenantId)) > 0
 }
@@ -62,6 +72,7 @@ export function createAuthorizationAdminService({ prisma, idFactory = randomUUID
       const source = input.copyFromRoleId ? await tx.tenantRole.findFirst({ where: { id: input.copyFromRoleId, tenantId: actor.tenantId }, include: { permissions: true } }) : null
       if (input.copyFromRoleId && !source) fail("AUTHORIZATION_ROLE_NOT_FOUND", "Template role was not found.", 404)
       const codes = permissions.length ? permissions : source?.permissions.map((grant) => grant.permissionCode) || []
+      assertGrantsHeld(actor, codes)
       const created = await tx.tenantRole.create({ data: { id: idFactory(), tenantId: actor.tenantId, roleKey: key, name, description: text(input.description) || null, status: "active", isDefaultTemplate: false, createdById: actor.userId, updatedById: actor.userId } })
       for (const permissionCode of codes) await tx.tenantRolePermission.create({ data: { id: idFactory(), tenantId: actor.tenantId, roleId: created.id, permissionCode, createdById: actor.userId } })
       const role = await tx.tenantRole.findUnique({ where: { id: created.id }, include: { permissions: true, assignments: { include: { user: true } }, updatedBy: true } })
@@ -76,6 +87,9 @@ export function createAuthorizationAdminService({ prisma, idFactory = randomUUID
     return prisma.$transaction(async (tx) => {
       const current = await tx.tenantRole.findFirst({ where: { id, tenantId: actor.tenantId }, include: { permissions: true, assignments: true } })
       if (!current) fail("AUTHORIZATION_ROLE_NOT_FOUND", "Role was not found.", 404)
+      // Two people editing one role: the second is told, not overwritten (L4-30).
+      if (input.expectedVersion !== undefined && Number(input.expectedVersion) !== current.version) fail("AUTHORIZATION_ROLE_VERSION_CONFLICT", "This role was changed by someone else. Reload it and try again.", 409, { currentVersion: current.version })
+      if (permissionCodes) assertGrantsHeld(actor, permissionCodes.filter((code) => !current.permissions.some((grant) => grant.permissionCode === code)))
       const status = input.status === undefined ? current.status : text(input.status)
       if (!["active", "inactive"].includes(status)) fail("AUTHORIZATION_ROLE_STATUS_INVALID", "Role status must be active or inactive.", 422)
       if (status === "inactive" && current.assignments.some((assignment) => assignment.status === "active")) fail("AUTHORIZATION_ROLE_HAS_MEMBERS", "Remove active role assignments before deactivation.", 409)
@@ -96,10 +110,15 @@ export function createAuthorizationAdminService({ prisma, idFactory = randomUUID
     const nextRoleIds = unique(roleIds)
     return prisma.$transaction(async (tx) => {
       const target = await tx.user.findFirst({ where: { id: userId, tenantId: actor.tenantId } }); if (!target) fail("AUTHORIZATION_USER_NOT_FOUND", "User was not found.", 404)
-      const roles = await tx.tenantRole.findMany({ where: { id: { in: nextRoleIds }, tenantId: actor.tenantId } })
+      const roles = await tx.tenantRole.findMany({ where: { id: { in: nextRoleIds }, tenantId: actor.tenantId }, include: { permissions: true } })
       if (roles.length !== nextRoleIds.length) fail("AUTHORIZATION_CROSS_TENANT_ROLE_ASSIGNMENT", "Every assigned role must belong to the user's tenant.", 403)
       if (roles.some((role) => role.status !== "active")) fail("AUTHORIZATION_ROLE_INACTIVE", "Inactive roles cannot be assigned.", 409)
       const before = await tx.userRoleAssignment.findMany({ where: { tenantId: actor.tenantId, userId, status: "active" }, select: { roleId: true } })
+      // A role newly given: never to yourself, and only with permissions you
+      // hold (design audit L4-30). Taking a role away is always allowed.
+      const added = roles.filter((role) => !before.some((row) => row.roleId === role.id))
+      if (added.length && text(userId) === text(actor.userId)) fail("AUTHORIZATION_SELF_ASSIGNMENT", "You cannot give yourself a role. Ask another administrator.", 403)
+      assertGrantsHeld(actor, added.flatMap((role) => role.permissions.map((grant) => grant.permissionCode)))
       await tx.userRoleAssignment.deleteMany({ where: { tenantId: actor.tenantId, userId, roleId: { notIn: nextRoleIds } } })
       for (const roleId of nextRoleIds) await tx.userRoleAssignment.upsert({ where: { userId_roleId: { userId, roleId } }, create: { id: idFactory(), tenantId: actor.tenantId, userId, roleId, status: "active", createdById: actor.userId }, update: { status: "active" } })
       // From now on these assignments, even none, are the user's roles; the

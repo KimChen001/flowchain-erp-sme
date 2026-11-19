@@ -34,7 +34,7 @@ function toolsFor(facts, context) {
 export const AI_READ_TOOL_COLUMNS = Object.freeze({
   workspace_summary: { '': ['purchaseOrders.open', 'purchaseOrders.overdue', 'purchaseOrders.waitingForApproval', 'purchaseRequestsWaitingForApproval', 'inventory.skus', 'inventory.atRisk', 'supplierInvoices.committedCount', 'rfqs.open', 'rfqs.readyToAward', 'receipts.rejected', 'receipts.unposted', 'recordsMissingData'] },
   list_purchase_orders: { rows: ['orderNumber', 'supplier', 'status', 'skus', 'itemNames', 'dueDate', 'overdueDays', 'ordered', 'received', 'remaining', 'unit', 'amount', 'currency', 'open'], bySupplier: ['supplier', 'orders'] },
-  get_purchase_order: { openLines: ['sku', 'itemName', 'ordered', 'received', 'remaining', 'unit', 'unitPrice', 'promisedDate', 'originalPromisedDate'], receipts: ['documentNumber', 'arrived', 'postingStatus', 'rejected', 'unit'], invoiceDifferences: ['invoiceNumber', 'matchStatus', 'variance', 'currency'] },
+  get_purchase_order: { openLines: ['sku', 'itemName', 'ordered', 'received', 'remaining', 'unit', 'unitPrice', 'promisedDate', 'originalPromisedDate'], closedLines: ['sku', 'itemName', 'ordered', 'received', 'remaining', 'unit', 'unitPrice', 'promisedDate'], receipts: ['documentNumber', 'arrived', 'postingStatus', 'accepted', 'rejected', 'unit'], invoiceDifferences: ['invoiceNumber', 'matchStatus', 'variance', 'currency'] },
   stock_position: { rows: ['sku', 'itemName', 'unit', 'onHand', 'reserved', 'available', 'openSalesDemand', 'incomingOnPurchaseOrders', 'availableToPromise', 'shortage', 'safetyStock', 'reorderPoint', 'status'] },
   stock_projection: { weeks: ['from', 'to', 'incoming', 'demand', 'endAvailable', 'belowSafetyStock', 'short'], atRecordedRate: ['from', 'to', 'incoming', 'demand', 'endAvailable', 'belowSafetyStock', 'short'] },
   list_sales_orders: { rows: ['orderNumber', 'customer', 'promisedDate'] },
@@ -46,10 +46,10 @@ export const AI_READ_TOOL_COLUMNS = Object.freeze({
   list_suppliers: { rows: ['name', 'code', 'tier'] },
   spend_analysis: { suppliers: ['name', 'amount', 'sharePercent', 'rank', 'spendClass'], months: ['month', 'value', 'orders'], items: ['name', 'amount'] },
   supplier_performance: { suppliers: ['name', 'deliveries', 'onTime.percent', 'inFull.percent', 'onTimeInFull.percent', 'rejection.percent', 'averageDelayDays', 'lateDeliveries', 'undeliveredPastOriginalPromiseInPeriod'] },
-  late_order_impact: { orders: ['orderNumber', 'overdueDays'], skus: ['sku', 'unit', 'stillToReceive', 'availableToPromise', 'withoutTheseLines', 'additionalShortfall'] },
+  late_order_impact: { orders: ['orderNumber', 'overdueDays'], skus: ['sku', 'judgedOrders', 'unit', 'stillToReceive', 'availableToPromise', 'withoutTheseLines', 'additionalShortfall'] },
   calculate: { '': ['result', 'unit'] },
   search_records: { rows: ['type', 'number', 'name', 'status'] },
-  reorder_list: { rows: ['sku', 'itemName', 'unit', 'orderByDate', 'orderNow', 'daysUntilOrderBy', 'onHand', 'reserved', 'incoming', 'position', 'reorderPoint', 'shortfall', 'averageDailyDemand', 'supplier', 'leadTimeDays', 'minimumOrderQuantity', 'moqUnit', 'requestQuantity', 'raisedToMinimum', 'suggestedReorderPoint'] },
+  reorder_list: { rows: ['sku', 'itemName', 'unit', 'orderByDate', 'orderNow', 'daysUntilOrderBy', 'onHand', 'reserved', 'incoming', 'position', 'reorderPoint', 'shortfall', 'orderUpTo', 'averageDailyDemand', 'supplier', 'leadTimeDays', 'minimumOrderQuantity', 'moqUnit', 'requestQuantity', 'raisedToMinimum', 'suggestedReorderPoint'] },
   list_receivables: { rows: ['obligationNumber', 'customerInvoiceNumber', 'customerName', 'outstandingAmount', 'paidAmount', 'originalAmount', 'currency', 'dueDate', 'status', 'disputeStatus', 'customer', 'balance', 'items', 'overdueAmount', 'oldestDueDate'], aging: ['currency', 'current', '1_30', '31_60', '61_90', '90_plus', 'total', 'count'] },
   list_contracts: { rows: ['number', 'title', 'externalReference', 'type', 'state', 'startDate', 'endDate', 'signedOn', 'noticeDays', 'totalValue', 'currency', 'supplier'] },
   price_history: { earlier: ['unitPrice', 'currency', 'unit', 'orderedQuantity', 'date', 'orderNumber', 'supplierName'], lastOrderBySupplier: ['supplier', 'orderNumber', 'day'] },
@@ -57,10 +57,13 @@ export const AI_READ_TOOL_COLUMNS = Object.freeze({
   search_documents: { passages: ['document', 'section', 'excerpt'] },
   // A row's details are columns too: the model reads them and names them
   // (2026-11-05: the first table of attention items failed 5 times of 6).
-  attention_list: { rows: ['rank', 'type', 'severity', 'label', 'whenKind', 'days', 'date', 'supplier', 'details.sku', 'details.remaining', 'details.unit', 'details.available', 'details.demand', 'details.shortage', 'details.incoming', 'details.safety', 'details.reorder', 'details.pendingRequests', 'details.covered', 'details.variance', 'details.currency', 'details.rejected', 'details.quantity', 'details.priority', 'details.requiredDate', 'details.responses', 'details.title', 'details.count'] },
+  attention_list: { rows: ['rank', 'type', 'severity', 'label', 'itemName', 'whenKind', 'days', 'date', 'supplier', 'details.sku', 'details.remaining', 'details.unit', 'details.available', 'details.demand', 'details.shortage', 'details.incoming', 'details.safety', 'details.reorder', 'details.pendingRequests', 'details.covered', 'details.variance', 'details.currency', 'details.rejected', 'details.quantity', 'details.priority', 'details.requiredDate', 'details.responses', 'details.title', 'details.count'] },
   records_missing_data: { rows: ['type', 'label', 'source', 'missing'] },
   suggest_purchase_lines: { rows: ['item.sku', 'item.name', 'item.unit', 'onHand', 'safetyStock', 'reorderPoint', 'suggestedQuantity.value', 'suggestedQuantity.source', 'supplier.name', 'needByDate.value', 'estimatedUnitPrice.value', 'estimatedUnitPrice.currency'] },
   setup_status: { steps: ['id', 'done', 'count'] },
+  // Today's decision items (ai-assistant-v2-decision-tools.mjs); show_decisions shows them as cards.
+  decision_items: { waiting: ['kind', 'label', 'name', 'date', 'overdueDays', 'returned'], setAside: ['kind', 'label', 'name', 'decision', 'reasonCode', 'returnOn', 'decidedOn', 'decidedBy', 'documentNumber'] },
+  decision_history: { items: ['kind', 'state', 'raisedOn', 'decision', 'reasonCode', 'decidedOn', 'decidedBy', 'returnOn', 'endedOn'] },
   item_suppliers: { suppliers: ['name', 'preferred', 'leadTimeDays', 'minimumOrderQuantity', 'referencePrice', 'currency'] },
   rfq_quotes: { rows: ['rfq', 'supplier', 'sku', 'quantity', 'unitPrice', 'currency', 'deliveryDate', 'validUntil'], rfqs: ['rfq', 'title', 'due', 'quotes'] },
   order_quantity_costs: { options: ['quantity', 'orderValue', 'daysOfDemand', 'ordersPerYear', 'averageCycleStock', 'holdingCostPerYear', 'orderingCostPerYear', 'totalCostPerYear', 'belowSupplierMinimum'], comparisons: ['smaller', 'larger', 'ordersSavedPerYear', 'extraHoldingCostPerYear', 'breakEvenCostPerOrder', 'cheaperAtUserCostPerOrder', 'largerSavesPerYear'] },
@@ -69,6 +72,21 @@ export const AI_READ_TOOL_COLUMNS = Object.freeze({
     plans: ['plan', 'lines', 'spend', 'holdingCost', 'shortageCost', 'expectedCost', 'costAboveOptimal', 'withinBudget', 'overBudgetAmount', 'budgetLeft'],
     items: ['sku', 'itemName', 'unit', 'supplier', 'position', 'openRequests', 'cycleDays', 'expectedDemand', 'minimumOrderQuantity', 'minimumOrderValue', 'unitPrice', 'optimalQuantity', 'reorderListQuantity', 'planQuantity', 'chanceShortNoOrderPercent', 'chanceShortWithOptimalPercent', 'chanceShortWithPlanPercent', 'reason'],
     'decision.lines': ['sku', 'itemName', 'quantity', 'unit', 'supplier', 'unitPrice', 'orderValue'],
+  },
+  supplier_payables: {
+    rows: ['invoiceNumber', 'supplier', 'invoiceDate', 'dueDate', 'overdueDays', 'outstanding', 'currency', 'paymentHeld', 'invoices', 'owed', 'overdueInvoices', 'overdue', 'oldestDueDate', 'receipt', 'arrived', 'purchaseOrder', 'value'],
+    totals: ['currency', 'invoices', 'amount', 'receipts', 'owedInvoices', 'owed', 'overdueInvoices', 'overdue', 'dueIn7DaysInvoices', 'dueIn7Days', 'paymentHeldInvoices'],
+  },
+  cash_movements: {
+    totals: ['currency', 'receivedFromCustomers', 'customerPayments', 'paidToSuppliers', 'supplierPayments', 'net'],
+    months: ['month', 'currency', 'receivedFromCustomers', 'customerPayments', 'paidToSuppliers', 'supplierPayments', 'net'],
+  },
+  stock_movements: { rows: ['date', 'quantity', 'unit', 'documentNumber'] },
+  list_shipments: { rows: ['shipment', 'shipped', 'salesOrder', 'customer'] },
+  record_history: { rows: ['at', 'action', 'summary', 'by'] },
+  gross_profit: {
+    '': ['currency', 'invoices', 'revenue', 'cost', 'grossProfit', 'grossMarginPercent'],
+    rows: ['month', 'sku', 'itemName', 'quantity', 'unit', 'customer', 'revenue', 'cost', 'grossProfit', 'grossMarginPercent'],
   },
 })
 
