@@ -96,6 +96,9 @@ export const supplierReplyOrderLineSchema = z.strictObject({
   ref: lineRef,
   purchaseOrderLineId: id,
   sku: z.string().max(120).nullable(),
+  // The supplier's own code for the item (its item-supplier link), which a
+  // reply often quotes instead of ours.
+  supplierSku: z.string().max(120).nullable(),
   itemName: z.string().max(200).nullable(),
   remaining: quantity.nullable(),
   unit: z.string().max(40).nullable(),
@@ -178,6 +181,7 @@ export const supplierReplyCheckSchema = z.strictObject({
 // may read it now (names, quantities; never a price).
 export const supplierReplyCardLineSchema = supplierReplyCheckedLineSchema.extend({
   sku: z.string().max(120).nullable(),
+  supplierSku: z.string().max(120).nullable(),
   itemName: z.string().max(200).nullable(),
   remaining: quantity.nullable(),
   unit: z.string().max(40).nullable(),
@@ -211,9 +215,12 @@ export const supplierReplyCardSchema = z.strictObject({
   state: z.enum(SUPPLIER_REPLY_STATES),
   readingStatus: z.enum(SUPPLIER_REPLY_READING_STATUSES),
   replyKind: z.enum(SUPPLIER_REPLY_KINDS).nullable(),
-  // The cleaned reply; the quoted earlier message is not shown or read.
+  // The cleaned reply, as read. The quoted earlier message and a signature
+  // are kept apart in quotedText for display (null when nothing was cut); they
+  // are never read.
   text: z.string().max(SUPPLIER_REPLY_LIMITS.text),
   quotedTextHidden: z.boolean(),
+  quotedText: z.string().max(SUPPLIER_REPLY_LIMITS.text).nullable(),
   lines: z.array(supplierReplyCardLineSchema).max(SUPPLIER_REPLY_LIMITS.lines * 2),
   flags: z.array(supplierReplyCheckedFlagSchema).max(SUPPLIER_REPLY_LIMITS.flags),
   reason: quote.nullable(),
@@ -222,7 +229,7 @@ export const supplierReplyCardSchema = z.strictObject({
   instructionsIgnored: z.boolean(),
   // The order's open lines for the manual form when the card needs the
   // person (or for Edit): ids, names, quantities and current dates.
-  formLines: z.array(supplierReplyCardLineSchema.pick({ purchaseOrderLineId: true, sku: true, itemName: true, remaining: true, unit: true, currentDate: true, overdueDays: true })).max(200),
+  formLines: z.array(supplierReplyCardLineSchema.pick({ purchaseOrderLineId: true, sku: true, supplierSku: true, itemName: true, remaining: true, unit: true, currentDate: true, overdueDays: true })).max(200),
   // Whether this reader may record or dismiss it now.
   canDecide: z.boolean(),
   notNowUntil: day.nullable(),
@@ -241,6 +248,28 @@ export const supplierReplyCardSchema = z.strictObject({
 // Reading follows the order's read permission; pasting, recording and
 // dismissing need procurement.purchase_order.revise. Errors use the
 // procurement routes' { code, message, details } body.
+
+// The error codes the routes answer with, by status, beyond the app's
+// usual 401 TENANT_CONTEXT_REQUIRED and 403 AUTHORIZATION_PERMISSION_DENIED:
+//   400 SUPPLIER_REPLY_INVALID_BODY       the body is not JSON
+//   404 PURCHASE_ORDER_NOT_FOUND          not in the reader's workspace
+//   404 SUPPLIER_REPLY_NOT_FOUND          not a reply on this order
+//   409 SYNC_VERSION_CONFLICT             a stale card: expectedVersion is not
+//                                         the order's version (details holds
+//                                         currentVersion); reload the card
+//   409 SUPPLIER_REPLY_NOT_OPEN           already recorded, dismissed or
+//                                         superseded (details[0].code: the state)
+//   409 SUPPLIER_REPLY_ORDER_NOT_OPEN     a paste on an order that is not issued
+//                                         or partly received
+//   409 SUPPLIER_REPLY_CONFLICT           two pastes on one order at once
+//   409 TRANSACTION_CONFLICT              a database race; try again
+//   422 SUPPLIER_REPLY_INVALID            the body fails its schema (details:
+//                                         [{ field, code }])
+//   422 SUPPLIER_REPLY_EMPTY              nothing left once quoted text is cut
+//   422 SUPPLIER_REPLY_RECEIVED_IN_FUTURE receivedOn after today
+//   422 SUPPLIER_REPLY_NO_DATES           record with no proposed or given line
+//   422 PROMISED_DATE_UNCHANGED and the promised-dates command's other codes
+export const SUPPLIER_REPLY_ERROR_CODES = Object.freeze(['SUPPLIER_REPLY_INVALID_BODY', 'PURCHASE_ORDER_NOT_FOUND', 'SUPPLIER_REPLY_NOT_FOUND', 'SYNC_VERSION_CONFLICT', 'SUPPLIER_REPLY_NOT_OPEN', 'SUPPLIER_REPLY_ORDER_NOT_OPEN', 'SUPPLIER_REPLY_CONFLICT', 'TRANSACTION_CONFLICT', 'SUPPLIER_REPLY_INVALID', 'SUPPLIER_REPLY_EMPTY', 'SUPPLIER_REPLY_RECEIVED_IN_FUTURE', 'SUPPLIER_REPLY_NO_DATES'])
 
 export const SUPPLIER_REPLY_ROUTES = Object.freeze({
   list: '/api/procurement/orders/:id/supplier-replies',

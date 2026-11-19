@@ -12,9 +12,9 @@ const RECEIVED = '2026-11-17'
 const order = {
   number: 'PO-202611-0012', supplierName: 'Acme Ltd', status: 'partially_received',
   lines: [
-    { ref: 'L1', purchaseOrderLineId: 'pol-1', sku: 'SKU-1040', itemName: 'Bracket', remaining: 60, unit: 'pcs', promisedDate: '2026-11-12' },
-    { ref: 'L2', purchaseOrderLineId: 'pol-2', sku: 'SKU-2210', itemName: 'Hinge', remaining: 20, unit: 'pcs', promisedDate: '2026-11-12' },
-    { ref: 'L3', purchaseOrderLineId: 'pol-3', sku: 'SKU-3300', itemName: 'Spring', remaining: 0, unit: 'pcs', promisedDate: '2026-11-10' },
+    { ref: 'L1', purchaseOrderLineId: 'pol-1', sku: 'SKU-1040', supplierSku: 'ACM-5521', itemName: 'Bracket', remaining: 60, unit: 'pcs', promisedDate: '2026-11-12' },
+    { ref: 'L2', purchaseOrderLineId: 'pol-2', sku: 'SKU-2210', supplierSku: null, itemName: 'Hinge', remaining: 20, unit: 'pcs', promisedDate: '2026-11-12' },
+    { ref: 'L3', purchaseOrderLineId: 'pol-3', sku: 'SKU-3300', supplierSku: null, itemName: 'Spring', remaining: 0, unit: 'pcs', promisedDate: '2026-11-10' },
   ],
 }
 const reading = (lines, extra = {}) => ({ replyKind: 'dates', lines, flags: [], reason: null, ...extra })
@@ -154,6 +154,7 @@ test('the reading: one tool-less call with the open lines and no prices, a retry
   assert.equal(call.maxTokens, 1000)
   assert.equal(call.tools, undefined, 'no tools')
   assert.match(call.messages[0].content, /"line":"L1".*"line":"L2"/)
+  assert.match(call.messages[0].content, /"supplierSku":"ACM-5521"/)
   assert.doesNotMatch(call.messages[0].content, /"line":"L3"/, 'a received line is not offered')
   assert.doesNotMatch(call.messages[0].content, /price/i)
   assert.equal((call.messages[0].content.match(/<\/supplier_reply>/g) || []).length, 1, 'the reply cannot close its own block')

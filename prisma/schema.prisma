@@ -3706,6 +3706,7 @@ model SupplierReply {
   receivedOn          String
   text                String
   quotedTextHidden    Boolean       @default(false)
+  quotedText          String?
   sender              String?
   messageId           String?
   inReplyTo           String?

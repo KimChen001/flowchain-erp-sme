@@ -3,7 +3,7 @@ import { QUESTION_LIMITS, SETUP_FORM_ROWS } from '../../shared/assistant-protoco
 import { ASSISTANT_V2_LIMITS, SERVER_NOTE_PREFIX, answerAssistantV2 } from '../domain/ai-assistant-v2.mjs'
 import { AI_ASSISTANT_V2_UI_TOOLS } from '../domain/ai-assistant-v2-ui-tools.mjs'
 import { AssistantModelError } from '../domain/ai-assistant-v2-model/model-error.mjs'
-import { createAssistantV2CostLedger, createAssistantV2RateLimiter } from '../domain/ai-assistant-v2-controls.mjs'
+import { ASSISTANT_V2_COST_LEDGER, createAssistantV2RateLimiter } from '../domain/ai-assistant-v2-controls.mjs'
 import { assistantV2PermissionFingerprint, createAssistantV2ThreadStore } from '../domain/ai-assistant-v2-threads.mjs'
 import { aiInjectionDetected } from '../domain/ai-injection-guard.mjs'
 import { readFirstRunSetup } from '../domain/first-run-setup.mjs'
@@ -34,7 +34,7 @@ import { presentAssistantV2Answer } from '../domain/ai-assistant-v2-answer.mjs'
 
 const THREADS = createAssistantV2ThreadStore()
 const RATE_LIMITER = createAssistantV2RateLimiter()
-const COST_LEDGER = createAssistantV2CostLedger()
+const COST_LEDGER = ASSISTANT_V2_COST_LEDGER
 // The loop ends itself at its own deadline, with an error event; this
 // backstop only stops a loop that did not.
 const BACKSTOP_MS = ASSISTANT_V2_LIMITS.timeoutMs + 5000

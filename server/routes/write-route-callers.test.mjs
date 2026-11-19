@@ -50,7 +50,13 @@ const INTAKE_STEP ='The intake page pastes or uploads, maps, normalizes, validat
 const MOBILE_SYNC = 'Offline mobile sync protocol; its client is not in this repository, and the route and Postgres tests drive it.'
 
 // Write routes with no caller in the app, each with the reason.
+const SUPPLIER_REPLY_CARD = 'The supplier reply card (docs/supplier-reply-dates-design.md step 1) is built in its own pull request, stacked on the routes; it takes these off the list.'
 const NO_APP_CALLER = {
+  // Supplier replies: the card that calls them comes in the next pull request.
+  'POST /api/procurement/orders/:id/supplier-replies': SUPPLIER_REPLY_CARD,
+  'POST /api/procurement/orders/:id/supplier-replies/:id/record': SUPPLIER_REPLY_CARD,
+  'POST /api/procurement/orders/:id/supplier-replies/:id/dismiss': SUPPLIER_REPLY_CARD,
+  'POST /api/procurement/orders/:id/supplier-replies/:id/not-now': SUPPLIER_REPLY_CARD,
   // Credit memos (supplier) and credit notes (customer): audit L2-02.
   'POST /api/finance/supplier-credit-memos': CREDIT_DOCUMENTS,
   'POST /api/finance/supplier-credit-memos/preview': CREDIT_DOCUMENTS,

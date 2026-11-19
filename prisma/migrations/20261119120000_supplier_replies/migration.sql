@@ -3,7 +3,9 @@
 -- person's decision. activeKey is the order id while the card is open and NULL
 -- after; PostgreSQL treats NULLs as distinct, so the unique index allows one
 -- open card per order and any number of closed ones. messageId is NULL for a
--- pasted reply. Running this file a second time changes nothing.
+-- pasted reply. quotedText is the quoted earlier message and signature cut
+-- from the reply, kept for display and never read. Running this file a second
+-- time changes nothing.
 
 CREATE TABLE IF NOT EXISTS "SupplierReply" (
   "id" TEXT NOT NULL,
@@ -15,6 +17,7 @@ CREATE TABLE IF NOT EXISTS "SupplierReply" (
   "receivedOn" TEXT NOT NULL,
   "text" TEXT NOT NULL,
   "quotedTextHidden" BOOLEAN NOT NULL DEFAULT false,
+  "quotedText" TEXT,
   "sender" TEXT,
   "messageId" TEXT,
   "inReplyTo" TEXT,
