@@ -5,14 +5,21 @@ import { OperationalFinanceError } from "./operational-finance-command-service.m
 import {
   buildCustomerCreditNotePlan,
   buildCustomerInvoicePlan,
+  CREDITABLE_CUSTOMER_INVOICE_STATUSES,
 } from "./operational-finance-o2c-policy.mjs";
+import { deriveReceivableSettlementStatus } from "./obligation-status-policy.mjs";
 import {
   financeFixed as fixed,
   financeUnits as units,
 } from "./operational-finance-policy.mjs";
-import { overdueBefore } from "./operational-finance-o2c-read-service.mjs";
+import {
+  CANCEL_CUSTOMER_INVOICE_PERMISSION,
+  canCancelCustomerInvoice,
+  overdueBefore,
+} from "./operational-finance-o2c-read-service.mjs";
 import { DEFAULT_TENANT_TIMEZONE } from "./tenant-calendar-day.mjs";
 import { allocateDocumentNumber } from "./document-numbering.mjs";
+import { approvalAuthorIds, selfApprovalCheck, selfApprovalRefusal } from "./self-approval.mjs";
 
 const text = (value) => String(value ?? "").trim();
 const workspaceTimezone = async (client, tenantId) =>
@@ -20,8 +27,11 @@ const workspaceTimezone = async (client, tenantId) =>
 const fail = (code, message, status = 400, details) => {
   throw new OperationalFinanceError(code, message, status, details);
 };
+// Who may cancel a customer invoice, and which ones: see the read service,
+// which offers the action by the same rule.
 const commandPermission = (commandType) => ({
   create_customer_invoice: "finance.customer_invoice.create",
+  cancel_customer_invoice: CANCEL_CUSTOMER_INVOICE_PERMISSION,
   submit_customer_invoice: "finance.customer_invoice.submit",
   approve_customer_invoice: "finance.customer_invoice.approve",
   issue_customer_invoice: "finance.customer_invoice.issue",
@@ -29,6 +39,8 @@ const commandPermission = (commandType) => ({
   resolve_dispute_receivable: "finance.receivable.resolve_dispute",
   record_external_reference_receivable: "finance.receivable.record_external_reference",
   create_customer_credit_note: "finance.customer_credit.create",
+  // Whoever may raise a draft credit note may withdraw one.
+  cancel_customer_credit_note: "finance.customer_credit.create",
   approve_customer_credit_note: "finance.customer_credit.approve",
 })[String(commandType || "").replaceAll("-", "_")];
 const stable = (value, parent = "") => {
@@ -197,6 +209,90 @@ const creditResult = (row) => ({
     version: row.version,
   },
 });
+// Locks a row when it exists and leaves a missing one to the checks below.
+const lockIfPresent = async (tx, table, tenantId, id) => {
+  if (text(id))
+    await tx.$queryRawUnsafe(
+      `SELECT "id" FROM "${table}" WHERE "tenantId" = $1 AND "id" = $2 FOR UPDATE`,
+      tenantId,
+      text(id),
+    );
+};
+// The approved credit notes of an invoice, summed. A credit approved before
+// the invoice is issued is taken off the receivable when it is issued.
+const approvedCreditTotal = async (db, customerInvoiceId) =>
+  (await db.customerCreditNote.findMany({
+    where: { customerInvoiceId, status: "approved" },
+    select: { totalAmount: true },
+  })).reduce((sum, row) => sum + units(row.totalAmount), 0n);
+// Why a draft credit note cannot be approved now. Checked again at approval,
+// not only when the draft was made: the return receipt may have been
+// reversed since, and the receivable may be paid.
+const customerCreditApprovalIssues = ({ note, invoice, posting, receivable }) => {
+  const issues = [];
+  if (
+    !posting ||
+    posting.postingType !== "customer_return_receipt" ||
+    posting.postingStatus !== "posted" ||
+    posting.reversedAt
+  )
+    issues.push({
+      code: "CUSTOMER_RETURN_RECEIPT_REQUIRED",
+      message: "The customer return receipt this credit note is based on is no longer posted. Cancel the draft credit note.",
+      status: 409,
+    });
+  if (!invoice || !CREDITABLE_CUSTOMER_INVOICE_STATUSES.includes(invoice.status))
+    issues.push({
+      code: "CUSTOMER_INVOICE_REQUIRED",
+      message: "Customer credit note requires an approved or issued customer invoice.",
+      status: 409,
+      details: { invoiceStatus: invoice?.status ?? null },
+    });
+  if (receivable && units(note.totalAmount) > units(receivable.outstandingAmount))
+    issues.push({
+      code: "CUSTOMER_CREDIT_AMOUNT_EXCEEDED",
+      message: `This credit of ${fixed(units(note.totalAmount))} ${note.currency} is more than the ${fixed(units(receivable.outstandingAmount))} ${receivable.currency} the customer still owes. Record the refund in your accounting system.`,
+      status: 409,
+    });
+  return issues;
+};
+// The receivable after a credit is approved: lower outstanding, more credit,
+// and the status those amounts give. A disputed receivable stays disputed
+// until the dispute is resolved.
+const receivableAfterCredit = (receivable, note) => {
+  const amounts = {
+    originalAmount: receivable.originalAmount,
+    approvedCreditAmount: fixed(units(receivable.approvedCreditAmount) + units(note.totalAmount)),
+    outstandingAmount: fixed(units(receivable.outstandingAmount) - units(note.totalAmount)),
+  };
+  return {
+    approvedCreditAmount: amounts.approvedCreditAmount,
+    outstandingAmount: amounts.outstandingAmount,
+    status: receivable.status === "disputed" ? "disputed" : deriveReceivableSettlementStatus(amounts),
+  };
+};
+const creditCancelIssues = (note, expected, reason) => {
+  const issues = [];
+  if (note.status !== "draft")
+    issues.push({
+      code: "CUSTOMER_CREDIT_STATUS_INVALID",
+      message: "Only a draft customer credit note can be cancelled.",
+      status: 409,
+    });
+  if (note.version !== expected)
+    issues.push({
+      code: "FINANCE_VERSION_CONFLICT",
+      message: "Customer credit note changed concurrently.",
+      status: 409,
+    });
+  if (!text(reason))
+    issues.push({
+      code: "CUSTOMER_CREDIT_CANCEL_REASON_REQUIRED",
+      message: "Enter why the credit note is cancelled.",
+      status: 422,
+    });
+  return issues;
+};
 const receivableActionPlan = (action, row, input, asOf, timezone) => {
   const blockingIssues = [];
   if (row.version !== version(input.expectedVersion))
@@ -236,13 +332,17 @@ const receivableActionPlan = (action, row, input, asOf, timezone) => {
     before: receivableResult(row).receivable,
     after: {
       ...receivableResult(row).receivable,
+      // A receivable credited in full while disputed is settled once the
+      // dispute is resolved.
       status:
         action === "dispute"
           ? "disputed"
           : action === "resolve-dispute"
-            ? new Date(row.dueDate).getTime() < overdueBefore(asOf, timezone).getTime()
-              ? "overdue"
-              : "open"
+            ? units(row.outstandingAmount) <= 0n
+              ? "settled"
+              : new Date(row.dueDate).getTime() < overdueBefore(asOf, timezone).getTime()
+                ? "overdue"
+                : "open"
             : row.status,
       disputeStatus:
         action === "dispute"
@@ -502,6 +602,16 @@ export function createOperationalFinanceO2cCommandService({
         message: `Customer invoice must be ${requiredStatus} before ${action}.`,
         status: 409,
       });
+    // The approval would be refused as a self-approval (design audit C4).
+    if (action === "approve") {
+      const check = await selfApprovalCheck(prisma, {
+        tenantId: actor.tenantId,
+        actorId: actor.user.id,
+        authorIds: approvalAuthorIds("customer_invoice", invoice),
+        permissionCode: "finance.customer_invoice.approve",
+      });
+      if (check.blocked) blockingIssues.push(selfApprovalRefusal("customer invoice"));
+    }
     if (action === "submit") {
       const check = await buildCustomerInvoicePlan({
         prisma,
@@ -588,6 +698,21 @@ export function createOperationalFinanceO2cCommandService({
             "Customer invoice changed concurrently.",
             409,
           );
+        // Who submitted the invoice does not approve it, unless no one else
+        // may; then the audit row says so (design audit C4).
+        const selfApproval =
+          action === "approve"
+            ? await selfApprovalCheck(tx, {
+                tenantId: actor.tenantId,
+                actorId: actor.user.id,
+                authorIds: approvalAuthorIds("customer_invoice", current),
+                permissionCode: "finance.customer_invoice.approve",
+              })
+            : null;
+        if (selfApproval?.blocked) {
+          const refusal = selfApprovalRefusal("customer invoice");
+          fail(refusal.code, refusal.message, refusal.status);
+        }
         if (action === "submit") {
           await lockChildren(
             tx,
@@ -635,7 +760,23 @@ export function createOperationalFinanceO2cCommandService({
           },
         });
         let receivable = null;
-        if (action === "issue")
+        if (action === "issue") {
+          // A credit note approved while the invoice was approved but not
+          // yet issued: the receivable opens at the total less that credit
+          // (credit approval locks this invoice, so the two cannot pass).
+          const total = units(current.totalAmount);
+          const credited = await approvedCreditTotal(tx, current.id);
+          if (credited > total)
+            fail(
+              "CUSTOMER_CREDIT_AMOUNT_EXCEEDED",
+              "The credit notes approved against this invoice are more than its total.",
+              409,
+            );
+          const opening = {
+            originalAmount: fixed(total),
+            approvedCreditAmount: fixed(credited),
+            outstandingAmount: fixed(total - credited),
+          };
           receivable = await tx.receivableObligation.create({
             data: {
               id: idFactory(),
@@ -644,12 +785,14 @@ export function createOperationalFinanceO2cCommandService({
               obligationNumber:
                 normalized.obligationNumber || `AR-${current.invoiceNumber}`,
               originalAmount: current.totalAmount,
-              outstandingAmount: current.totalAmount,
+              approvedCreditAmount: opening.approvedCreditAmount,
+              outstandingAmount: opening.outstandingAmount,
               currency: current.currency,
               dueDate: current.dueDate,
-              status: "open",
+              status: deriveReceivableSettlementStatus(opening),
             },
           });
+        }
         const result = {
           ...invoiceResult(row),
           ...(receivable
@@ -671,6 +814,119 @@ export function createOperationalFinanceO2cCommandService({
               salesOrderId: current.salesOrderId,
               shipmentId: current.shipmentId,
               receivableObligationId: receivable?.id || null,
+              ...(selfApproval?.auditFlag ? { selfApproval: selfApproval.auditFlag } : {}),
+            },
+          }),
+        });
+        return result;
+      },
+    );
+  }
+
+  // Cancelling takes a customer invoice that was never issued out of the
+  // flow, as cancel_supplier_invoice does a bill: it is kept on record with
+  // its reason and who cancelled it, and the shipped quantity it named is free
+  // to invoice again (a cancelled invoice does not hold its shipment). No
+  // receivable, payment or journal entry exists for it or is created.
+  function cancelIssues(invoice, expected, reason) {
+    const issues = [];
+    if (!canCancelCustomerInvoice(invoice))
+      issues.push({
+        code: "CUSTOMER_INVOICE_STATUS_INVALID",
+        message: "Only a draft or submitted customer invoice that was never issued can be cancelled.",
+        status: 409,
+      });
+    if (invoice.version !== expected)
+      issues.push({
+        code: "FINANCE_VERSION_CONFLICT",
+        message: "Customer invoice changed concurrently.",
+        status: 409,
+      });
+    if (!text(reason))
+      issues.push({
+        code: "CUSTOMER_INVOICE_CANCEL_REASON_REQUIRED",
+        message: "Enter why the invoice is cancelled.",
+        status: 422,
+      });
+    return issues;
+  }
+
+  async function previewCancelCustomerInvoice(invoiceId, input, context) {
+    enabled(env);
+    const actor = await resolveProvisionedActor(prisma, identity(context));
+    assertAuthorized({ actor, permission: CANCEL_CUSTOMER_INVOICE_PERMISSION, tenantId: actor.tenantId });
+    const invoice = await prisma.customerInvoice.findFirst({
+      where: { id: invoiceId, tenantId: actor.tenantId },
+    });
+    if (!invoice)
+      fail("CUSTOMER_INVOICE_NOT_FOUND", "Customer invoice was not found.", 404);
+    const expected = version(input.expectedVersion);
+    const blockingIssues = cancelIssues(invoice, expected, input.reason);
+    return {
+      operation: "cancel_customer_invoice",
+      allowed: blockingIssues.length === 0,
+      blockingIssues,
+      expectedVersion: expected,
+      currentStatus: invoice.status,
+      nextStatus: "cancelled",
+      before: invoiceResult(invoice).invoice,
+      after: { ...invoiceResult(invoice).invoice, status: "cancelled", version: invoice.version + 1 },
+      factsToCreate: { receivableObligations: 0, payments: 0, journalEntries: 0 },
+      paymentExecution: false,
+      ledgerMutation: false,
+    };
+  }
+
+  async function cancelCustomerInvoice(invoiceId, input, context) {
+    const payload = {
+      invoiceId: required(invoiceId, "invoiceId"),
+      expectedVersion: version(input.expectedVersion),
+      reason: text(input.reason),
+    };
+    return execute(
+      "cancel_customer_invoice",
+      input,
+      context,
+      payload,
+      async (tx, actor, normalized, command) => {
+        await lockTenant(
+          tx,
+          "CustomerInvoice",
+          actor.tenantId,
+          normalized.invoiceId,
+          "CUSTOMER_INVOICE_NOT_FOUND",
+        );
+        const current = await tx.customerInvoice.findUnique({
+          where: { id: normalized.invoiceId },
+        });
+        const issues = cancelIssues(current, normalized.expectedVersion, normalized.reason);
+        if (issues.length) fail(issues[0].code, issues[0].message, issues[0].status);
+        const row = await tx.customerInvoice.update({
+          where: { id: current.id },
+          data: {
+            status: "cancelled",
+            cancelledAt: now(),
+            cancelledById: actor.user.id,
+            cancellationReason: normalized.reason,
+            version: { increment: 1 },
+          },
+        });
+        const result = invoiceResult(row);
+        await tx.auditLog.create({
+          data: audit({
+            idFactory,
+            actor,
+            action: "customer_invoice_cancelled",
+            entityType: result.entityType,
+            entityId: result.entityId,
+            summary: "Customer invoice cancelled before it was issued; its shipped quantity can be invoiced again.",
+            ...command,
+            before: invoiceResult(current).invoice,
+            after: result.invoice,
+            evidence: {
+              reason: normalized.reason,
+              salesOrderId: current.salesOrderId,
+              shipmentId: current.shipmentId,
             },
           }),
         });
@@ -862,9 +1118,11 @@ export function createOperationalFinanceO2cCommandService({
     });
     if (!row)
       fail("CUSTOMER_CREDIT_NOTE_NOT_FOUND", "Credit note was not found.", 404);
-    const receivable = await prisma.receivableObligation.findUnique({
-      where: { customerInvoiceId: row.customerInvoiceId },
-    });
+    const [invoice, posting, receivable] = await Promise.all([
+      prisma.customerInvoice.findFirst({ where: { id: row.customerInvoiceId, tenantId: actor.tenantId } }),
+      prisma.returnPostingDocument.findFirst({ where: { id: row.returnPostingId, tenantId: actor.tenantId } }),
+      prisma.receivableObligation.findUnique({ where: { customerInvoiceId: row.customerInvoiceId } }),
+    ]);
     const blockingIssues = [];
     if (row.version !== version(input.expectedVersion))
       blockingIssues.push({
@@ -878,15 +1136,8 @@ export function createOperationalFinanceO2cCommandService({
         message: "Only a draft customer credit note can be approved.",
         status: 409,
       });
-    if (
-      receivable &&
-      units(row.totalAmount) > units(receivable.outstandingAmount)
-    )
-      blockingIssues.push({
-        code: "CUSTOMER_CREDIT_AMOUNT_EXCEEDED",
-        message: "Customer credit cannot exceed the receivable outstanding amount.",
-        status: 409,
-      });
+    blockingIssues.push(...customerCreditApprovalIssues({ note: row, invoice, posting, receivable }));
+    const after = receivable ? receivableAfterCredit(receivable, row) : null;
     return {
       operation: "approve_customer_credit_note",
       allowed: blockingIssues.length === 0,
@@ -897,9 +1148,105 @@ export function createOperationalFinanceO2cCommandService({
         status: "approved",
         version: row.version + 1,
       },
+      // Without a receivable yet, the credit is taken off when the invoice
+      // is issued.
+      receivableImpact: receivable
+        ? {
+            id: receivable.id,
+            outstandingBefore: String(receivable.outstandingAmount),
+            outstandingAfter: after.outstandingAmount,
+            statusBefore: receivable.status,
+            statusAfter: after.status,
+          }
+        : null,
+      deductedAtIssue: !receivable,
       refundExecution: false,
       paymentExecution: false,
     };
+  }
+
+  // A draft credit note entered by mistake is cancelled with a reason. It is
+  // kept on record, and its quantities no longer count against the return
+  // receipt or the invoice, so a correct credit can be made and the return
+  // reversed.
+  async function previewCancelCustomerCreditNote(id, input, context) {
+    enabled(env);
+    const actor = await resolveProvisionedActor(prisma, identity(context));
+    assertAuthorized({ actor, permission: "finance.customer_credit.create", tenantId: actor.tenantId });
+    const row = await prisma.customerCreditNote.findFirst({
+      where: { id, tenantId: actor.tenantId },
+    });
+    if (!row)
+      fail("CUSTOMER_CREDIT_NOTE_NOT_FOUND", "Credit note was not found.", 404);
+    const expected = version(input.expectedVersion);
+    const blockingIssues = creditCancelIssues(row, expected, input.reason);
+    return {
+      operation: "cancel_customer_credit_note",
+      allowed: blockingIssues.length === 0,
+      blockingIssues,
+      before: creditResult(row).creditNote,
+      after: { ...creditResult(row).creditNote, status: "cancelled", version: row.version + 1 },
+      refundExecution: false,
+      paymentExecution: false,
+    };
+  }
+
+  async function cancelCustomerCreditNote(id, input, context) {
+    const payload = {
+      creditNoteId: required(id, "creditNoteId"),
+      expectedVersion: version(input.expectedVersion),
+      reason: text(input.reason),
+    };
+    return execute(
+      "cancel_customer_credit_note",
+      input,
+      context,
+      payload,
+      async (tx, actor, normalized, command) => {
+        await lockTenant(
+          tx,
+          "CustomerCreditNote",
+          actor.tenantId,
+          normalized.creditNoteId,
+          "CUSTOMER_CREDIT_NOTE_NOT_FOUND",
+        );
+        const current = await tx.customerCreditNote.findUnique({
+          where: { id: normalized.creditNoteId },
+        });
+        const [issue] = creditCancelIssues(current, normalized.expectedVersion, normalized.reason);
+        if (issue) fail(issue.code, issue.message, issue.status);
+        const row = await tx.customerCreditNote.update({
+          where: { id: current.id },
+          data: {
+            status: "cancelled",
+            cancelledAt: now(),
+            cancelledById: actor.user.id,
+            cancellationReason: normalized.reason,
+            version: { increment: 1 },
+          },
+        });
+        const result = creditResult(row);
+        await tx.auditLog.create({
+          data: audit({
+            idFactory,
+            actor,
+            action: "customer_credit_note_cancelled",
+            entityType: result.entityType,
+            entityId: result.entityId,
+            summary: "Draft customer credit note cancelled; its quantities no longer count against the return receipt or the invoice.",
+            ...command,
+            before: creditResult(current).creditNote,
+            after: result.creditNote,
+            evidence: {
+              reason: normalized.reason,
+              customerInvoiceId: current.customerInvoiceId,
+              returnPostingId: current.returnPostingId,
+            },
+          }),
+        });
+        return result;
+      },
+    );
   }
 
   async function approveCustomerCreditNote(id, input, context) {
@@ -932,37 +1279,30 @@ export function createOperationalFinanceO2cCommandService({
             "Customer credit note state changed.",
             409,
           );
-        const receivable = await tx.receivableObligation.findUnique({
+        // The receivable first, then the invoice, so issuing the invoice
+        // cannot pass this credit, then the return receipt, so reversing it
+        // cannot either.
+        const existing = await tx.receivableObligation.findUnique({
           where: { customerInvoiceId: current.customerInvoiceId },
+          select: { id: true },
         });
-        if (receivable) {
-          await lockTenant(
-            tx,
-            "ReceivableObligation",
-            actor.tenantId,
-            receivable.id,
-            "RECEIVABLE_NOT_FOUND",
-          );
-          const outstanding =
-            units(receivable.outstandingAmount) - units(current.totalAmount);
-          if (outstanding < 0n)
-            fail(
-              "CUSTOMER_CREDIT_AMOUNT_EXCEEDED",
-              "Customer credit cannot exceed the receivable outstanding amount.",
-              409,
-            );
+        if (existing)
+          await lockTenant(tx, "ReceivableObligation", actor.tenantId, existing.id, "RECEIVABLE_NOT_FOUND");
+        await lockIfPresent(tx, "CustomerInvoice", actor.tenantId, current.customerInvoiceId);
+        await lockIfPresent(tx, "ReturnPostingDocument", actor.tenantId, current.returnPostingId);
+        const [invoice, posting, receivable] = await Promise.all([
+          tx.customerInvoice.findFirst({ where: { id: current.customerInvoiceId, tenantId: actor.tenantId } }),
+          tx.returnPostingDocument.findFirst({ where: { id: current.returnPostingId, tenantId: actor.tenantId } }),
+          tx.receivableObligation.findUnique({ where: { customerInvoiceId: current.customerInvoiceId } }),
+        ]);
+        const [issue] = customerCreditApprovalIssues({ note: current, invoice, posting, receivable });
+        if (issue) fail(issue.code, issue.message, issue.status, issue.details);
+        // Without a receivable yet, issuing the invoice takes this credit off.
+        if (receivable)
           await tx.receivableObligation.update({
             where: { id: receivable.id },
-            data: {
-              outstandingAmount: fixed(outstanding),
-              approvedCreditAmount: fixed(
-                units(receivable.approvedCreditAmount) +
-                  units(current.totalAmount),
-              ),
-              version: { increment: 1 },
-            },
+            data: { ...receivableAfterCredit(receivable, current), version: { increment: 1 } },
           });
-        }
         const row = await tx.customerCreditNote.update({
           where: { id: current.id },
           data: {
@@ -1011,6 +1351,8 @@ export function createOperationalFinanceO2cCommandService({
       invoiceStatePreview(id, input, context, "issue"),
     issueCustomerInvoice: (id, input, context) =>
       transitionInvoice("issue", id, input, context),
+    previewCancelCustomerInvoice,
+    cancelCustomerInvoice,
     previewReceivableAction,
     disputeReceivable: (id, input, context) =>
       receivableAction("dispute", id, input, context),
@@ -1022,5 +1364,7 @@ export function createOperationalFinanceO2cCommandService({
     createCustomerCreditNote,
     previewApproveCustomerCreditNote,
     approveCustomerCreditNote,
+    previewCancelCustomerCreditNote,
+    cancelCustomerCreditNote,
   };
 }

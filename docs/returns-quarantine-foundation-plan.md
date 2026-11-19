@@ -440,10 +440,14 @@ approved
 
 partially_executed
   -> executed
-  -> expired for the unexecuted remainder
+  -> executed by "close remaining": the unexecuted remainder is recorded
+     as closedQuantity per line (2026-11-15, audit batch A9)
 ```
 
-Approval freezes authorized quantity and disposition route.
+Approval freezes authorized quantity and disposition route. Cancel and expire
+ignore cancelled drafts and reversed postings; open drafts must be cancelled or
+posted first. After a close the request is executed while any receipt or
+supplier dispatch stays posted, otherwise submitted.
 
 ### Return Posting
 

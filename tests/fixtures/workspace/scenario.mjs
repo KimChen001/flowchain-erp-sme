@@ -6,7 +6,6 @@ import { getPrismaClient, disconnectPrismaClient } from '../../../server/persist
 import { assertLocalDevelopment } from '../../../server/domain/local-development-contract.mjs'
 import { localDemoSupplier } from './master-data.mjs'
 import { PURCHASE_ORDER_STATUS, PURCHASE_REQUEST_STATUS } from '../../../server/domain/procurement-status-authority.mjs'
-import { isCommittedPurchaseOrder } from '../../../server/domain/open-purchase-order.mjs'
 import { createReceivingPostingCommandService } from '../../../server/domain/receiving-posting-command-service.mjs'
 import { applyPromisedDateChanges, recordOriginalPromises } from '../../../server/domain/purchase-order-promise-dates.mjs'
 import { contractsEnabled } from '../../../server/domain/contract-policy.mjs'
@@ -112,7 +111,10 @@ const purchaseOrders = [
   { n: 25, supplier: EVERGREEN, sku: 'TST-006', qty: 150, price: 18.25, status: S.PENDING_APPROVAL, created: -1, promised: 18 },
   { n: 26, supplier: PRECISION, sku: 'TST-004', qty: 20000, price: 0.37, status: S.PENDING_APPROVAL, created: -4, promised: 25 },
   { n: 27, supplier: ATLAS, sku: 'TST-004', qty: 3000, price: 0.4, status: S.DRAFT, created: -1, promised: 20 },
-  { n: 28, supplier: NORTHSTAR, sku: 'TST-002', qty: 50, price: 64, status: S.DRAFT, created: 0, promised: 28 },
+  // A small top-up draft: draft orders are on order in the reorder position
+  // (design audit C2), and at 4 the sensor stays one short of its reorder
+  // point, so the walkthrough keeps an item to order now.
+  { n: 28, supplier: NORTHSTAR, sku: 'TST-002', qty: 4, price: 64, status: S.DRAFT, created: 0, promised: 28 },
   { n: 29, supplier: SUMMIT, sku: 'TST-006', qty: 60, price: 17.75, status: S.DRAFT, created: -3, promised: 15 },
   { n: 30, supplier: ACME, sku: 'TST-005', qty: 1000, price: 1.95, status: S.CANCELLED, created: -45, promised: -30, sent: true, cancellationReason: 'Replaced by a lower-priced order' },
   { n: 31, supplier: EVERGREEN, sku: 'TST-003', qty: 500, price: 12.9, status: S.CANCELLED, created: -28, promised: -12, sent: true, cancellationReason: 'Supplier could not meet the delivery date' },
@@ -511,10 +513,12 @@ export async function seedLocalScenario(prisma, env = process.env, options = {})
           metadata: { ...metadata, targetWarehouseId: WAREHOUSE, requestedDate: promisedDate, promisedDate },
         })
       }
-      // A committed order keeps its first promised date, as the approve and
-      // issue commands record it; so does a cancelled order that was sent first.
-      // Recorded once; a later seed leaves it alone.
-      if (isCommittedPurchaseOrder({ status: po.status }) || po.sent) {
+      // An order the supplier has keeps its first promised date, as the issue
+      // command records it; so does a cancelled order that was sent first. An
+      // approved order not sent yet has none: approval records nothing, and
+      // its first posted receipt would (design audit L1-05). Recorded once; a
+      // later seed leaves it alone.
+      if (sent) {
         await recordOriginalPromises(tx, { purchaseOrder: await tx.purchaseOrder.findUniqueOrThrow({ where: { id }, include: { lines: true } }) })
       }
       // A revised promise goes through the same helper as the revise command:

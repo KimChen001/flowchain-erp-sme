@@ -80,9 +80,10 @@ test('the reorder list ranks items by order-by day from recorded data over every
     await ship(9, '2026-09-28', 'RL-EAST', 500, 'reversed')
 
     const repositories = createDatabaseRepositoryRegistry({ env, prisma })
-    const call = async (key, path = '/api/inventory/reorder-list') => {
+    const call = async (key, path = '/api/inventory/reorder-list', extra = {}) => {
       let sent
       const ctx = {
+        ...extra,
         url: new URL(`http://local${path}`), req: { method: 'GET', headers: {} }, res: {}, env, repositories, inventoryPrisma: prisma, reorderListNow: NOW,
         identity: { authenticated: true, tenantId, userId: users[key].id, role: users[key].role, source: 'signed-session' },
         send: (_res, status, payload) => { sent = { status, body: JSON.parse(JSON.stringify(payload ?? null)) } },
@@ -110,12 +111,22 @@ test('the reorder list ranks items by order-by day from recorded data over every
     assert.deepEqual([a.demand.averageDailyDemand, a.demand.shipmentDays, a.demand.shippedQuantity], [0.8, 8, 72])
     assert.deepEqual(a.flags, [{ code: 'po_line_other_unit', orderNumber: 'PO-0040', unit: 'CASE' }])
     assert.deepEqual([...a.incomingLines].sort((x, y) => x.orderNumber.localeCompare(y.orderNumber)), [{ orderNumber: 'PO-0039', remaining: 30, dueDay: '2026-10-08', late: false }, { orderNumber: 'PO-0042', remaining: 20, dueDay: '2026-12-31', late: false }])
-    assert.deepEqual(a.supplier, { id: 'RL-SUP', code: 'RLS', name: 'Reorder Supply', leadTimeDays: 10, minimumOrderQuantity: null, moqUnit: 'pcs' })
+    assert.deepEqual(a.supplier, { id: 'RL-SUP', code: 'RLS', name: 'Reorder Supply', leadTimeDays: 10, leadTimeFrom: 'supplier', minimumOrderQuantity: null, moqFrom: null, moqUnit: 'pcs' })
+    // Nothing requested or backordered in this workspace (design audit C2).
+    assert.deepEqual([a.requested, a.backorders, a.requests], [0, 0, []])
     const c = admin.body.rows.find((row) => row.sku === 'RL-C')
     assert.equal(c.demand.enough, false)
     assert.equal(c.demand.shipmentDays, 0)
     assert.deepEqual(c.purchaseRequest, { itemId: 'RL-ITEM-C', supplierId: 'RL-SUP', quantity: 15, raisedToMinimum: false })
     assert.deepEqual([c.supplier.leadTimeDays, c.supplier.minimumOrderQuantity], [null, null])
+    // No shipments to assume a level from: it orders up to its reorder point.
+    assert.deepEqual(c.orderUpTo, { level: 20, source: 'reorder_point', reviewDays: 7 })
+    // The item's own order-up-to level and lot size, read from its columns
+    // (design audit C3): up to 40 from 5 is 35, in lots of 12: 36.
+    await prisma.item.update({ where: { id: 'RL-ITEM-C' }, data: { orderUpToLevel: '40', lotSize: '12' } })
+    const own = (await call('admin')).body.rows.find((row) => row.sku === 'RL-C')
+    assert.deepEqual([own.orderUpTo, own.lotSize, own.purchaseRequest.quantity], [{ level: 40, source: 'recorded', reviewDays: 7 }, 12, 36])
+    await prisma.item.update({ where: { id: 'RL-ITEM-C' }, data: { orderUpToLevel: null, lotSize: null } })
     // The suggested reorder point beside the recorded one. RL-A shipped 9 on 8
     // days in a row; a stretch is 10 days' lead time + 7 = 17 days. 66 of the
     // 90 circular stretches hold none of those days, so the 75th smallest
@@ -125,7 +136,11 @@ test('the reorder list ranks items by order-by day from recorded data over every
     // 201 items without a reorder point: the first 50 by SKU are named.
     assert.equal(admin.body.noReorderPoint.count, 201)
     assert.equal(admin.body.noReorderPoint.items.length, 50)
-    assert.deepEqual(admin.body.noReorderPoint.items[0], { itemId: 'RL-ITEM-B', sku: 'RL-B', itemName: 'Gasket' })
+    // Each with its unit, lead time and a suggested reorder point to set from
+    // the list (design audit L3-09); RL-B has no shipments to suggest from.
+    const { reorderPointSuggestion: bSuggestion, ...b } = admin.body.noReorderPoint.items[0]
+    assert.deepEqual(b, { itemId: 'RL-ITEM-B', sku: 'RL-B', itemName: 'Gasket', unit: 'pcs', leadTimeDays: null })
+    assert.deepEqual([bSuggestion.suggestedReorderPoint, bSuggestion.reason], [null, 'not_enough_history'])
     assert.ok(admin.body.dataLimitations.includes('transfers_not_considered'))
     // The read context's item list was cut at 200; the reorder list reads its
     // own items, so that is not reported as a gap in the list.
@@ -133,6 +148,25 @@ test('the reorder list ranks items by order-by day from recorded data over every
     // The balance rows' reorder point (40, as the balances fill it from safety
     // stock) is never used.
     assert.ok(!admin.body.rows.some((row) => row.sku === 'RL-B'))
+
+    // The TimesFM suggestion (reorder-point-forecast.mjs) is there only with a
+    // forecast service: without one the list says so and the endpoint is 404.
+    assert.equal(admin.body.forecastAvailable, false)
+    assert.ok(!admin.body.rows.some((row) => 'reorderPointForecast' in row))
+    assert.equal((await call('admin', '/api/inventory/reorder-list/forecast')).status, 404)
+    // With one, the endpoint answers per item. RL-A first shipped 15 days ago,
+    // less than one 17-day period, so it is not sent to the model; RL-C has no
+    // history suggestion. The service is never asked.
+    const asked = []
+    const forecastClient = { quantiles: async (series) => { asked.push(series); return { values: series.map(() => 1) } } }
+    assert.equal((await call('admin', '/api/inventory/reorder-list', { forecastClient })).body.forecastAvailable, true)
+    const forecast = await call('admin', '/api/inventory/reorder-list/forecast', { forecastClient })
+    assert.equal(forecast.status, 200)
+    assert.deepEqual(forecast.body.forecast, { status: 'ok', model: 'timesfm-2.5-200m' })
+    const byItem = Object.fromEntries(forecast.body.rows.map((row) => [row.itemId, row.reorderPointForecast]))
+    assert.deepEqual([byItem['RL-ITEM-A'].reason, byItem['RL-ITEM-A'].periods, byItem['RL-ITEM-A'].coverDays], ['not_enough_history', 0, 17])
+    assert.equal(byItem['RL-ITEM-C'].reason, 'no_history_suggestion')
+    assert.equal(asked.length, 0)
 
     // The East reader sees one of two warehouses. The reorder point is one
     // figure for the whole item, and the incoming lines name no warehouse: a

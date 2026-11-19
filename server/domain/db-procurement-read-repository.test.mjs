@@ -22,6 +22,7 @@ function matchesWhere(record, where = {}) {
   return Object.entries(where).every(([key, expected]) => {
     if (key === 'OR') return expected.some((branch) => matchesWhere(record, branch))
     const actual = record[key]
+    if (expected && typeof expected === 'object' && Array.isArray(expected.in)) return expected.in.includes(actual)
     if (expected && typeof expected === 'object' && 'equals' in expected) {
       return expected.mode === 'insensitive'
         ? String(actual ?? '').toLowerCase() === String(expected.equals ?? '').toLowerCase()
@@ -447,4 +448,42 @@ test('supplier invoices without a stored variance type get stable codes, not Chi
   // A stored value, code or legacy, is returned as it was stored.
   assert.equal(invoice('INV-DB-3').varianceType, 'price_variance')
   assert.equal(invoice('INV-DB-3').lines[0].varianceType, '价格差异')
+})
+
+// UI review 7: the three-way match list and page showed the receipt and the
+// invoice by their UUIDs. The list and the direct read carry the supplier's
+// invoice number and the GRN number; the ids stay in grnId and invoiceId.
+test('three-way matches carry the supplier invoice number and the GRN number, in the list and the direct read', async () => {
+  const records = createRecords()
+  records.receivingDocuments[0] = { ...records.receivingDocuments[0], documentNumber: 'GRN-202611-0009' }
+  records.supplierInvoices[0] = { ...records.supplierInvoices[0], invoiceNumber: 'INV-UI7-B002' }
+  const listed = (await createDbProcurementReadRepository({ env, prisma: createPrisma(records) }).listDocuments({ tenantId }))
+    .find((row) => row.documentType === 'threeWayMatch')
+  assert.deepEqual([listed.id, listed.invoiceId, listed.invoiceNumber, listed.grnId, listed.grnNumber], ['MATCH-INV-DB-1', 'INV-DB-1', 'INV-UI7-B002', 'GRN-DB-1', 'GRN-202611-0009'])
+
+  const prisma = createPrisma(records)
+  const direct = await createDbProcurementReadRepository({ env, prisma }).getDocument('threeWayMatch', 'MATCH-INV-DB-1', { tenantId })
+  assert.deepEqual([direct.invoiceNumber, direct.grnNumber], ['INV-UI7-B002', 'GRN-202611-0009'])
+  // No query beyond the invoice, its order and its receipt.
+  assert.equal(allCalls(prisma).length, 3)
+})
+
+test('a receipt outside the loaded rows is named by one query in the workspace; one without a number keeps its id', async () => {
+  const records = createRecords()
+  records.receivingDocuments[0] = { ...records.receivingDocuments[0], documentNumber: 'GRN-202611-0009' }
+  records.receivingDocuments.push({ ...records.receivingDocuments[0], id: 'GRN-OTHER-TENANT', tenantId: 'tenant-b', documentNumber: 'GRN-LEAK' })
+  records.supplierInvoices.push({ ...records.supplierInvoices[0], id: 'INV-DB-2', relatedGrnId: 'GRN-OTHER-TENANT', lines: [] })
+  const prisma = createPrisma(records)
+  // The bounded snapshot read returns no receipts, as when they fall outside its window.
+  const receipts = prisma.receivingDocument
+  const findMany = receipts.findMany
+  receipts.findMany = async (query) => (query.where?.id ? findMany(query) : (receipts.calls.push({ method: 'findMany', query }), []))
+  const snapshot = await createDbProcurementReadRepository({ env, prisma }).snapshot({ tenantId })
+  const invoice = (id) => snapshot.supplierInvoices.find((row) => row.id === id)
+  assert.equal(invoice('INV-DB-1').grnNumber, 'GRN-202611-0009')
+  // Another workspace's receipt is never named.
+  assert.equal(invoice('INV-DB-2').grnNumber, undefined)
+  const lookups = receipts.calls.filter((call) => call.query.where?.id)
+  assert.deepEqual(lookups.map((call) => call.query.where), [{ tenantId, id: { in: ['GRN-DB-1', 'GRN-OTHER-TENANT'] } }])
+  assert.deepEqual(lookups[0].query.select, { id: true, documentNumber: true })
 })

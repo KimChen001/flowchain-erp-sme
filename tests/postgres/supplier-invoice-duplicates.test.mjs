@@ -113,8 +113,10 @@ test('likely and possible duplicate bills are flagged, dismissed with a reason, 
     assert.ok(!hidden.body.availableActions.includes('dismiss_duplicate'))
 
     // Approval asks for the review first; nothing else is held.
+    // The administrator submits it and the finance specialist approves it:
+    // who submitted a bill does not approve it (design audit C4).
     for (const [step, version] of [['submit', 0], ['match', 1]]) {
-      const done = await call(prisma, 'finance', 'POST', `/api/finance/supplier-invoices/${a}/${step}`, { expectedVersion: version, idempotencyKey: `dup-${step}-a` })
+      const done = await call(prisma, 'admin', 'POST', `/api/finance/supplier-invoices/${a}/${step}`, { expectedVersion: version, idempotencyKey: `dup-${step}-a` })
       assert.equal(done.status, 200, JSON.stringify(done.body))
     }
     const preview = await call(prisma, 'finance', 'POST', `/api/finance/supplier-invoices/${a}/approve-preview`, { expectedVersion: 2 })

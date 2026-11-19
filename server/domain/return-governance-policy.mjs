@@ -2,9 +2,24 @@ import {
   outboundDecimalString as fixed,
   outboundDecimalUnits as units,
 } from "./outbound-transaction-policy.mjs";
+import { returnLineQuarantineLayers } from "./quarantine-disposition-lineage.mjs";
+import { returnedSourceQuantities } from "./return-quantity-ledger.mjs";
 
 const ZERO = 0n;
 const text = (value) => String(value ?? "").trim();
+
+// What the partner owes for returned goods (L3-23).
+export const RETURN_RESOLUTIONS = Object.freeze(["credit", "replacement"]);
+// A replacement reopens the received quantity on the purchase order line,
+// so the order has to be one that can still be received against.
+export const REPLACEMENT_PURCHASE_ORDER_STATUSES = Object.freeze([
+  "approved",
+  "issued",
+  "partially_received",
+  "fully_received",
+  "open",
+  "ready_for_receiving",
+]);
 const sorted = (values) =>
   [...new Set(values.map(text).filter(Boolean))].sort((a, b) =>
     a.localeCompare(b),
@@ -62,6 +77,17 @@ function requestTypeContextAllowed(returnType, contextType) {
       : false;
 }
 
+// What other returns already take from a source line (L8-05):
+// - executed: the quantity physically received back (customer) or sent back
+//   (supplier) by posted, unreversed postings. A quarantine release moves
+//   goods a receipt already brought in, so it is not counted a second time.
+// - pending: for each request still in progress, what it requested and has
+//   not executed or closed yet. A request that is partly executed does not
+//   count its executed part twice, and one that is authorized again for a
+//   quarantine release has finished taking goods from the source.
+const ACTIVE_AUTHORIZATION_STATUSES = ["draft", "approved", "partially_executed"];
+const RELEASE_ROUTE = "release_quarantine_to_available";
+
 async function existingConsumption(
   prisma,
   tenantId,
@@ -85,50 +111,52 @@ async function existingConsumption(
         ...(currentRequestId ? { id: { not: currentRequestId } } : {}),
       },
     },
-    select: { sourceDocumentLineId: true, requestedQuantity: true },
-  });
-  const posted = await prisma.returnPostingLine.findMany({
-    where: {
-      returnAuthorizationLine: {
-        returnRequestLine: {
-          sourceDocumentType,
-          sourceDocumentLineId: { in: sourceLineIds },
-          returnRequest: { tenantId },
-        },
-      },
-      returnPosting: {
-        tenantId,
-        postingStatus: "posted",
-      },
-    },
     select: {
-      quantity: true,
-      returnAuthorizationLine: {
+      id: true,
+      sourceDocumentLineId: true,
+      requestedQuantity: true,
+      authorizationLines: {
         select: {
-          returnRequestLine: {
-            select: { sourceDocumentLineId: true },
-          },
+          closedQuantity: true,
+          dispositionRoute: true,
+          returnAuthorization: { select: { workflowStatus: true } },
         },
       },
     },
+  });
+  const returned = await returnedSourceQuantities({
+    prisma,
+    tenantId,
+    sourceDocumentType,
+    sourceLineIds,
   });
   const pendingByLine = new Map();
-  const executedByLine = new Map();
-  for (const row of pending)
-    pendingByLine.set(
-      row.sourceDocumentLineId,
-      (pendingByLine.get(row.sourceDocumentLineId) || ZERO) +
-        units(row.requestedQuantity),
-    );
-  for (const row of posted) {
-    const lineId =
-      row.returnAuthorizationLine.returnRequestLine.sourceDocumentLineId;
-    executedByLine.set(
-      lineId,
-      (executedByLine.get(lineId) || ZERO) + units(row.quantity),
-    );
+  for (const row of pending) {
+    const lines = row.authorizationLines || [];
+    if (
+      lines.some(
+        (line) =>
+          line.dispositionRoute === RELEASE_ROUTE &&
+          ACTIVE_AUTHORIZATION_STATUSES.includes(
+            line.returnAuthorization?.workflowStatus,
+          ),
+      )
+    )
+      continue;
+    const closed = lines
+      .filter((line) => line.dispositionRoute !== RELEASE_ROUTE)
+      .reduce((sum, line) => sum + units(line.closedQuantity || 0), ZERO);
+    const outstanding =
+      units(row.requestedQuantity) -
+      (returned.byRequestLine.get(row.id) || ZERO) -
+      closed;
+    if (outstanding > ZERO)
+      pendingByLine.set(
+        row.sourceDocumentLineId,
+        (pendingByLine.get(row.sourceDocumentLineId) || ZERO) + outstanding,
+      );
   }
-  return { pendingByLine, executedByLine };
+  return { pendingByLine, executedByLine: returned.bySourceLine };
 }
 
 async function customerSourceFacts(
@@ -292,6 +320,7 @@ async function supplierSourceFacts(
       where: { id: receiving.poId, tenantId },
     });
   return {
+    purchaseOrder,
     physicalDocumentType: "ReceivingDocument",
     physicalDocumentId: receiving?.id,
     physicalDocumentNumber: receiving?.documentNumber,
@@ -328,7 +357,24 @@ export async function buildReturnRequestPlan({
     input.contextDocumentId || input.sourceDocumentId,
   );
   const reasonCode = text(input.reasonCode);
+  // What the partner owes for the goods: a credit, or (supplier returns
+  // only) a replacement that reopens the purchase order line (L3-23).
+  const resolution = text(input.resolution) || "credit";
   const lineInputs = Array.isArray(input.lines) ? input.lines : [];
+  if (!RETURN_RESOLUTIONS.includes(resolution))
+    blockingIssues.push(
+      issue(
+        "RETURN_RESOLUTION_INVALID",
+        "resolution must be credit or replacement.",
+      ),
+    );
+  else if (resolution === "replacement" && returnType !== "supplier_return")
+    blockingIssues.push(
+      issue(
+        "RETURN_RESOLUTION_INVALID",
+        "Only a supplier return can ask for a replacement; a customer return is settled by a credit note.",
+      ),
+    );
   if (!["supplier_return", "customer_return"].includes(returnType))
     blockingIssues.push(
       issue(
@@ -406,6 +452,20 @@ export async function buildReturnRequestPlan({
         );
   if (!source || blockingIssues.length)
     return basePlan("return_request", blockingIssues);
+  if (
+    resolution === "replacement" &&
+    !REPLACEMENT_PURCHASE_ORDER_STATUSES.includes(
+      text(source.purchaseOrder?.status),
+    )
+  )
+    blockingIssues.push(
+      issue(
+        "RETURN_REPLACEMENT_PO_NOT_OPEN",
+        "A replacement reopens the purchase order line, so the purchase order must still be approved or receiving. Ask for a credit instead.",
+        409,
+        { purchaseOrderStatus: source.purchaseOrder?.status || null },
+      ),
+    );
 
   const { pendingByLine, executedByLine } = await existingConsumption(
     prisma,
@@ -470,6 +530,7 @@ export async function buildReturnRequestPlan({
       partnerNameSnapshot: source.partnerName,
       reasonCode,
       reasonDetail: text(input.reasonDetail) || null,
+      resolution,
       warehouseIds: sorted(
         resolvedLines.flatMap((row) => row.warehouseIds),
       ),
@@ -563,6 +624,7 @@ export async function buildReturnAuthorizationPlan({
   const requestLines = new Map(request.lines.map((row) => [row.id, row]));
   const releasedByRequestLine = new Map();
   const receivedByRequestLine = new Map();
+  const dispatchedByRequestLine = new Map();
   for (const historicalAuthorization of request.authorizations) {
     const requestLineByAuthorizationLine = new Map(
       historicalAuthorization.lines.map((line) => [
@@ -577,7 +639,9 @@ export async function buildReturnAuthorizationPlan({
           ? receivedByRequestLine
           : posting.postingType === "quarantine_release"
             ? releasedByRequestLine
-            : null;
+            : posting.postingType === "supplier_return_dispatch"
+              ? dispatchedByRequestLine
+              : null;
       if (!target) continue;
       for (const line of posting.lines) {
         const requestLineId = requestLineByAuthorizationLine.get(
@@ -591,6 +655,16 @@ export async function buildReturnAuthorizationPlan({
       }
     }
   }
+  // What of each line's received goods is still in quarantine: receipt
+  // layers less everything that consumed them, a release or a supplier
+  // return taken from quarantine (L8-09).
+  const quarantineLayers = releaseOnly
+    ? await returnLineQuarantineLayers({
+        prisma,
+        tenantId,
+        returnRequestLineIds: request.lines.map((line) => line.id),
+      })
+    : new Map();
   const normalized = [];
   for (const entry of inputLines) {
     const requestLine = requestLines.get(text(entry.returnRequestLineId));
@@ -608,18 +682,28 @@ export async function buildReturnAuthorizationPlan({
       blockingIssues,
       `Authorization line ${requestLine.id}`,
     );
+    const dispositionRoute = text(entry.dispositionRoute);
+    // A new receive or dispatch authorization covers only what earlier
+    // authorizations of this request have not already executed (L8-04).
+    const alreadyExecuted =
+      dispositionRoute === "release_quarantine_to_available"
+        ? ZERO
+        : (receivedByRequestLine.get(requestLine.id) || ZERO) +
+          (dispatchedByRequestLine.get(requestLine.id) || ZERO);
     if (
       authorized !== null &&
-      authorized > units(requestLine.requestedQuantity)
+      authorized > units(requestLine.requestedQuantity) - alreadyExecuted
     )
       blockingIssues.push(
         issue(
           "RETURN_AUTHORIZATION_EXCEEDS_REQUEST",
           `Authorized quantity exceeds requested quantity for line ${requestLine.id}.`,
           409,
+          alreadyExecuted > ZERO
+            ? { alreadyExecutedQuantity: fixed(alreadyExecuted) }
+            : undefined,
         ),
       );
-    const dispositionRoute = text(entry.dispositionRoute);
     const allowedRoutes =
       request.returnType === "customer_return"
         ? releaseOnly
@@ -634,14 +718,20 @@ export async function buildReturnAuthorizationPlan({
         ),
       );
     if (dispositionRoute === "release_quarantine_to_available") {
-      const releasable =
+      const receivedNotReleased =
         (receivedByRequestLine.get(requestLine.id) || ZERO) -
         (releasedByRequestLine.get(requestLine.id) || ZERO);
+      const stillInQuarantine =
+        quarantineLayers.get(requestLine.id)?.remainingUnits || ZERO;
+      const releasable =
+        stillInQuarantine < receivedNotReleased
+          ? stillInQuarantine
+          : receivedNotReleased;
       if (authorized !== null && authorized > releasable)
         blockingIssues.push(
           issue(
             "RETURN_RELEASE_EXCEEDS_RECEIVED_QUARANTINE",
-            `Release authorization exceeds received, unreleased quarantine quantity for line ${requestLine.id}.`,
+            `Release authorization exceeds what this return still has in quarantine (received, not yet released or sent back to a supplier) for line ${requestLine.id}.`,
             409,
             { releasableQuantity: fixed(releasable) },
           ),

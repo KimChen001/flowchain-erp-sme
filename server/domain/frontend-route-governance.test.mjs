@@ -29,7 +29,7 @@ after(async () => {
 });
 
 test("frontend route manifest satisfies authority invariants", () => {
-  assert.equal(routes.length, 182);
+  assert.equal(routes.length, 158);
   assert.deepEqual(
     invariants.validateRouteManifest(routes, { permissionCatalog: permissionCodeSet }),
     [],
@@ -46,7 +46,7 @@ test("route classification is explicit, exhaustive, and fail closed", () => {
       (total, routeIds) => total + routeIds.size,
       0,
     ),
-    182,
+    158,
   );
   assert.throws(
     () =>
@@ -80,6 +80,7 @@ test("normal SME navigation is deterministic and excludes non-product surfaces",
       "master-data:suppliers",
       "contracts",
       "master-data:items",
+      "master-data",
       "finance",
       "reports",
       "universal-intake",
@@ -253,7 +254,6 @@ test("hidden and searchable route projections respect classifications", () => {
     "settings:advanced",
     "finance:reconciliation",
     "finance:settlement",
-    "forecast:mrp",
     "imports:failed",
     "procurement:invoice-detail",
     "procurement:match-detail",
@@ -316,6 +316,49 @@ test("contracts are their own module, gated by the contracts capability and cont
   assert.equal(invariants.isRouteVisibleInNavigation(contracts, "PRIMARY", access(["contracts"], ["contracts.contract.read"])), true);
 });
 
+// Design audit C8: a shipment list under Sales (L4-28, L7-25), the shipment
+// page read with the sales capability and shipment.read, not the outbound
+// write switch (L4-28), and a Master data sidebar entry for customers and the
+// other master data pages (L6-07, L7-40).
+test("shipments are listed under Sales and readable with outbound writes off; master data has a sidebar entry", () => {
+  const byId = (id) => routes.find((route) => route.id === id);
+  const access = (capabilities, permissions) => ({
+    capabilityLoadState: "ready",
+    enabledCapabilityIds: new Set(capabilities),
+    authorizationLoadState: "ready",
+    effectivePermissionCodes: new Set(permissions),
+  });
+  // Only the sales capability: every outbound write switch is off.
+  const readOnly = access(["sales"], ["shipment.read"]);
+  for (const id of ["sales:shipments", "sales:shipment-detail"]) {
+    const route = byId(id);
+    assert.equal(route.requiredCapability, "sales", id);
+    assert.equal(route.requiredPermission, "shipment.read", id);
+    assert.equal(invariants.isRouteCapabilityEnabled(route, readOnly), true, id);
+    assert.equal(invariants.isRoutePermissionEnabled(route, readOnly), true, id);
+    assert.equal(invariants.isRoutePermissionEnabled(route, access(["sales"], ["sales_order.read"])), false, id);
+  }
+  const list = byId("sales:shipments");
+  assert.equal(list.parentId, "sales");
+  assert.equal(invariants.isRouteVisibleInNavigation(list, "SECONDARY", readOnly), true);
+  assert.ok(registry.routesForModule("sales").some((route) => route.id === "sales:shipments"));
+  assert.equal(byId("sales:shipment-detail").parentId, "sales:shipments");
+  assert.equal(registry.routeByPath("/app/sales/shipments").id, "sales:shipments");
+  assert.equal(registry.routeByPath("/app/sales/shipments/SHIP-1").id, "sales:shipment-detail");
+  // The frozen delivery page stays frozen; the list is a new page, not it.
+  assert.equal(byId("sales:delivery").classification, "FROZEN");
+  // Master data: a sidebar entry that opens Customers; Items and Suppliers
+  // keep their own entries.
+  const masterData = byId("master-data");
+  assert.equal(masterData.navigationVisibility, "PRIMARY");
+  assert.equal(masterData.defaultChildId, "master-data:customers");
+  const primary = invariants.primaryNavigationRoutes(routes).map((route) => route.id);
+  assert.ok(["master-data", "master-data:items", "master-data:suppliers"].every((id) => primary.includes(id)));
+  assert.equal(registry.primarySurfaceRoute(byId("master-data:customers")).id, "master-data");
+  assert.equal(registry.primarySurfaceRoute(byId("master-data:tax-codes")).id, "master-data");
+  assert.equal(registry.primarySurfaceRoute(byId("master-data:items")).id, "master-data:items");
+});
+
 test("legacy redirects and canonical operational deep links remain exact", () => {
   const byId = (id) => routes.find((route) => route.id === id);
   for (const route of routes.filter(
@@ -323,7 +366,7 @@ test("legacy redirects and canonical operational deep links remain exact", () =>
   )) {
     assert.ok(byId(route.canonicalReplacement));
   }
-  assert.equal(byId("imports").canonicalReplacement, "universal-intake");
+  assert.equal(byId("imports").canonicalReplacement, "master-data:import");
   for (const id of [
     "imports:pilot",
     "imports:templates",
@@ -699,5 +742,5 @@ test("human-readable route authority matrix covers the executable manifest", () 
     assert.ok(matrix.includes(expected), route.id);
   }
   assert.match(matrix, /Default SME navigation/);
-  assert.match(matrix, /182\/182 frontend route stability audit/);
+  assert.match(matrix, /158\/158 frontend route stability audit/);
 });

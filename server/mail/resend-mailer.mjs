@@ -6,7 +6,7 @@ const RESEND_EMAILS_URL = "https://api.resend.com/emails";
 export function createResendMailer({ apiKey, from, fetch = globalThis.fetch }) {
   return {
     provider: "resend",
-    async send({ to, subject, text, html, tag }) {
+    async send({ to, subject, text, html, tag, replyTo }) {
       let response;
       try {
         response = await fetch(RESEND_EMAILS_URL, {
@@ -16,7 +16,7 @@ export function createResendMailer({ apiKey, from, fetch = globalThis.fetch }) {
             "Content-Type": "application/json",
             Authorization: `Bearer ${apiKey}`,
           },
-          body: JSON.stringify({ from, to: [to], subject, text, html, ...(tag ? { tags: [{ name: "category", value: tag }] } : {}) }),
+          body: JSON.stringify({ from, to: [to], subject, text, html, ...(replyTo ? { reply_to: replyTo } : {}), ...(tag ? { tags: [{ name: "category", value: tag }] } : {}) }),
           signal: AbortSignal.timeout(MAIL_REQUEST_TIMEOUT_MS),
         });
       } catch (error) {

@@ -2,6 +2,8 @@ import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
 import React from "react";
 import { X } from "lucide-react";
 import { A, Card, Chip } from "../ui";
+import { StatusChip } from "../ui/listLayout";
+import { statusToneOf } from "../ui/statusTones";
 import { RelatedRecordsPanel } from "../navigation/RelatedRecordsPanel";
 import { resolveBusinessLinkedRecord, type BusinessLinkedRecord, type BusinessLinkedRecordInput } from "../../lib/businessLinks";
 import type { WorkflowContext } from "../../lib/workflowContext";
@@ -56,14 +58,6 @@ export function documentToneStyle(tone: DocumentTone = "neutral") {
   return { color: A.gray1, bg: A.gray6 };
 }
 
-export function statusTone(status?: string): DocumentTone {
-  if (!status) return "neutral";
-  if (["已付款", "已过账应付", "已审批", "已批准", "已完成", "已入库", "自动匹配", "已解决", "approved", "fully_received", "completed"].includes(status)) return "success";
-  if (["待审批", "待匹配", "人工复核", "质检中", "已发出", "部分到货", "pending_approval", "issued", "partially_received"].includes(status)) return "warning";
-  if (["存在差异", "已驳回", "已取消", "异常处理", "差异待处理", "重复发票", "rejected", "cancelled"].includes(status)) return "danger";
-  if (["已匹配", "已接收", "已签收", "matched", "received"].includes(status)) return "info";
-  return "neutral";
-}
 
 export function DocumentShell({
   title,
@@ -73,6 +67,7 @@ export function DocumentShell({
   status,
   statusTone: tone,
   actions,
+  header,
   children,
   onClose,
 }: {
@@ -83,38 +78,70 @@ export function DocumentShell({
   status?: string;
   statusTone?: DocumentTone;
   actions?: React.ReactNode;
+  // More of the header inside its card: the page's next steps and related links.
+  header?: React.ReactNode;
   children: React.ReactNode;
   onClose?: () => void;
 }) {
   const copy = useWorkspaceCopy();
-  const style = documentToneStyle(tone || statusTone(status));
+  // The status chip of every list, in the status's one tone (design audit
+  // U-06): this header had its own table, where cancelled read red and issued orange.
+  const chipTone = tone === "purple" ? "info" : tone || statusToneOf(status);
+  // The header card every detail page uses (UI review 11): the title (H1) with
+  // its status beside it, then what the record is and with whom, actions on
+  // the right, and the rest of the header in the same card.
   return (
     <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2 mb-1">
-            {moduleLabel && <Chip label={String(moduleLabel)} color={A.blue} bg="#f0f6ff" />}
-            {status && <Chip label={copy(status)} color={style.color} bg={style.bg} />}
+      <Card className="p-5" data-testid="document-header">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="fc-page-title" style={{ color: A.label }}>{copy(title)}</h1>
+              {status && <StatusChip label={copy(status)} tone={chipTone} testId="document-status" />}
+            </div>
+            <div className="text-xs mt-1" style={{ color: A.sub }}>
+              {moduleLabel ? <span>{moduleLabel}</span> : null}
+              {moduleLabel && (documentNo || subtitle) ? <span> · </span> : null}
+              {documentNo && <span className="font-semibold tabular-nums" style={{ color: A.blue }}>{documentNo}</span>}
+              {documentNo && subtitle ? <span> · </span> : null}
+              {subtitle}
+            </div>
           </div>
-          {/* The detail page's one title (the PO number): H1 in the shared page-title style. */}
-          <h1 className="fc-page-title" style={{ color: A.label }}>{copy(title)}</h1>
-          <div className="text-xs mt-1" style={{ color: A.sub }}>
-            {documentNo && <span className="font-semibold tabular-nums" style={{ color: A.blue }}>{documentNo}</span>}
-            {documentNo && subtitle ? <span> · </span> : null}
-            {subtitle}
-          </div>
+          {actions || onClose ? (
+            <div className="flex flex-wrap items-center gap-2 shrink-0 sm:justify-end">
+              {actions}
+              {onClose && (
+                <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-gray-100 transition-colors" style={{ color: A.gray1 }}>
+                  <X size={15} />
+                </button>
+              )}
+            </div>
+          ) : null}
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
-          {actions}
-          {onClose && (
-            <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-gray-100 transition-colors" style={{ color: A.gray1 }}>
-              <X size={15} />
-            </button>
-          )}
-        </div>
-      </div>
+        {header ? <div className="mt-4">{header}</div> : null}
+      </Card>
       {children}
     </div>
+  );
+}
+
+// The overview facts under a detail page's header card (the PO's, and the
+// purchase request's). Values may be chips, and long values and notes wrap
+// rather than being cut off.
+export type OverviewField = { label: string; value: React.ReactNode; helper?: React.ReactNode };
+export function OverviewFields({ fields, testId = "po-overview" }: { fields: OverviewField[]; testId?: string }) {
+  return (
+    <Card className="p-4" data-testid={testId}>
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-3 lg:grid-cols-4">
+        {fields.map((field) => (
+          <div key={field.label} className="min-w-0">
+            <dt className="fc-caption font-medium" style={{ color: A.gray2 }}>{field.label}</dt>
+            <dd className="mt-1 break-words text-xs font-semibold" style={{ color: A.label }}>{field.value || "—"}</dd>
+            {field.helper ? <dd className="fc-caption mt-0.5 leading-4" style={{ color: A.sub }}>{field.helper}</dd> : null}
+          </div>
+        ))}
+      </dl>
+    </Card>
   );
 }
 

@@ -1,15 +1,31 @@
-// How much of an item to request and by when, for the assistant's purchase
-// request lines (docs/ai-assistant-v2-design.md §4.1 and §5.1, owner
-// decisions V2-5 and V2-6 of 2026-11-02). One rule, so every place that
-// suggests a quantity gives the same figure:
+// How much of an item to request and by when: the reorder list, the
+// assistant's purchase request lines and Today's reorder drafts
+// (docs/ai-assistant-v2-design.md §4.1 and §5.1, owner decisions V2-5 and
+// V2-6 of 2026-11-02; design audit 2026-11-15 batch C2, owner "按建议做"). One
+// rule, so every place that suggests a quantity gives the same figure:
 //
-//   target   the highest of the reorder point, the safety stock and the open
-//            sales demand;
-//   gap      target - available - incoming on open purchase orders - the
-//            quantity of open purchase requests (draft, submitted or
-//            approved), rounded up;
-//   quantity the gap, raised to the supplier's minimum order. A quantity the
-//            user typed wins. No gap: nothing is suggested.
+//   position on hand - reserved + incoming on committed purchase orders +
+//            pending purchase orders (draft or pending approval) + open
+//            purchase requests (draft, submitted or approved) - backorders
+//            (open sales demand no reservation covers yet). Reserved stock
+//            is out of on hand once and the backorders are the demand it
+//            does not cover, so no sales order counts twice; backorders are
+//            counted here, in the position, and nowhere else (L3-04, L3-06);
+//   trigger  the reorder point (s); without one, the safety stock; without
+//            either, 0 (backorders alone still make a gap). An order is due
+//            once the position is at the trigger or below it, or above it by
+//            less than a day of demand (its order-by day is today);
+//   level    the order-up-to level (S) of an (s, S) rule (design audit C3,
+//            owner "按建议做"): the item's own when it records one above the
+//            reorder point, else assumed to be the reorder point plus
+//            ORDER_UP_TO_REVIEW_DAYS of average daily demand, else the
+//            reorder point. The assumption is an app default only, and says
+//            so where it is shown;
+//   quantity once due, the level - position, rounded up, then up to a
+//            multiple of the item's lot size, raised to the supplier's
+//            minimum order. Ordering it brings the position to the level or
+//            above, so the item is no longer due. A quantity the user typed
+//            wins. Not due: nothing is suggested.
 //
 // The need-by date is today plus the supplier's lead time. When the stock
 // projection runs short before that day, the date stays and a warning names
@@ -41,6 +57,10 @@ const text = (value) => String(value ?? '').trim()
 const isDay = (value) => /^\d{4}-\d{2}-\d{2}$/.test(text(value)) && !Number.isNaN(Date.parse(`${text(value)}T00:00:00Z`))
 const count = (value) => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? 0 : Number(value))
 const positive = (value) => (count(value) > 0 ? count(value) : null)
+// Quantities are stored with four decimals; the position adds them in whole
+// ten-thousandths so 0.1 + 0.2 is 0.3.
+const SCALE = 10000
+const units = (value) => Math.round(count(value) * SCALE)
 
 // Whether a purchase request line counts towards an item: a line for it, in
 // the item's unit (a line in another unit is never added).
@@ -63,19 +83,61 @@ export function openRequestQuantity(requests, item = {}) {
   return total
 }
 
-// { target, gap, covered, quantity: { value, source }, minimum }. covered:
-// short against the target, but open orders and requests bring enough.
-export function suggestPurchaseQuantity({ reorderPoint, safetyStock, openDemand, available, incoming, openRequests, minimum, typed } = {}) {
-  const target = Math.max(count(reorderPoint), count(safetyStock), count(openDemand))
-  const gap = Math.ceil(target - count(available) - count(incoming) - count(openRequests))
+// The days of demand the assumed order-up-to level adds to the reorder point.
+export const ORDER_UP_TO_REVIEW_DAYS = 7
+
+// { level, source }: the order-up-to level and where it comes from: recorded
+// (the item's, above the reorder point), assumed (reorder point plus a week
+// of average daily demand) or reorder_point (no demand to assume from).
+// averageDailyDemand in the stock unit, as the reorder list reads it.
+export function orderUpToLevel({ reorderPoint, recorded, averageDailyDemand } = {}) {
+  const trigger = positive(reorderPoint)
+  if (trigger === null) return { level: null, source: null }
+  const set = positive(recorded)
+  if (set !== null && units(set) > units(trigger)) return { level: set, source: 'recorded' }
+  const daily = positive(averageDailyDemand)
+  if (daily !== null) return { level: (units(trigger) + Math.ceil(ORDER_UP_TO_REVIEW_DAYS * units(daily))) / SCALE, source: 'assumed' }
+  return { level: trigger, source: 'reorder_point' }
+}
+
+// An item's inventory position, from its parts in its stock unit. available
+// (on hand less reserved) may be given instead of onHand and reserved.
+// { stock, supply, position }: stock is what is on hand for new demand (after
+// reservations and backorders), supply what is on order or requested.
+export function inventoryPosition({ onHand = null, reserved = null, available = null, incoming = 0, pendingOrders = 0, openRequests = 0, backorders = 0 } = {}) {
+  const free = available !== null && available !== undefined ? units(available) : units(onHand) - units(reserved)
+  const stock = free - units(backorders)
+  const supply = units(incoming) + units(pendingOrders) + units(openRequests)
+  return { stock: stock / SCALE, supply: supply / SCALE, position: (stock + supply) / SCALE }
+}
+
+// { target, trigger, gap, covered, quantity: { value, source }, minimum,
+// lotSize }. position and stock as inventoryPosition gives them; orderUpTo
+// the level (orderUpToLevel), the trigger when none is given; dueToday:
+// the order-by day is today though the position is above the trigger (the
+// reorder list's orderByDay). target is the level ordered up to; gap the
+// level less the position, rounded up. covered: nothing to order, though the
+// stock alone is at or below the trigger: what is on order or requested
+// brings enough.
+export function suggestPurchaseQuantity({ reorderPoint, safetyStock, orderUpTo, lotSize, position, stock, dueToday = false, minimum, typed } = {}) {
+  const trigger = positive(reorderPoint) ?? positive(safetyStock) ?? 0
+  const target = Math.max(positive(orderUpTo) ?? trigger, trigger)
+  const gap = Math.ceil((units(target) - units(position)) / SCALE)
+  const due = units(position) <= units(trigger) || Boolean(dueToday)
   const moq = positive(minimum)
-  const covered = gap <= 0 && target > count(available)
-  const base = { target, gap, covered, minimum: moq }
+  const lot = positive(lotSize)
+  const ordering = due && gap > 0
+  const covered = !ordering && units(stock) <= units(trigger) && units(position) > units(stock)
+  const base = { target, trigger, gap, covered, minimum: moq, lotSize: lot }
   const asked = positive(typed)
   if (asked !== null) return { ...base, quantity: { value: asked, source: PURCHASE_SUGGESTION_SOURCES.userTyped } }
-  if (gap <= 0) return { ...base, quantity: { value: null, source: covered ? PURCHASE_SUGGESTION_SOURCES.coveredByOpenOrders : PURCHASE_SUGGESTION_SOURCES.notNeeded } }
-  if (moq !== null && moq > gap) return { ...base, quantity: { value: moq, source: PURCHASE_SUGGESTION_SOURCES.raisedToMoq } }
-  return { ...base, quantity: { value: gap, source: PURCHASE_SUGGESTION_SOURCES.reorderGap } }
+  if (!ordering) return { ...base, quantity: { value: null, source: covered ? PURCHASE_SUGGESTION_SOURCES.coveredByOpenOrders : PURCHASE_SUGGESTION_SOURCES.notNeeded } }
+  // Up to a whole number of lots, then to the minimum order (itself a whole
+  // number of lots when one is recorded).
+  const inLots = (value) => (lot === null ? value : Math.ceil(units(value) / units(lot)) * units(lot) / SCALE)
+  const sized = inLots(gap)
+  if (moq !== null && moq > sized) return { ...base, quantity: { value: inLots(moq), source: PURCHASE_SUGGESTION_SOURCES.raisedToMoq } }
+  return { ...base, quantity: { value: sized, source: PURCHASE_SUGGESTION_SOURCES.reorderGap } }
 }
 
 // { value, source, leadTimeDays, warning }. firstShortWeek: the first day of

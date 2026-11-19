@@ -49,7 +49,6 @@ test('PostgreSQL mode is the only runtime and is selected by default', () => {
   assert.equal(registry.masterData.adapter, 'db-master-data-v1')
   assert.equal(registry.procurementRead.adapter, 'db-procurement-read-v1')
   assert.equal(registry.inventoryRead.adapter, 'db-inventory-read-v1')
-  assert.equal(registry.actionDrafts.previewDraft({ type: 'purchase_request_draft', payload: { itemIdOrSku: 'JSON-ONLY', quantity: 2 } }).ok, true)
 })
 
 test('removed and unsupported persistence modes fail closed', () => {
@@ -73,24 +72,5 @@ test('explicit DB mode selects DB adapters even without DATABASE_URL', () => {
   assert.equal(registry.masterData.adapter, 'db-master-data-v1')
   assert.equal(registry.procurementRead.adapter, 'db-procurement-read-v1')
   assert.equal(registry.inventoryRead.adapter, 'db-inventory-read-v1')
-  assert.equal(registry.actionDrafts.adapter, 'db-action-draft-v1')
   assert.equal(registry.auditLog.adapter, 'db-audit-log-v1')
-})
-
-test('preview-only action draft fallback is intentional and remains non-mutating in misconfigured DB mode', () => {
-  const db = createDb()
-  const before = JSON.stringify(db)
-  const registry = createRepositoryRegistry({
-    db,
-    env: { FLOWCHAIN_PERSISTENCE_MODE: 'database' },
-  })
-  const result = registry.actionDrafts.previewDraft({
-    type: 'purchase_request_draft',
-    payload: { itemIdOrSku: 'JSON-ONLY', quantity: 2 },
-  })
-
-  assert.equal(result.ok, true)
-  assert.equal(result.draft.confirmationBoundary.previewOnly, true)
-  assert.equal(result.draft.payload.itemIdOrSku, 'JSON-ONLY')
-  assert.equal(JSON.stringify(db), before)
 })

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { readAuthorizationContext } from "../../lib/authorizationContext";
 import { Link } from "react-router";
 import { Upload } from "lucide-react";
 import { apiJson, AUTH_TOKEN_KEY } from "../../lib/api-client";
@@ -26,7 +27,7 @@ function loadAccess(): Promise<Access> {
   if (cached?.token === token) return cached.access;
   const access = Promise.all([
     apiJson<{ capabilities: Array<{ id: string; enabled: boolean }> }>("/api/capabilities"),
-    apiJson<{ effectivePermissions?: string[] }>("/api/authorization/context"),
+    readAuthorizationContext(),
   ])
     .then(([capabilities, context]) => ({
       enabled: capabilities.capabilities.some((entry) => entry.id === "data-import" && entry.enabled),

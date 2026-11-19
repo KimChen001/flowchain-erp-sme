@@ -51,7 +51,6 @@ test('production route sources do not instantiate JSON repositories', async () =
     'server/routes/inventory.routes.mjs',
     'server/routes/procurement-read.routes.mjs',
     'server/routes/procurement-workflow.routes.mjs',
-    'server/routes/action-drafts.routes.mjs',
   ]
   for (const file of files) {
     const source = await readFile(path.join(root, file), 'utf8')

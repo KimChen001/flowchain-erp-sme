@@ -33,18 +33,101 @@ function concentration(chart: ReportChart, zh: boolean, format: Format, subject:
     : `${name} accounts for ${format(share, "percentage")} of committed spend; ${leaders} of ${rows.length} ${plural(rows.length, "supplier", "suppliers")} make up about 80% of it.` };
 }
 
-// The lifecycle's stages are cumulative (each counts the orders that reached it
-// and every stage before it), so they are read by name: "Fully received" there
-// also needs a matched invoice and is not the share of orders fully received.
+// Each lifecycle stage counts the committed orders that reached it, whatever
+// happened at the others, so every stage is read by its name.
 function lifecycle(chart: ReportChart, zh: boolean, format: Format): Insight | null {
   const stage = (name: string) => num((chart.data || []).find(row => row.name === name)?.value) ?? 0;
   const committed = stage("Committed");
   if (!committed) return null;
-  const started = stage("Receiving started"), invoiced = stage("Invoiced"), matched = stage("Invoice matched");
+  const started = stage("Receiving started"), full = stage("Fully received"), invoiced = stage("Invoiced"), matched = stage("Invoice matched");
   const share = format(started / committed * 100, "percentage");
   return { id: chart.id, tone: "neutral", figure: share, path: chart.drilldownPath, text: zh
-    ? `已承诺采购订单中 ${share} 已开始收货；其中 ${invoiced} 张已有采购发票，${matched} 张发票已匹配。`
-    : `Receiving has started on ${share} of committed purchase orders; ${invoiced} of them ${plural(invoiced, "has", "have")} a supplier invoice and ${matched} a matched invoice.` };
+    ? `已承诺采购订单中 ${share} 已开始收货，${full} 张已全部收货；${invoiced} 张已有采购发票，${matched} 张发票已匹配。`
+    : `Receiving has started on ${share} of committed purchase orders and ${full} ${plural(full, "is", "are")} fully received; ${invoiced} ${plural(invoiced, "has", "have")} a supplier invoice and ${matched} a matched invoice.` };
+}
+
+// The overview's last whole month of sales and committed purchases, from its
+// purchases and sales chart: the month to date, or a month the range cuts,
+// would read as a fall. Sales counted from only the latest orders read
+// (salesCut) are left out.
+function lastWholeMonth(chart: ReportChart, zh: boolean, format: Format, salesCut: boolean): Insight | null {
+  const partial = new Set((chart.partialPeriods || []).map(item => item.period));
+  const last = (chart.data || []).filter(row => row.name !== "Undated" && !partial.has(String(row.name))).at(-1);
+  if (!last) return null;
+  const series = chart.seriesKeys || [];
+  const purchases = series.includes("Committed PO amount") ? num(last["Committed PO amount"]) : null;
+  const sales = !salesCut && series.includes("Sales order amount") ? num(last["Sales order amount"]) : null;
+  if (purchases === null && sales === null) return null;
+  const money = (value: number) => format(value, "currency", chart.currencyCode);
+  const parts = zh
+    ? [sales !== null ? `销售订单 ${money(sales)}` : "", purchases !== null ? `已承诺采购 ${money(purchases)}` : ""].filter(Boolean)
+    : [sales !== null ? `${money(sales)} in sales orders` : "", purchases !== null ? `${money(purchases)} in committed purchases` : ""].filter(Boolean);
+  return { id: "overview_last_month", tone: "neutral", figure: money(sales ?? purchases ?? 0), path: chart.drilldownPath, text: zh
+    ? `${last.name}（最近一个完整月份）：${parts.join("，")}。`
+    : `${last.name}, the last whole month: ${parts.join(" and ")}.` };
+}
+
+// Stock, in the inventory pages' two signals (design audit L3-07, L7-19,
+// W-03): the SKUs to reorder by stock position, as the reorder list and Today
+// count them, and the SKUs below safety stock on hand, with how many of those
+// open orders already cover. The two are separate questions, so neither is
+// said to be part of the other. Without the reorder list (a reader of only
+// some warehouses) only the shelf is named.
+function stockHealth(signals: NonNullable<GovernedReport["stockSignals"]>, zh: boolean, format: Format): Insight | null {
+  const n = (value: number) => format(value, "number");
+  const reorder = signals.needsReplenishment;
+  const below = signals.belowSafetyOnHand;
+  const covered = signals.coveredByOpenOrders;
+  if (!below && !reorder) return { id: "stock", tone: "positive", figure: n(0), path: "/app/inventory/warnings", text: reorder === null
+    ? zh ? "没有物料的现有库存低于安全库存。" : "No item's stock on hand is below its safety stock."
+    : zh ? "没有物料需要补货，也没有物料的现有库存低于安全库存。" : "No item needs reordering, and no item's stock on hand is below its safety stock." };
+  const reorderText = reorder === null ? "" : zh ? `${n(reorder)} 个物料按库存头寸需要补货` : `${n(reorder)} ${plural(reorder, "item needs", "items need")} reordering by stock position`;
+  const belowText = !below ? "" : covered === null
+    ? zh ? `${n(below)} 个物料的现有库存低于安全库存` : `${n(below)} ${plural(below, "item is", "items are")} below safety stock on hand`
+    : covered === below
+      ? zh ? `${n(below)} 个物料的现有库存低于安全库存，均已有在途采购覆盖` : `${n(below)} ${plural(below, "item is", "items are")} below safety stock on hand, all covered by open orders`
+      : zh ? `${n(below)} 个物料的现有库存低于安全库存，其中 ${n(covered)} 个已有在途采购覆盖` : `${n(below)} ${plural(below, "item is", "items are")} below safety stock on hand, ${n(covered)} of them covered by open orders`;
+  const parts = [reorderText, belowText].filter(Boolean);
+  const text = zh ? `${parts.join("；")}。` : `${parts.join("; ")}.`;
+  // Attention while something must be ordered or a low shelf is not covered.
+  const attention = (reorder ?? 0) > 0 || (covered === null ? below > 0 : below > covered);
+  return { id: "stock", tone: attention ? "attention" : "neutral", figure: n(reorder ?? below), path: reorder ? "/app/inventory/warnings?signal=replenish" : "/app/inventory/warnings?signal=below_safety", text: zh ? text : text.charAt(0).toUpperCase() + text.slice(1) };
+}
+
+// The supplier with the most committed purchase orders, from the overview's
+// supplier chart. A tie is no finding: "3 suppliers tie at 52 each" said only
+// that the orders came on a schedule (design audit L7-27).
+function busiestSupplier(chart: ReportChart, zh: boolean, format: Format): Insight | null {
+  const rows = chart.data || [];
+  const top = num(rows[0]?.value);
+  if (!top || rows.length < 2) return null;
+  if (rows.filter(row => num(row.value) === top).length > 1) return null;
+  const figure = format(top, "number");
+  return { id: "busiest_supplier", tone: "neutral", figure, path: chart.drilldownPath, text: zh ? `${rows[0].name} 的已承诺采购订单最多：${figure} 张。` : `${rows[0].name} has the most committed purchase orders: ${figure}.` };
+}
+
+// The highest and lowest on-time share among suppliers, saying when several
+// tie. The ranking keeps its first rows only; when it left some out (total),
+// its last bar is not the lowest, so only the highest is named.
+function onTimeSpread(chart: ReportChart, zh: boolean, format: Format): Insight | null {
+  const ranking = chart.data || [];
+  if (ranking.length < 2) return null;
+  const top = num(ranking[0].value), bottom = num(ranking[ranking.length - 1].value);
+  // When every supplier has the same share there is no highest or lowest.
+  if (top === null || bottom === null || top === bottom) return null;
+  const whole = !chart.total || chart.total <= ranking.length;
+  const atTop = ranking.filter(row => num(row.value) === top);
+  const atBottom = ranking.filter(row => num(row.value) === bottom);
+  // Every bar shown ties at the top and more were left out: the count is unknown.
+  if (!whole && atTop.length === ranking.length) return null;
+  const high = format(top, "percentage"), low = format(bottom, "percentage");
+  const highest = atTop.length === 1
+    ? zh ? `${atTop[0].name} 的准时交付占比最高（${high}）` : `${atTop[0].name} has the highest share of deliveries on time (${high})`
+    : zh ? `${atTop.length} 家供应商并列准时交付占比最高（${high}）` : `${atTop.length} suppliers tie for the highest share of deliveries on time (${high})`;
+  const lowest = !whole ? "" : atBottom.length === 1
+    ? zh ? `${atBottom[0].name} 最低（${low}）` : `${atBottom[0].name} the lowest (${low})`
+    : zh ? `${atBottom.length} 家并列最低（${low}）` : `${atBottom.length} suppliers tie for the lowest (${low})`;
+  return { id: "spread", tone: "neutral", figure: high, path: chart.drilldownPath, text: zh ? `${highest}${lowest ? `，${lowest}` : ""}。` : `${highest}${lowest ? `; ${lowest}` : ""}.` };
 }
 
 // What changed: the first compared KPI, in the words of its change badge.
@@ -67,22 +150,25 @@ export function reportInsights(view: DashboardView, report: GovernedReport, { la
   const insights: Array<Insight | null> = [];
   const overdue = kpiById(report, "overdue_open_po_count");
   const onTime = kpiById(report, "on_time_receipt_rate");
+  // Sales figures over only the latest orders read (the server could not read
+  // its totals over every order) are no ground for a finding about shares or
+  // changes: the orders left out could change them.
+  const salesCut = (report.truncatedSubjects || []).some(entry => entry.subject === "sales_orders" && !entry.figuresComplete);
   // The largest change against the previous period leads; an unchanged figure
   // is no finding.
   const size = (item: MetricDefinition) => Math.abs(item.comparisonUnit === "percentage_points" ? item.comparisonDelta ?? 0 : item.comparisonRate ?? 0);
-  const compared = report.kpis.filter(item => item.comparisonDelta !== null && item.comparisonValue !== null && item.comparisonDelta !== 0).sort((a, b) => size(b) - size(a))[0];
+  const compared = report.kpis.filter(item => item.comparisonDelta !== null && item.comparisonValue !== null && item.comparisonDelta !== 0 && !(salesCut && item.subject === "sales_orders")).sort((a, b) => size(b) - size(a))[0];
   if (compared) insights.push(change(compared, zh, format, label, report.dataScope.currencyCode));
 
+  // The overview speaks for every area it shows (round 8): sales and
+  // purchases by month, stock, and suppliers, each from its chart on the page.
+  // A chart the reader may not read has no data and so no finding.
   if (view === "overview") {
-    const trend = chartById(report, "overview_spend_trend");
-    const last = trend?.data?.filter(row => row.name !== "Undated").at(-1);
-    if (trend && last && trend.unit === "currency") {
-      const amount = num(last["Committed amount"]);
-      const count = num(last["Purchase orders"]) ?? 0;
-      if (amount !== null) insights.push({ id: "overview_last_month", tone: "neutral", figure: format(amount, "currency", trend.currencyCode), path: trend.drilldownPath, text: zh ? `${last.name}：已承诺采购额 ${format(amount, "currency", trend.currencyCode)}，共 ${count} 张采购订单。` : `${last.name}: ${format(amount, "currency", trend.currencyCode)} committed across ${count} purchase ${plural(count, "order", "orders")}.` });
-    }
-    const flow = chartById(report, "overview_lifecycle");
-    if (flow) insights.push(lifecycle(flow, zh, format));
+    const money = chartById(report, "overview_purchases_and_sales");
+    if (money) insights.push(lastWholeMonth(money, zh, format, salesCut));
+    if (report.stockSignals) insights.push(stockHealth(report.stockSignals, zh, format));
+    const suppliers = chartById(report, "overview_suppliers");
+    if (suppliers) insights.push(busiestSupplier(suppliers, zh, format));
   }
 
   if (view === "procurement") {
@@ -119,7 +205,7 @@ export function reportInsights(view: DashboardView, report: GovernedReport, { la
 
   if (view === "sales") {
     const pareto = chartById(report, "sales_customer_pareto");
-    if (pareto) insights.push(concentration(pareto, zh, format, "customer"));
+    if (pareto && !salesCut) insights.push(concentration(pareto, zh, format, "customer"));
     const shipped = kpiById(report, "order_fulfillment_rate");
     if (shipped) insights.push({ id: "shipped", tone: "neutral", figure: format(shipped.currentValue, "percentage"), path: shipped.drilldownPath, text: zh ? `${format(shipped.currentValue, "percentage")} 的已确认销售订单已全部发货。` : `${format(shipped.currentValue, "percentage")} of confirmed sales orders have shipped in full.` });
     // Demand in different units cannot be compared, so "most" needs one unit.
@@ -142,13 +228,7 @@ export function reportInsights(view: DashboardView, report: GovernedReport, { la
 
   if (view === "suppliers") {
     const onTimeChart = chartById(report, "supplier_on_time");
-    const ranking = onTimeChart?.data || [];
-    const best = ranking[0];
-    const worst = ranking[ranking.length - 1];
-    // When every supplier has the same share there is no highest or lowest.
-    if (onTimeChart && ranking.length > 1 && num(best.value) !== num(worst.value)) {
-      insights.push({ id: "spread", tone: "neutral", figure: format(num(best.value), "percentage"), path: onTimeChart.drilldownPath, text: zh ? `${best.name} 的准时交付占比最高（${format(num(best.value), "percentage")}），${worst.name} 最低（${format(num(worst.value), "percentage")}）。` : `${best.name} has the highest share of deliveries on time (${format(num(best.value), "percentage")}); ${worst.name} the lowest (${format(num(worst.value), "percentage")}).` });
-    }
+    if (onTimeChart) insights.push(onTimeSpread(onTimeChart, zh, format));
     const matrix = chartById(report, "supplier_performance_matrix");
     if (matrix?.guides && matrix.guides.x !== null && matrix.guides.y !== null) {
       const xKey = matrix.measures?.find(item => item.axis === "x")?.key || "";

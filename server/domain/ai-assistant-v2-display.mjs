@@ -1,3 +1,4 @@
+import { aiSlashDateParts, aiSlashDayFirst } from './ai-model-first-grounding.mjs'
 // How assistant v2 writes dates, amounts, quantities and record numbers in its
 // prose: as the app shows them in the workspace's locale and timezone, so the
 // text reads like the cards beside it ("Nov 4, 2026", "$2,500.00",
@@ -149,6 +150,10 @@ const decimalsOf = (value) => (String(value).split('.')[1] || '').length
 // A day written the Chinese way, alone or as a range whose second day may
 // leave out the year: 2026年7月1日至9月30日, 2026 年 8 月 8 日到 2026 年 11 月 5 日.
 const ZH_DATE = /(?<!\d)(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*[日号](?:\s*(至|到|~|～|-|–|—)\s*(?:(\d{4})\s*年\s*)?(\d{1,2})\s*月\s*(\d{1,2})\s*[日号])?/g
+// A date written half the Chinese way and half the app's way, the month as
+// a number with 月 and the year after a comma (2026-11-08 on DeepSeek:
+// "10 月 1, 2026" for Oct 1, 2026): written in the workspace's format.
+const HYBRID_ZH_DATE = /(?<![\d.])(\d{1,2})\s*月\s*(\d{1,2})\s*[,，]\s*(\d{4})(?!\d)/g
 const ZH_MONTH_DAY = /(?<!\d\s*年\s*)(?<![\d.])(\d{1,2})\s*月\s*(\d{1,2})\s*[日号](?:\s*(至|到|~|～|-|–|—)\s*(?:(\d{1,2})\s*月\s*)?(\d{1,2})\s*[日号])?/g
 const isoDay = (year, month, day) => `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
 
@@ -172,7 +177,7 @@ const POSITIONS = [
 // 已驳回, 已取消; the owner's terminology of 2026-11-05).
 const CODE_LABELS = Object.freeze({
   risk: ['Risk', '风险'], warning: ['Warning', '警告'], info: ['Info', '提示'],
-  matched: ['Matched', '已匹配'], variance: ['Variance', '有差异'], exception: ['Exception', '异常'], mismatch: ['Mismatch', '不一致'], not_matched: ['Not matched', '未匹配'],
+  matched: ['Matched', '已匹配'], variance_approved: ['Variance approved', '差异已批准'], variance: ['Variance', '有差异'], exception: ['Exception', '异常'], mismatch: ['Mismatch', '不一致'], not_matched: ['Not matched', '未匹配'],
   pending: ['Pending', '待处理'], pending_approval: ['Pending approval', '待审批'], submitted: ['Submitted', '已提交'], draft: ['Draft', '草稿'],
   approved: ['Approved', '已批准'], rejected: ['Rejected', '已驳回'], cancelled: ['Cancelled', '已取消'], canceled: ['Cancelled', '已取消'],
   issued: ['Issued', '已下达'], partially_received: ['Partially received', '部分收货'], fully_received: ['Fully received', '全部收货'], received: ['Received', '已收货'],
@@ -220,6 +225,14 @@ const ZH_PUNCT = Object.freeze({ ',': '，', ':': '：', ';': '；', '!': '！',
 // units they hold. tidy(piece, before, after) rewrites one piece of a text
 // part, `before` being the part's text already rewritten and sent and `after`
 // the model's text after the piece so far (to know the line it ends in).
+// An XML declaration (or another processing instruction) the model put
+// before its words: taken off the start of a text part only, so code or data
+// the answer quotes is left as written (2026-11-14 on DeepSeek V4.1 Flash,
+// the money questions: "<?xml version="1.0"?>" opened the answer to which
+// deliveries were not invoiced). A part's first piece holds its opening
+// words: a part streams once it is past an opening line (NARRATION_LENGTH).
+const LEADING_DECLARATION = /^\s*(?:<\?[A-Za-z][\w.-]*\b[^>]*\?>\s*)+/
+
 export function aiV2TextTidier({ language = 'en-US', formats = aiV2Formats(), records = () => [], units = () => [], maxLength = Infinity } = {}) {
   const zh = language === 'zh-CN'
   // One stretch of a single line, in the rules of `lineZh`.
@@ -236,6 +249,7 @@ export function aiV2TextTidier({ language = 'en-US', formats = aiV2Formats(), re
       const second = formats.day(isoDay(year2 || year, month2, day2))
       return second ? `${first} ${/[至到]/.test(joint) ? joint : '–'} ${second}` : whole
     })
+    out = out.replace(HYBRID_ZH_DATE, (whole, month, day, year) => formats.day(isoDay(year, month, day)) || whole)
     // One with no year (11 月 6 日, 11月6日至8日) as a month and day.
     out = out.replace(ZH_MONTH_DAY, (whole, month, day, joint, month2, day2) => {
       const first = formats.monthDay(month, day)
@@ -286,7 +300,7 @@ export function aiV2TextTidier({ language = 'en-US', formats = aiV2Formats(), re
   // line with no Chinese in it keeps English punctuation and units
   // (2026-11-05: "30 件are still outstanding （20 of 50 received）").
   const tidy = (piece, before = '', after = '') => {
-    const whole = String(piece ?? '')
+    const whole = before ? String(piece ?? '') : String(piece ?? '').replace(LEADING_DECLARATION, '')
     if (!whole) return whole
     if (!zh) return tidyLine(whole, before, false)
     const segments = whole.split(/(?<=\n)/)
@@ -367,23 +381,24 @@ function zhPunctuation(piece, before) {
 }
 
 // The month-day keys of the dates a text writes (11-20), in the forms people
-// type: 2026-11-20, Nov 20, 20 November, 11/20, 11月20日.
+// type: 2026-11-20, Nov 20, 20 November, 11/20 (20/11 in a day-first
+// workspace, aiSlashDateParts), 11月20日.
 const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 }
 const MONTH = '(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)'
 const DAY_FORMS = [
   [/(?<!\d)\d{4}-(\d{1,2})-(\d{1,2})(?!\d)/g, (m) => [+m[1], +m[2]]],
   [new RegExp(`\\b${MONTH}\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b`, 'gi'), (m) => [MONTHS[m[1].slice(0, 3).toLowerCase()], +m[2]]],
   [new RegExp(`(?<!\\d)(\\d{1,2})(?:st|nd|rd|th)?\\s+${MONTH}\\b`, 'gi'), (m) => [MONTHS[m[2].slice(0, 3).toLowerCase()], +m[1]]],
-  [/(?<![\d/])(\d{1,2})\/(\d{1,2})(?:\/\d{2,4})?(?![\d/])/g, (m) => [+m[1], +m[2]]],
+  [/(?<![\d/])(\d{1,2})\/(\d{1,2})(?:\/\d{2,4})?(?![\d/])/g, (m, dayFirst) => { const date = aiSlashDateParts(+m[1], +m[2], dayFirst); return date ? [date.month, date.day] : [0, 0] }],
   [/(?<!\d)(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]/g, (m) => [+m[1], +m[2]]],
   [/(?<![\w./-])(\d{1,2})-(\d{1,2})(?![\w/-])/g, (m) => [+m[1], +m[2]]],
 ]
-function dayKeys(value) {
+function dayKeys(value, dayFirst = false) {
   const keys = new Set()
   const source = text(value).normalize('NFKC')
   for (const [pattern, read] of DAY_FORMS) {
     for (const match of source.matchAll(pattern)) {
-      const [month, day] = read(match)
+      const [month, day] = read(match, dayFirst)
       if (month >= 1 && month <= 12 && day >= 1 && day <= 31) keys.add(`${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`)
     }
   }
@@ -391,10 +406,12 @@ function dayKeys(value) {
 }
 
 // Whether a date the check flagged is one the user typed in this conversation.
-export function aiV2UserTypedDate(value, userText) {
-  const typed = dayKeys(userText)
+// locale: the workspace's, for the order of a slash date (18/11 in en-GB).
+export function aiV2UserTypedDate(value, userText, { locale = null } = {}) {
+  const dayFirst = aiSlashDayFirst(locale)
+  const typed = dayKeys(userText, dayFirst)
   if (!typed.size) return false
-  return [...dayKeys(value)].some((key) => typed.has(key))
+  return [...dayKeys(value, dayFirst)].some((key) => typed.has(key))
 }
 
 // The words of a status, a signal type or a priority the results give as a

@@ -87,6 +87,10 @@ export type PurchaseOrderLine = {
 export type PurchaseOrder = {
   // Set by the server when the role may not read prices ("amounts").
   restrictedFields?: string[];
+  // Whether this reader may approve the order now: it waits for approval, they
+  // hold the permission, and it is not their own order while someone else may
+  // approve it (server/domain/approval-rights.mjs).
+  canApprove?: boolean;
   // The internal id: URLs, links and API calls.
   po: string;
   // The document number people read (PO-YYYYMM-NNNN; the id for orders made before numbering).
@@ -102,6 +106,7 @@ export type PurchaseOrder = {
   // The status receiving started from: "approved" means received without being issued.
   receivingBaseStatus?: string | null;
   eta: string;
+  dueDay?: string | null;
   owner: string;
   amount: number;
   items: number;
@@ -379,6 +384,8 @@ export type SupplierInvoiceLine = {
 export type SupplierInvoice = {
   id: string;
   invoiceNumber: string;
+  // The supplier's own invoice number as recorded; invoiceNumber may be the record id.
+  supplierInvoiceNumber?: string;
   supplier: string;
   supplierCode?: string;
   relatedPo: string;

@@ -38,8 +38,10 @@ test('legacy purchase request and order reads use tenant-scoped PostgreSQL facts
   const orders = routeContext('/api/purchase-orders', snapshot)
   await handlePurchaseRequestsRoute(requests.ctx)
   await handlePurchaseOrdersRoute(orders.ctx)
-  assert.deepEqual(requests.sent, [{ status: 200, payload: snapshot.purchaseRequests }])
-  assert.deepEqual(orders.sent, [{ status: 200, payload: snapshot.purchaseOrders }])
+  // Each row also says whether the reader may approve it now (approval-rights.mjs);
+  // these rows wait for no approval.
+  assert.deepEqual(requests.sent, [{ status: 200, payload: snapshot.purchaseRequests.map((row) => ({ ...row, canApprove: false })) }])
+  assert.deepEqual(orders.sent, [{ status: 200, payload: snapshot.purchaseOrders.map((row) => ({ ...row, canApprove: false })) }])
   assert.doesNotMatch(JSON.stringify([...requests.sent, ...orders.sent]), /STATIC-/)
 })
 

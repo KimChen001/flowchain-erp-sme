@@ -1,4 +1,5 @@
 import { canReadProcurementDocument, maskProcurementRecord, procurementReadAccess } from '../domain/procurement-read-access.mjs'
+import { readTenantTimezone } from '../domain/tenant-timezone.mjs'
 function query(url) {
   return {
     q: url.searchParams.get('q') || '',
@@ -79,12 +80,13 @@ export async function handleProcurementReadRoute(ctx) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/procurement/followups') {
-    send(res, 200, { followups: await repository.listFollowups({ ...query(url), ...(tenantId ? { tenantId } : {}) }, await options()) })
+    // Overdue follow-ups count from the workspace's today (design audit L6-23).
+    send(res, 200, { followups: await repository.listFollowups({ ...query(url), ...(tenantId ? { tenantId } : {}) }, { ...(await options()), timeZone: await readTenantTimezone(ctx) }) })
     return true
   }
 
   if (req.method === 'GET' && url.pathname === '/api/procurement/summary') {
-    send(res, 200, { summary: await repository.getSummary(tenantId ? { tenantId } : {}, await options()) })
+    send(res, 200, { summary: await repository.getSummary(tenantId ? { tenantId } : {}, { ...(await options()), timeZone: await readTenantTimezone(ctx) }) })
     return true
   }
 

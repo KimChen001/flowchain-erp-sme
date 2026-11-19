@@ -11,6 +11,12 @@ const zh: Record<string, string> = {
   "Details": "详情", "Yes": "是", "No": "否",
   "No customers yet. Create or import customers to continue.": "暂无客户。请新建或导入客户后继续。",
   "New customer": "新建客户", "Currency": "币种", "Email": "邮箱", "Save customer": "保存客户", "Cancel": "取消",
+  // Customer editing (design audit L4-06, L4-18, L4-26).
+  "Edit": "编辑", "Edit customer": "编辑客户", "Country": "国家或地区", "Not set": "未设置", "Save changes": "保存修改",
+  "A restricted customer's sales orders cannot be confirmed.": "信用受限的客户，其销售订单无法确认。",
+  "Another customer already has this name: {codes}": "已有客户使用这个名称：{codes}",
+  "Another item already has this name: {codes}": "已有物料使用这个名称：{codes}",
+  "The SKU cannot change once the item exists.": "物料创建后不能修改 SKU。",
   "Saving…": "正在保存…", "Set inactive": "设为停用", "Set active": "设为启用", "Could not save the customer.": "客户保存失败。",
   "Could not change the customer status.": "客户状态修改失败。",
   "Template name": "模板名称", "Document type": "单据类型", "Default": "默认", "Custom": "自定义", "Last updated": "最近更新时间",
@@ -20,10 +26,10 @@ const zh: Record<string, string> = {
   "Standard delivery note": "标准发货单", "Sales shipment / delivery note": "销售出库单 / 发货单",
   "Standard proof of delivery": "标准签收单", "Proof of delivery": "签收单",
   "Warehouse code": "仓库编码", "Warehouse name": "仓库名称", "Zone": "库区", "Bin": "库位", "Capacity": "容量",
-  "Utilization": "利用率", "Temperature requirement": "温控要求", "QA status": "QA 状态", "Available": "可用", "Owner": "负责人",
+  "Utilization": "利用率", "Temperature requirement": "温控要求", "QA status": "质检状态", "Available": "可用", "Owner": "负责人",
   "Tax code": "税码", "Tax code name": "税码名称", "Tax rate": "税率", "Tax type": "税种", "Region": "区域", "Description": "描述",
   "Term code": "条款编码", "Term name": "条款名称", "Net days": "净账期天数", "Discount rule": "折扣规则", "Due date rule": "到期规则",
-  "Due on receipt": "收到发票即到期", "Due {days} days after the invoice date": "发票日期后 {days} 天到期",
+  "Due on receipt": "收到发票即到期", "Due {days} days after the invoice date": "发票日期后 {days} 天到期", "Net {days} days": "{days} 天账期",
   "Sales tax": "销售税", "Use tax": "使用税", "VAT": "增值税", "Input VAT": "进项税", "Output VAT": "销项税",
   "Exempt": "免税", "Zero-rated": "零税率",
   "Active": "启用", "Inactive": "停用", "Incomplete": "待完善", "Needs review": "待复核", "Frozen": "冻结",
@@ -42,6 +48,7 @@ const zh: Record<string, string> = {
   "Lead time (days)": "采购提前期（天）", "Batch managed": "批次管理", "Serial managed": "序列号管理", "QA required": "质检要求",
   "Default supplier": "默认供应商", "Default tax code": "默认税码",
   // The items list page.
+  "New item": "新建物料", "Edit item": "编辑物料", "Search items": "搜索物料",
   "Items": "物料总数", "{count} active": "{count} 个启用", "Inactive items": "停用物料",
   "Kept for history, not offered on new documents": "保留历史记录，新单据中不再提供",
   "No reorder point": "未设再订货点", "Active items the reorder list cannot check": "补货清单无法检查的启用物料",
@@ -58,10 +65,10 @@ const zh: Record<string, string> = {
   "Created: {by} · {at}": "创建：{by} · {at}", "Updated: {by} · {at}": "更新：{by} · {at}",
   "Safety stock / reorder point": "安全库存 / 再订货点", "Lead time": "提前期", "{count} days": "{count} 天",
   // The reference lists (customers, warehouses, tax codes, payment terms, print templates).
-  "All statuses": "全部状态", "All QA statuses": "全部 QA 状态", "All document types": "全部单据类型",
+  "All statuses": "全部状态", "All QA statuses": "全部质检状态", "All document types": "全部单据类型",
   "{total} records, {shown} shown": "共 {total} 条，当前显示 {shown} 条", "1 record, {shown} shown": "共 1 条，当前显示 {shown} 条",
   "1 item, {shown} shown": "共 1 个物料，当前显示 {shown} 个", "No records match these filters": "没有符合筛选条件的记录",
-  "Customer search": "客户查询", "Search customers by code, name, contact, phone, address or payment terms.": "按编号、名称、联系人、电话、地址或付款条款查询客户。",
+  "Customer search": "客户查询", "Code, name, contact or phone": "编号、名称、联系人或电话", "Code, name, zone or owner": "编号、名称、区域或负责人", "Code, name, type or region": "编号、名称、类型或地区", "Code, name or description": "编号、名称或说明", "Template name or document type": "模板名称或单据类型", "Search customers by code, name, contact, phone, address or payment terms.": "按编号、名称、联系人、电话、地址或付款条款查询客户。",
   "Customer list": "客户列表", "Warehouse search": "仓库查询", "Search warehouses by code, name, zone, bin or owner.": "按编码、名称、库区、库位或负责人查询仓库。",
   "Warehouse list": "仓库列表", "No warehouses yet.": "暂无仓库。", "Tax code search": "税码查询",
   "Search tax codes by code, name, type, region or description.": "按编码、名称、税种、区域或描述查询税码。", "Tax code list": "税码列表",
@@ -89,7 +96,7 @@ const zh: Record<string, string> = {
   "Load {count} more": "再加载 {count} 条", "No supplier prices yet": "暂无供应商价格",
   "Link items to a supplier under Supplied items on the supplier's page, or import a file of item–supplier links.": "在供应商页的“可供应物料”中关联物料，或导入物料–供应商关系文件。",
   "No supplier prices match these filters": "没有符合筛选条件的供应商价格", "Reset the filters to see every link.": "重置筛选即可查看全部供应关系。",
-  "Could not load supplier prices.": "供应商价格加载失败。", "Loading supplier prices…": "正在加载供应商价格…",
+  "Could not load supplier prices.": "供应商价格加载失败。", "Loading supplier prices…": "正在加载供应商价格…", "Loading item…": "正在加载物料…",
   "Not every link could be read at once. Choose a supplier or an item to see all of its links.": "供应关系过多，未能一次全部读取。选择供应商或物料即可查看其全部供应关系。",
 };
 const en = Object.fromEntries(Object.entries(zh).map(([english, chinese]) => [chinese, english]));
@@ -127,6 +134,14 @@ export function dueDateRule(netDays: number, language: string) {
   return netDays === 0
     ? masterDataCopy("Due on receipt", language)
     : masterDataCopy("Due {days} days after the invoice date", language, { days: netDays });
+}
+
+// A payment term recorded only as its code ("NET30") reads as its rule; any
+// other code is shown as it is. The stored value is never changed.
+export function paymentTermLabel(value: string | null | undefined, language: string) {
+  const text = String(value ?? "").trim();
+  const net = /^NET\s?(\d+)$/i.exec(text);
+  return net ? `${masterDataCopy("Net {days} days", language, { days: Number(net[1]) })} (${text})` : text;
 }
 
 export function orNotProvided(value: string | null | undefined) {

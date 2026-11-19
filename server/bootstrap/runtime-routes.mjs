@@ -52,6 +52,10 @@ export async function handleRuntimeRoutes({
     ]);
     send(res, 200, {
       localDevelopment: true,
+      // The walkthrough launcher turns this on (FLOWCHAIN_LOCAL_AUTO_SIGN_IN):
+      // the sign-in page then signs the local administrator in by itself,
+      // through the same local outbox link the page offers by hand.
+      autoSignIn: env.FLOWCHAIN_LOCAL_AUTO_SIGN_IN === "true",
       tenantId: tenant?.id || tenantId,
       workspaceName: tenant?.name || "",
       availableLoginEmails: users.map(user => user.email),

@@ -1,9 +1,10 @@
 import { can } from '../auth/authorization-service.mjs'
 import { loadAiSkillContext } from './ai-skill-context.mjs'
-import { readAiSkillFacts } from './ai-skill-readers.mjs'
-import { buildAiSkillSignals, compareSignalsByDate, compareSignalsByPrintedDate } from './ai-skill-signals.mjs'
+import { readAiSkillSupplierIssueFacts } from './ai-skill-readers.mjs'
+import { aiSkillPurchaseOrderNotSent, buildAiSkillSignals, compareSignalsByDate, compareSignalsByPrintedDate } from './ai-skill-signals.mjs'
 import { isCommittedPurchaseOrder, purchaseOrderBusinessDate, reportCalendarDay } from './open-purchase-order.mjs'
 import { buildOpenPurchaseOrdersReport, purchaseOrderDueDay, purchaseOrderReportLine } from './open-purchase-orders-report.mjs'
+import { billPaymentStatus } from './operational-finance-read-service.mjs'
 import { reportCurrencyCode } from './report-currency.mjs'
 import { reportReadAccessFor } from './report-read-access.mjs'
 import { SUPPLIER_SCORECARD_READ_PERMISSIONS, createSupplierScorecardReadService } from './supplier-scorecard.mjs'
@@ -12,18 +13,24 @@ import { SUPPLIER_SCORECARD_READ_PERMISSIONS, createSupplierScorecardReadService
 // reuses an existing rule:
 //   spend        committed purchase orders (isCommittedPurchaseOrder) by their
 //                business date over the last 12 months, per currency, never
-//                added across currencies;
+//                added across currencies; an order closed short counts what
+//                was received of it (design audit L9-07);
 //   open/overdue the open purchase orders report;
-//   on time      the supplier scorecard against the original promise, 90 days,
-//                counted in deliveries (one PO, one promised date), no rate
-//                under its minimum sample of 5 deliveries;
-//   open issues  the assistant's signals (overdue orders, rejected or unposted
+//   on time,     the supplier scorecard against the original promise, 90 days,
+//   OTIF         counted in deliveries (one PO, one promised date), no rate
+//                under its minimum sample of 5 deliveries, when the counts
+//                are shown instead (design audit L9-03, L9-13);
+//   open issues  the assistant's signals the supplier answers for (rejected
 //                receipts, invoice variances), read through its masked facts.
+//                Overdue orders have their own column, so the list does not
+//                count them twice; the detail page and Supplier risks list
+//                them with the rest. A receipt received but not posted is the
+//                buyer's to post, not a supplier issue (design audit L9-14).
 // Each is computed with the reader's own access and is null when the reader
 // may not see it. FlowChain never suggests a tier: tiers differ per company
 // and are set by a person (owner decision 2026-10-09).
 export const SUPPLIER_SPEND_LOOKBACK_DAYS = 365
-export const SUPPLIER_ISSUE_TYPES = Object.freeze(['po_overdue', 'grn_rejected_qty', 'grn_received_unposted', 'invoice_variance'])
+export const SUPPLIER_ISSUE_TYPES = Object.freeze(['po_overdue', 'grn_rejected_qty', 'invoice_variance'])
 // The detail page's purchase records (design §5, T3).
 export const SUPPLIER_ACTIVITY_LIMIT = 20
 
@@ -31,6 +38,23 @@ const text = (value) => String(value ?? '').trim()
 const DAY = 86400000
 const addDays = (day, days) => new Date(Date.parse(`${day}T00:00:00Z`) + days * DAY).toISOString().slice(0, 10)
 const money = (value) => Math.round(value * 100) / 100
+
+const number = (value) => (value === null || value === undefined || value === '' ? NaN : Number(value))
+// What an order closed short is worth: its received quantities at the line
+// prices. NaN when a line lacks its quantity or price, so the spend is marked
+// incomplete rather than guessed.
+function receivedValueOf(po) {
+  const lines = Array.isArray(po?.lines) ? po.lines : []
+  if (!lines.length) return NaN
+  return lines.reduce((sum, line) => {
+    const received = number(line.receivedQuantity)
+    const ordered = number(line.orderedQuantity ?? line.quantity)
+    const unitPrice = number(line.unitPrice)
+    const value = Number.isFinite(unitPrice) ? received * unitPrice : number(line.amount) * received / ordered
+    return sum + (received === 0 ? 0 : value)
+  }, 0)
+}
+const isClosedShort = (po) => text(po?.status).toLowerCase() === 'closed'
 
 // Committed purchase orders per supplier id over a window of business days.
 export function supplierPurchaseTotals(purchaseOrders = [], { from, to, timeZone }) {
@@ -41,18 +65,33 @@ export function supplierPurchaseTotals(purchaseOrders = [], { from, to, timeZone
     if (!supplierId || !isCommittedPurchaseOrder(po) || !day || day < from || day > to) continue
     const row = totals.get(supplierId) || { orders: 0, byCurrency: new Map(), amountKnown: true }
     row.orders += 1
-    const amount = Number(po.totalAmount ?? po.amount)
+    // Closed short: the rest will never be delivered or billed.
+    const amount = isClosedShort(po) ? receivedValueOf(po) : Number(po.totalAmount ?? po.amount)
     const currency = reportCurrencyCode(po.currency || po.lines?.[0]?.currency)
-    if (po.totalAmount === null || po.amount === null || !Number.isFinite(amount) || !currency) row.amountKnown = false
+    if ((!isClosedShort(po) && (po.totalAmount === null || po.amount === null)) || !Number.isFinite(amount) || !currency) row.amountKnown = false
     else row.byCurrency.set(currency, money((row.byCurrency.get(currency) || 0) + amount))
     totals.set(supplierId, row)
   }
   return totals
 }
 
-// One supplier's open issues in the assistant's date order: what the list's
-// "Open issues" counts and the detail page's "Risks and exceptions" lists.
-const isSupplierIssue = (signal, id) => Boolean(id) && text(signal.supplierId) === id && SUPPLIER_ISSUE_TYPES.includes(signal.type)
+// An order approved but never sent to the supplier (decision V5): the open
+// purchase orders report still counts it as open and, past its date, as
+// overdue, but the supplier does not have it, so it is not late against the
+// supplier. Today and the assistant say "not issued" for it; the supplier
+// pages leave it out of the supplier's overdue orders and open issues and
+// count it apart (notSentPos), as the scorecard does (design audit V-C-04,
+// L9-02). The rule is the assistant's (aiSkillPurchaseOrderNotSent).
+const notSentSignal = (signal) => signal.type === 'po_overdue' && Boolean(signal.data?.notSent)
+const countsAgainstSupplier = (signal) => SUPPLIER_ISSUE_TYPES.includes(signal.type) && !notSentSignal(signal)
+// The list's "Open issues": every issue but an overdue order, which the list
+// counts in "Overdue POs" (design audit L9-14).
+export const SUPPLIER_LIST_ISSUE_TYPES = Object.freeze(SUPPLIER_ISSUE_TYPES.filter((type) => type !== 'po_overdue'))
+
+// One supplier's open issues in the assistant's date order: what the detail
+// page's "Risks and exceptions" lists, the list's "Open issues" and
+// "Overdue POs" together.
+const isSupplierIssue = (signal, id) => Boolean(id) && text(signal.supplierId) === id && countsAgainstSupplier(signal)
 export function supplierIssueSignals(signals = [], supplierId) {
   const id = text(supplierId)
   return signals.filter((signal) => isSupplierIssue(signal, id)).sort(compareSignalsByDate)
@@ -64,24 +103,39 @@ export function buildSupplierInsights({ suppliers = [], totals = new Map(), open
   for (const row of openRows) {
     const supplierId = text(row.supplierId)
     if (!supplierId || !row.isOpen) continue
-    const counts = open.get(supplierId) || { open: 0, overdue: 0 }
+    const counts = open.get(supplierId) || { open: 0, overdue: 0, notSent: 0 }
     counts.open += 1
-    if (Number(row.overdueDays) > 0) counts.overdue += 1
+    if (aiSkillPurchaseOrderNotSent(row)) counts.notSent += 1
+    else if (Number(row.overdueDays) > 0) counts.overdue += 1
     open.set(supplierId, counts)
   }
   const scored = new Map((scorecard?.suppliers || []).map((row) => [row.supplierId, row]))
   const issues = new Map()
-  for (const supplier of suppliers) issues.set(supplier.id, signals.filter((signal) => isSupplierIssue(signal, text(supplier.id))).length)
+  for (const supplier of suppliers) issues.set(supplier.id, signals.filter((signal) => isSupplierIssue(signal, text(supplier.id)) && SUPPLIER_LIST_ISSUE_TYPES.includes(signal.type)).length)
+  // A scorecard rate with the counts behind it: a supplier with fewer than 5
+  // deliveries shows "3 of 3" rather than nothing (design audit L9-13).
+  // withheld: deliveries received in a warehouse the reader cannot see, left
+  // out (design audit L9-06).
+  const rateOf = (score, metric) => ({ rate: score?.metrics?.[metric]?.rate ?? null, count: score?.metrics?.[metric]?.count ?? 0, of: score?.metrics?.[metric]?.of ?? 0, sampleStatus: score?.sampleStatus || 'no_obligations', withheld: score?.withheldCount || 0 })
   return Object.fromEntries(suppliers.map((supplier) => {
     const total = totals.get(supplier.id)
     const score = scored.get(supplier.id)
     return [supplier.id, {
-      spend12m: visibility.amounts ? [...(total?.byCurrency || new Map())].map(([currency, amount]) => ({ currency, amount })).sort((a, b) => b.amount - a.amount || a.currency.localeCompare(b.currency)) : null,
+      // By currency code: amounts in different currencies are never compared
+      // (design audit L9-16). The page puts the workspace currency first.
+      spend12m: visibility.amounts ? [...(total?.byCurrency || new Map())].map(([currency, amount]) => ({ currency, amount })).sort((a, b) => a.currency.localeCompare(b.currency)) : null,
       spendComplete: visibility.amounts ? (total?.amountKnown ?? true) : null,
       orders12m: visibility.orders ? total?.orders || 0 : null,
       openPos: visibility.orders ? open.get(supplier.id)?.open || 0 : null,
       overduePos: visibility.orders ? open.get(supplier.id)?.overdue || 0 : null,
-      onTime: visibility.onTime ? { rate: score?.metrics?.onTime?.rate ?? null, count: score?.metrics?.onTime?.count ?? 0, of: score?.metrics?.onTime?.of ?? 0, sampleStatus: score?.sampleStatus || 'no_obligations' } : null,
+      // Open orders approved but not sent to the supplier yet: counted in
+      // openPos, never in overduePos.
+      notSentPos: visibility.orders ? open.get(supplier.id)?.notSent || 0 : null,
+      onTime: visibility.onTime ? rateOf(score, 'onTime') : null,
+      // On time and in full against the same promise (design audit L9-03): a
+      // column of its own beside on time, which a partial first receipt
+      // passes. A delivery still short inside its window is not counted yet.
+      otif: visibility.onTime ? rateOf(score, 'otif') : null,
       openIssues: visibility.issues ? issues.get(supplier.id) || 0 : null,
     }]
   }))
@@ -89,7 +143,8 @@ export function buildSupplierInsights({ suppliers = [], totals = new Map(), open
 
 // A supplier's latest purchase orders, newest first by business date in the
 // workspace timezone: the order's number, date, status, promised day, days
-// overdue while open, and its amount only with price access. The promised day
+// overdue while open (none for an order not sent to the supplier yet, which
+// says notSent instead), and its amount only with price access. The promised day
 // is the one the open purchase orders report counts days overdue from (the
 // earliest line still to receive); once every line is received, the earliest
 // line's day, else the order's expected date.
@@ -103,13 +158,15 @@ export function supplierPurchaseRecords(purchaseOrders = [], supplierId, { price
     .map(({ po, date }) => {
       const due = purchaseOrderDueDay(po) || (po.lines || []).map((line) => purchaseOrderReportLine(line, po).due).filter(Boolean).sort()[0] || reportCalendarDay(po.expectedDate) || null
       const amount = Number(po.totalAmount ?? po.amount)
+      const notSent = aiSkillPurchaseOrderNotSent(po)
       return {
         id: text(po.id),
         orderNumber: text(po.orderNumber || po.id),
         date: date || null,
         status: text(po.status),
         promisedDate: due,
-        overdueDays: overdue.get(text(po.id)) || 0,
+        overdueDays: notSent ? 0 : overdue.get(text(po.id)) || 0,
+        notSent,
         amount: prices && Number.isFinite(amount) ? money(amount) : null,
         currency: reportCurrencyCode(po.currency || po.lines?.[0]?.currency) || null,
       }
@@ -137,7 +194,7 @@ const issueRow = (signal) => ({
 export function supplierRiskRows(signals = [], suppliers = []) {
   const byId = new Map(suppliers.map((supplier) => [text(supplier.id), supplier]))
   return signals
-    .filter((signal) => SUPPLIER_ISSUE_TYPES.includes(signal.type) && byId.has(text(signal.supplierId)))
+    .filter((signal) => countsAgainstSupplier(signal) && byId.has(text(signal.supplierId)))
     .sort(compareSignalsByPrintedDate)
     .map((signal) => {
       const supplier = byId.get(text(signal.supplierId))
@@ -145,10 +202,24 @@ export function supplierRiskRows(signals = [], suppliers = []) {
     })
 }
 
+// The assistant's signals over only the facts the supplier issues need
+// (readAiSkillSupplierIssueFacts): the same issues as over its full facts
+// (readAiSkillFacts), without reading sales orders, stock or items.
+// purchaseOrders: the rows listPurchaseOrders returned, when already read.
+export const readSupplierIssueSignals = (skillContext, { purchaseOrders } = {}) => readAiSkillSupplierIssueFacts(skillContext, { purchaseOrders }).then(buildAiSkillSignals)
+
 // Reads every supplier's metrics for the signed-in reader.
-// listPurchaseOrders is the procurement runtime's listForReport.
-export function createSupplierInsightsReadService({ prisma, listPurchaseOrders, now = () => new Date() } = {}) {
+// listPurchaseOrders is the procurement runtime's listForReport; the issues
+// are read from the orders it returns. readIssueSignals reads the issues; the
+// tests pass the full facts' signals to check this one gives the same.
+export function createSupplierInsightsReadService({ prisma, listPurchaseOrders, now = () => new Date(), readIssueSignals = readSupplierIssueSignals } = {}) {
   if (!prisma) throw new Error('prisma is required')
+  // The purchase orders, read once, and the issues read from them.
+  const ordersAndIssues = async (skillContext, { orders, issues }) => {
+    const purchaseOrders = orders && listPurchaseOrders ? await listPurchaseOrders({ tenantId: skillContext.tenantId }) : undefined
+    const signals = issues ? await readIssueSignals(skillContext, { purchaseOrders }) : []
+    return { purchaseOrders: purchaseOrders || [], signals }
+  }
   return {
     async read(ctx) {
       const instant = now()
@@ -163,14 +234,13 @@ export function createSupplierInsightsReadService({ prisma, listPurchaseOrders, 
         issues: Boolean(access.collections.purchaseOrders || access.collections.receipts || access.collections.supplierInvoices),
       }
       const window = { from: addDays(today, -(SUPPLIER_SPEND_LOOKBACK_DAYS - 1)), to: today }
-      const [suppliers, purchaseOrders] = await Promise.all([
+      const [suppliers, { purchaseOrders, signals }, scorecard] = await Promise.all([
         prisma.supplier.findMany({ where: { tenantId }, select: { id: true, name: true, status: true }, orderBy: [{ name: 'asc' }, { id: 'asc' }] }),
-        visibility.orders && listPurchaseOrders ? listPurchaseOrders({ tenantId }) : [],
+        ordersAndIssues(skillContext, { orders: visibility.orders, issues: visibility.issues }),
+        visibility.onTime ? createSupplierScorecardReadService({ prisma, now: () => instant }).read({}, { actor }) : null,
       ])
       const totals = supplierPurchaseTotals(purchaseOrders, { ...window, timeZone: tenant.timezone })
       const openRows = visibility.orders ? buildOpenPurchaseOrdersReport(purchaseOrders, { export: 'true' }, instant, { timeZone: tenant.timezone }).exportRows || [] : []
-      const scorecard = visibility.onTime ? await createSupplierScorecardReadService({ prisma, now: () => instant }).read({}, { actor }) : null
-      const signals = visibility.issues ? buildAiSkillSignals(await readAiSkillFacts(skillContext)) : []
       return {
         asOf: today,
         lookbackDays: SUPPLIER_SPEND_LOOKBACK_DAYS,
@@ -200,12 +270,11 @@ export function createSupplierInsightsReadService({ prisma, listPurchaseOrders, 
         invoiceAmounts: Boolean(access.collections.supplierInvoices && access.partner && access.amounts),
         issues: Boolean(access.collections.purchaseOrders || access.collections.receipts || access.collections.supplierInvoices),
       }
-      const [purchaseOrders, invoices, signals] = await Promise.all([
-        visibility.orders && listPurchaseOrders ? listPurchaseOrders({ tenantId }) : [],
+      const [{ purchaseOrders, signals }, invoices] = await Promise.all([
+        ordersAndIssues(skillContext, { orders: visibility.orders, issues: visibility.issues }),
         visibility.invoices
-          ? prisma.supplierInvoice.findMany({ where: { tenantId, supplierId: supplier.id }, orderBy: [{ invoiceDate: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }], take: SUPPLIER_ACTIVITY_LIMIT + 1, select: { id: true, invoiceNumber: true, invoiceDate: true, dueDate: true, status: true, matchStatus: true, totalAmount: true, amount: true, currency: true, createdAt: true } })
+          ? prisma.supplierInvoice.findMany({ where: { tenantId, supplierId: supplier.id }, orderBy: [{ invoiceDate: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }], take: SUPPLIER_ACTIVITY_LIMIT + 1, select: { id: true, invoiceNumber: true, invoiceDate: true, dueDate: true, status: true, matchStatus: true, totalAmount: true, amount: true, currency: true, createdAt: true, payableObligation: { select: { status: true } } } })
           : [],
-        visibility.issues ? readAiSkillFacts(skillContext).then(buildAiSkillSignals) : [],
       ])
       const mine = purchaseOrders.filter((po) => text(po.supplierId) === supplier.id)
       const openRows = visibility.orders ? buildOpenPurchaseOrdersReport(mine, { export: 'true' }, instant, { timeZone: tenant.timezone }).exportRows || [] : []
@@ -227,6 +296,9 @@ export function createSupplierInsightsReadService({ prisma, listPurchaseOrders, 
               dueDate: dayOf(row.dueDate),
               status: text(row.status),
               matchStatus: text(row.matchStatus) || null,
+              // Where an approved invoice's payment stands, as the invoice
+              // list says it (design audit U-22).
+              paymentStatus: billPaymentStatus(row.status, row.payableObligation?.status),
               amount: visibility.invoiceAmounts ? decimal(row.totalAmount ?? row.amount) : null,
               currency: reportCurrencyCode(row.currency) || null,
             })),
@@ -253,7 +325,7 @@ export function createSupplierInsightsReadService({ prisma, listPurchaseOrders, 
       }
       const [suppliers, signals] = await Promise.all([
         prisma.supplier.findMany({ where: { tenantId }, select: { id: true, code: true, name: true }, orderBy: [{ name: 'asc' }, { id: 'asc' }] }),
-        visibility.issues ? readAiSkillFacts(skillContext).then(buildAiSkillSignals) : [],
+        visibility.issues ? readIssueSignals(skillContext) : [],
       ])
       return {
         asOf: today,

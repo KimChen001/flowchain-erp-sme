@@ -1,3 +1,4 @@
+import { DEFAULT_TENANT_TIMEZONE, tenantCalendarDay } from '../domain/tenant-calendar-day.mjs'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { PilotIdentityError, resolveProvisionedActor } from '../domain/pilot-identity.mjs'
@@ -42,6 +43,10 @@ const publicWorkspace = (tenant, baseCurrencyLocked = false) => ({
   locale: tenant.locale,
   defaultLanguage: tenant.defaultLanguage,
   baseCurrencyLocked,
+  // Posted records keep the day they were posted in this timezone; changing it
+  // afterwards would move those days on screen and on reprinted documents
+  // (design audit L11-27), so it locks with the base currency.
+  timezoneLocked: baseCurrencyLocked,
   workspaceCompletedAt: tenant.workspaceCompletedAt,
   version: tenant.version,
   options: {
@@ -138,6 +143,9 @@ export async function handlePilotWorkspaceRoute(ctx) {
         effectiveLanguage: effectiveLanguage(actor.user, tenant),
         locale: tenant.locale,
         timezone: tenant.timezone,
+        // Today on the workspace's calendar, so every page counts days late
+        // from the same day as Today and the finance pages (design audit B3).
+        workspaceToday: tenantCalendarDay(new Date(), tenant.timezone || DEFAULT_TENANT_TIMEZONE),
         workspaceName: tenant.name,
       }); return true
     }
@@ -150,9 +158,12 @@ export async function handlePilotWorkspaceRoute(ctx) {
       // a request without the field keeps the current choice.
       const approvalEmails = Object.hasOwn(body, 'approvalEmailsEnabled')
       if (approvalEmails && typeof body.approvalEmailsEnabled !== 'boolean') fail('INVALID_PREFERENCE', 'approvalEmailsEnabled must be true or false.', 400)
+      // The version the change is based on is required: without it the
+      // update reached the database as NaN and answered 500 (fresh walk 11/18).
+      if (!Number.isInteger(Number(body.version)) || body.version === null || body.version === '') fail('VERSION_REQUIRED', 'Send the profile version you are changing.', 422)
       const before = publicUser(actor.user)
       const result = await prisma.$transaction(async tx => {
-        const updated = await tx.user.updateMany({ where: { id: actor.user.id, tenantId: actor.tenantId, version: Number(body.version) }, data: { name: text(body.name), jobTitle: text(body.jobTitle) || null, languagePreference, ...(approvalEmails ? { approvalEmailsEnabled: body.approvalEmailsEnabled } : {}), defaultWarehouseId: text(body.defaultWarehouseId) || null, profileCompletedAt: text(body.name) && text(body.jobTitle) ? new Date() : null, version: { increment: 1 } } })
+        const updated = await tx.user.updateMany({ where: { id: actor.user.id, tenantId: actor.tenantId, version: Number(body.version) }, data: { name: Object.hasOwn(body, 'name') ? text(body.name) : actor.user.name, jobTitle: Object.hasOwn(body, 'jobTitle') ? text(body.jobTitle) || null : actor.user.jobTitle, languagePreference, ...(approvalEmails ? { approvalEmailsEnabled: body.approvalEmailsEnabled } : {}), defaultWarehouseId: text(body.defaultWarehouseId) || null, profileCompletedAt: text(body.name) && text(body.jobTitle) ? new Date() : null, version: { increment: 1 } } })
         if (updated.count !== 1) fail('VERSION_CONFLICT', 'Profile changed concurrently.', 409)
         const user = await tx.user.findUnique({ where: { id: actor.user.id }, include: { warehouseScopes: true } })
         await tx.auditLog.create({ data: auditData({ actor, action: 'profile_settings_updated', entityType: 'User', entityId: actor.user.id, summary: 'User profile and language preference updated.', before, after: publicUser(user) }) })
@@ -180,6 +191,7 @@ export async function handlePilotWorkspaceRoute(ctx) {
         const defaultLanguage = assertSupportedLanguage(body.defaultLanguage || current.defaultLanguage)
         const locked = await hasPostedTransactions(tx, actor.tenantId, current)
         if (locked && baseCurrency !== current.currency) fail('BASE_CURRENCY_LOCKED', 'Base currency cannot change after posted transactions exist.', 409)
+        if (locked && timezone !== current.timezone) fail('TIMEZONE_LOCKED', 'Timezone cannot change after posted transactions exist.', 409)
         const updated = await tx.tenant.updateMany({ where: { id: actor.tenantId, version: Number(body.version) }, data: { name: workspaceName, legalName: companyName || null, countryCode: text(body.countryCode) || current.countryCode || 'US', currency: baseCurrency, timezone, locale, defaultLanguage, workspaceCompletedAt: workspaceName && companyName && baseCurrency && timezone ? new Date() : null, version: { increment: 1 } } })
         if (updated.count !== 1) fail('VERSION_CONFLICT', 'Workspace changed concurrently.', 409)
         const next = await tx.tenant.findUnique({ where: { id: actor.tenantId } })

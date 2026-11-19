@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  availableRecordLedger,
   receivingDecimalString,
   receivingMovementNetUnits,
   replayLedgerWithoutMovement,
@@ -129,4 +130,31 @@ test('the replay trusts the order it is given', () => {
   const consumedFirst = replayLedgerWithoutMovement([receipt('grn-1', '4'), outbound('transfer', '3'), receipt('grn-2', '4')], 'grn-1')
   assert.equal(inOrder.lowest >= 0n, true)
   assert.equal(consumedFirst.lowest < 0n, true)
+})
+
+test('quarantine stock at the same location does not hide an outbound that used the receipt (L8-18)', () => {
+  // Receive 5 to A-01, a customer return of 5 goes to quarantine at A-01, then
+  // 5 are shipped from available stock. Quarantine stock cannot be shipped, so
+  // the shipment used the receipt and the receipt may not be reversed.
+  const ledger = [
+    { ...receipt('grn-1', '5'), movementType: 'receipt_posting' },
+    { ...receipt('return-in', '5'), movementType: 'customer_return_quarantine_in', metadata: { balanceType: 'quarantine' } },
+    { ...outbound('ship', '5'), movementType: 'shipment_posting' },
+  ]
+  // Counting the quarantine receipt, the location never goes negative.
+  assert.equal(units(replayLedgerWithoutMovement(ledger, 'grn-1').lowest), '0.0000')
+  const available = availableRecordLedger(ledger)
+  assert.deepEqual(available.map((row) => row.id), ['grn-1', 'ship'])
+  assert.equal(units(replayLedgerWithoutMovement(available, 'grn-1').lowest), '-5.0000')
+  assert.equal(calculateMovementBalance(available), '0.0000')
+  // A supplier return from quarantine is quarantine too; one from available
+  // stock, or with no recorded balance type, is not.
+  assert.deepEqual(
+    availableRecordLedger([
+      { ...outbound('back-q', '1'), movementType: 'supplier_return_out', metadata: { balanceType: 'quarantine' } },
+      { ...outbound('back-a', '1'), movementType: 'supplier_return_out', metadata: { balanceType: 'available' } },
+      { ...outbound('back-old', '1'), movementType: 'supplier_return_out' },
+    ]).map((row) => row.id),
+    ['back-a', 'back-old'],
+  )
 })

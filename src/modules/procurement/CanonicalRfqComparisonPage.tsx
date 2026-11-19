@@ -12,6 +12,7 @@ import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import { compareQuote } from "../../../shared/price-history.mjs";
 import { formatCalendarDay, formatDateTimeInTimeZone } from "../../lib/format";
 import { rfqMoney, rfqQuantity } from "./rfqFormat";
+import { RfqNoOrderNote } from "./RfqNoOrderNote";
 import { procurementErrorText } from "./procurementErrors";
 import type {
   RfqAwardDecision,
@@ -333,6 +334,7 @@ function LoadedComparison({ comparison, award, canAward, onAward }: { comparison
   return (
     <div className="space-y-4" data-testid="canonical-rfq-comparison">
       <Link className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline" to={`/app/procurement/rfq/${encodeURIComponent(comparison.rfqId)}`}><ArrowLeft size={13} />{tr(`返回 ${rfqNumber}`, `Back to ${rfqNumber}`)}</Link>
+      <RfqNoOrderNote />
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0"><div className="text-xs font-semibold uppercase tracking-wide" style={{ color: A.sub }}>{tr("只读供应商报价比较", "Supplier quotation comparison")} · {rfqNumber}</div><h1 className="fc-page-title mt-1">{comparison.rfqTitle || rfqNumber}</h1><p className="mt-2 text-xs" style={{ color: A.sub }}>{tr("本页不排名、不推荐、不授标，也不创建采购订单。", "This page does not rank or recommend suppliers. A formal award requires a separate authorized human decision and does not create a purchase order.")}</p></div>

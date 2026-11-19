@@ -230,7 +230,7 @@ test('the risk, shortage, reserved and status filters select exactly the orders 
 // The sales order list behind those figures (GET /api/sales/orders).
 const TENANT = 'tenant-a'
 const identity = { authenticated: true, tenantId: TENANT, userId: 'user-1', role: 'manager' }
-const permissions = ['sales_order.read', 'sales_order.revise', 'sales_order.submit', 'sales_order.cancel', 'shipment.read', 'shipment.prepare']
+const permissions = ['sales_order.read', 'sales_order.revise', 'sales_order.submit', 'sales_order.cancel', 'sales_order.hold', 'shipment.read', 'shipment.prepare']
 const user = {
   id: 'user-1', tenantId: TENANT, role: 'manager', status: 'active', rolesAssignedAt: new Date('2026-11-01T00:00:00Z'),
   warehouseScopes: [{ warehouseId: 'WH-1', accessLevel: 'operate' }],

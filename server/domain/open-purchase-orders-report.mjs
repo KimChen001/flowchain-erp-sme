@@ -46,15 +46,21 @@ export function purchaseOrderDueDay(po) {
   return dates[0] || (!lines.length ? day(po?.expectedDate) : '')
 }
 
+export const OVERDUE_SUPPLIERS_SHOWN = 5
+
 // Overdue days count to the tenant's calendar day (options.timeZone, the
 // workspace timezone), so an order due today is not late in the evening
 // merely because UTC has moved on to tomorrow.
+// A row's supplier key: its supplier id, or its name when it has none.
+const supplierKey = row => row.supplierId || row.supplier
+
 export function buildOpenPurchaseOrdersReport(purchaseOrders = [], filters = {}, now = new Date(), { timeZone = DEFAULT_TENANT_TIMEZONE } = {}) {
   if (['from', 'to'].some(key => filters[key] && (!day(filters[key]) || text(filters[key]).length !== 10)) || (filters.from && filters.to && filters.from > filters.to)) {
     throw Object.assign(new Error('Enter a valid date range in YYYY-MM-DD format.'), { status: 422, code: 'REPORT_DATE_RANGE_INVALID' })
   }
   const timezone = text(timeZone) || DEFAULT_TENANT_TIMEZONE
   const asOf = tenantCalendarDay(now, timezone)
+  const recordedNames = new Map()
   const source = purchaseOrders.map(po => {
     const lines = (po.lines || []).map(line => purchaseOrderReportLine(line, po))
     const openLines = lines.filter(line => line.open)
@@ -64,18 +70,29 @@ export function buildOpenPurchaseOrdersReport(purchaseOrders = [], filters = {},
     const dueDate = purchaseOrderDueDay(po)
     const overdueDays = isOpen ? daysLate(dueDate, asOf) : 0
     const dataIncomplete = !lines.length || lines.some(line => line.ordered === null || line.received === null) || (isOpen && (!dueDate || openLines.some(line => !line.due)))
+    // The supplier by its current name in Suppliers (listForReport reads it),
+    // else the name the order recorded: a renamed supplier is one name here,
+    // on Today and in the assistant, and its old orders stay under it.
+    const recorded = text(po.supplierSnapshot?.supplierName || po.supplierName || po.supplierId)
+    if (recorded) recordedNames.set(text(po.id), recorded)
     return {
-      id: text(po.id), orderNumber: text(po.orderNumber || po.id), supplier: text(po.supplierSnapshot?.supplierName || po.supplierName || po.supplierId),
+      id: text(po.id), orderNumber: text(po.orderNumber || po.id), supplier: text(po.currentSupplierName) || recorded,
       supplierId: text(po.supplierId), createdDate: purchaseOrderBusinessDate(po, timezone), dueDate, overdueDays, owner: text(po.owner),
       ...orderQuantities(lines),
+      // Lines still to receive and in all: an order of several SKUs has no
+      // quantity totals, so its row says how many lines are open instead.
+      openLines: openLines.length, lineCount: lines.length,
       amount: numeric(po.totalAmount ?? po.amount), currency: text(po.currency), status: text(po.status), isOpen, dataIncomplete,
     }
   })
-  const query = { from: day(filters.from), to: day(filters.to), supplier: text(filters.supplier), currency: text(filters.currency), search: text(filters.search), scope: ['all', 'overdue', 'incomplete'].includes(filters.scope) ? filters.scope : filters.overdue === 'true' ? 'overdue' : 'open', sort: text(filters.sort) || 'overdueDays', direction: filters.direction === 'asc' ? 'asc' : 'desc' }
+  const query = { from: day(filters.from), to: day(filters.to), supplierId: text(filters.supplierId), supplier: text(filters.supplier), currency: text(filters.currency), search: text(filters.search), scope: ['all', 'overdue', 'incomplete'].includes(filters.scope) ? filters.scope : filters.overdue === 'true' ? 'overdue' : 'open', sort: text(filters.sort) || 'overdueDays', direction: filters.direction === 'asc' ? 'asc' : 'desc' }
   const rows = source.filter(row =>
     (query.scope === 'all' || row.isOpen) && (query.scope !== 'overdue' || row.overdueDays > 0) && (query.scope !== 'incomplete' || row.dataIncomplete) &&
     (!query.from || row.createdDate >= query.from) && (!query.to || Boolean(row.createdDate) && row.createdDate <= query.to) &&
-    (!query.supplier || row.supplier === query.supplier) && (!query.currency || row.currency === query.currency) &&
+    // A supplier is chosen by its id (an order with no supplier id by its
+    // name); a link that names one by name finds its current or recorded name.
+    (!query.supplierId || supplierKey(row) === query.supplierId) &&
+    (!query.supplier || row.supplier === query.supplier || recordedNames.get(row.id) === query.supplier) && (!query.currency || row.currency === query.currency) &&
     (!query.search || [row.orderNumber, row.supplier, row.owner].some(value => value.toLowerCase().includes(query.search.toLowerCase())))
   )
   const sortKey = ['orderNumber', 'supplier', 'createdDate', 'dueDate', 'overdueDays', 'remaining', 'owner', 'status'].includes(query.sort) ? query.sort : 'overdueDays'
@@ -93,12 +110,25 @@ export function buildOpenPurchaseOrdersReport(purchaseOrders = [], filters = {},
   const currencies = [...new Set(rows.map(row => row.currency))].sort()
   const totals = currencies.map(currency => ({ currency, amount: sumKnown(rows.filter(row => row.currency === currency).map(row => row.amount)) }))
   const supplierCounts = new Map()
-  for (const row of rows.filter(row => row.isOpen && row.overdueDays > 0)) supplierCounts.set(row.supplier, (supplierCounts.get(row.supplier) || 0) + 1)
+  for (const row of rows.filter(row => row.isOpen && row.overdueDays > 0)) {
+    const key = supplierKey(row)
+    supplierCounts.set(key, { supplierId: key, supplier: row.supplier, count: (supplierCounts.get(key)?.count || 0) + 1 })
+  }
+  // The five suppliers with the most overdue orders, and what the five leave
+  // out: how many more suppliers have overdue orders and how many orders they
+  // hold, so the chart's bars and the overdue count add up.
+  const overdueRanking = [...supplierCounts.values()].sort((a, b) => b.count - a.count || a.supplier.localeCompare(b.supplier))
+  const overdueSuppliers = overdueRanking.slice(0, OVERDUE_SUPPLIERS_SHOWN)
   return {
-    overdueSuppliers: [...supplierCounts].map(([supplier, count]) => ({ supplier, count })).sort((a, b) => b.count - a.count || a.supplier.localeCompare(b.supplier)).slice(0, 5),
+    overdueSuppliers,
+    overdueSupplierTotal: overdueRanking.length,
+    overdueOrdersNotShown: overdueRanking.slice(OVERDUE_SUPPLIERS_SHOWN).reduce((total, row) => total + row.count, 0),
     asOf, timezone, generatedAt: now.toISOString(), query, total, page, pageSize, pages,
     summary: { open: rows.filter(row => row.isOpen).length, overdue: rows.filter(row => row.isOpen && row.overdueDays > 0).length, incomplete: rows.filter(row => row.dataIncomplete).length, totals },
-    suppliers: [...new Set(source.map(row => row.supplier).filter(Boolean))].sort(), currencies: [...new Set(source.map(row => row.currency).filter(Boolean))].sort(),
+    suppliers: [...new Set(source.map(row => row.supplier).filter(Boolean))].sort(),
+    // The supplier filter's choices: each supplier once, by id, with its current name.
+    supplierOptions: [...new Map(source.filter(row => row.supplier).map(row => [supplierKey(row), { id: supplierKey(row), name: row.supplier }])).values()].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)),
+    currencies: [...new Set(source.map(row => row.currency).filter(Boolean))].sort(),
     rows: rows.slice((page - 1) * pageSize, page * pageSize),
     ...(filters.export === 'true' ? { exportRows: rows } : {}),
   }

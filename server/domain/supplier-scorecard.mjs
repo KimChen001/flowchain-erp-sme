@@ -13,8 +13,8 @@ import { currentPromisedDay, promiseDay } from './purchase-order-promise-dates.m
 // share one original promised date. A 12-line order promised for one day is
 // one delivery, not twelve, so a large order cannot outweigh many small ones.
 // Until suppliers confirm dates in FlowChain, the original promise is the date
-// on the PO when it was approved, which may be the buyer's need date
-// (rules.promiseBasis 'po_date').
+// on the PO when it was issued or first received, which may be the buyer's
+// need date (rules.promiseBasis 'po_date'; design audit L1-05).
 //
 // Only orders the supplier actually got are measured (owner decision of
 // 2026-10-06, as decision V5 chases only issued orders): a PO issued to the
@@ -53,6 +53,10 @@ import { currentPromisedDay, promiseDay } from './purchase-order-promise-dates.m
 //                   rejected) over the lines of the sample deliveries; none when
 //                   the lines are for more than one SKU or use different units,
 //                   whose quantities cannot be added
+//   receipt lines   receipt lines (one PO line on one posted receipt) with a
+//   with rejections quantity rejected, over every receipt line of the sample
+//                   deliveries: counted, never added, so it holds for any mix
+//                   of SKUs and units (design audit L9-04)
 //   average delay   mean, over the late deliveries, of the days from the
 //                   original promise to the last line's first receipt (for a
 //                   line with none, today, or the day it was closed)
@@ -123,8 +127,9 @@ export function wilsonInterval(successes, trials, z = WILSON_Z) {
 // on the report dashboards: committed orders (approved, issued or received).
 // Drafts, pending approvals and rejections were never promised; a cancelled
 // order was called off by the buyer, so its undelivered lines are not late.
-// An approved order can still be cancelled, and approval records the original
-// promise, so cancelled orders are left out explicitly.
+// An approved order can still be cancelled, and an order issued and then
+// cancelled has an original promise, so cancelled orders are left out
+// explicitly.
 export const isPromiseMeasuredPurchaseOrder = (purchaseOrder) => isCommittedPurchaseOrder(purchaseOrder)
 const PROMISE_UNMEASURED_PO_STATUSES = ['draft', 'pending_approval', 'rejected', 'cancelled']
 
@@ -372,6 +377,10 @@ export function summarizeScorecardLines({ lines = [], invoices = [], lineAmounts
   const addable = !mixedUnits && !multipleSkus
   const wholeUnits = Number.isInteger(receivedQuantity) && Number.isInteger(rejectedQuantity)
   const rejectionRate = sufficient && addable ? rate(rejectedQuantity, receivedQuantity) : null
+  // Receipt lines of the sample deliveries, and those with a quantity rejected.
+  const receiptLines = sampleLines.flatMap((line) => line.receipts || [])
+  const rejectedReceiptLines = receiptLines.filter((entry) => quantity(entry.rejected) > 0).length
+  const rejectedLinesRate = sufficient && receiptLines.length ? rate(rejectedReceiptLines, receiptLines.length) : null
   const variances = invoices === null ? null : [...invoices].sort((a, b) => text(a.invoiceDate).localeCompare(text(b.invoiceDate)) || text(a.supplierInvoiceId).localeCompare(text(b.supplierInvoiceId)))
   const pending = sample.filter((obligation) => obligation.inFullPending)
   const overdue = sample.filter((obligation) => obligation.overdueUndelivered)
@@ -408,6 +417,10 @@ export function summarizeScorecardLines({ lines = [], invoices = [], lineAmounts
         // real uncertainty when rejections come in batches.
         interval: rejectionRate === null || !wholeUnits ? null : wilsonInterval(rejectedQuantity, receivedQuantity),
       },
+      // Shown when the quantities cannot be added. Each receipt line counts as
+      // one trial, so the interval is narrower than the real uncertainty when
+      // rejections come in batches.
+      rejectedLines: { count: rejectedReceiptLines, of: receiptLines.length, rate: rejectedLinesRate, interval: rejectedLinesRate === null ? null : wilsonInterval(rejectedReceiptLines, receiptLines.length) },
       averageDelayDays: { value: late.length ? round(late.reduce((sum, obligation) => sum + obligation.daysLate, 0) / late.length, 1) : null, lateCount: late.length },
       priceVariances: variances === null
         ? { count: null, visible: false, amounts: [] }
@@ -458,10 +471,17 @@ function notSentPurchaseOrder(purchaseOrder, { inPeriod, lineAmounts }) {
 //   receivedPurchaseOrderIds  POs with a posted receipt in any warehouse, so
 //                   an order the supplier delivered is measured even when the
 //                   reader cannot see the receipt
+//   withheldPurchaseOrderIds  POs with a posted receipt in a warehouse the
+//                   reader cannot see. Without that receipt a delivered line
+//                   would read as late and undelivered, and with it the reader
+//                   would learn when another warehouse received it, so these
+//                   POs' deliveries are left out of every figure and only
+//                   counted (withheldCount; design audit L9-06)
 export function buildSupplierScorecard({
   purchaseOrders = [],
   receipts = [],
   receivedPurchaseOrderIds: receivedAnyWarehouse = [],
+  withheldPurchaseOrderIds = [],
   invoices = null,
   suppliers = [],
   period,
@@ -486,10 +506,11 @@ export function buildSupplierScorecard({
       receiptLines.get(line.purchaseOrderLineId).push({ receivingDocumentId: document.id, day, accepted: line.acceptedQty, rejected: line.rejectedQty })
     }
   }
+  const withheld = new Set([...withheldPurchaseOrderIds].map(text).filter(Boolean))
   const names = new Map(suppliers.map((row) => [row.id, text(row.name)]))
   const bySupplier = new Map()
   const entry = (id, name) => {
-    if (!bySupplier.has(id)) bySupplier.set(id, { supplierId: id, supplierName: names.get(id) || text(name) || id, lines: [], notRecorded: [], notSent: [], invoices: [] })
+    if (!bySupplier.has(id)) bySupplier.set(id, { supplierId: id, supplierName: names.get(id) || text(name) || id, lines: [], notRecorded: [], notSent: [], withheld: [], invoices: [] })
     return bySupplier.get(id)
   }
   if (supplierId) entry(supplierId)
@@ -511,6 +532,11 @@ export function buildSupplierScorecard({
     for (const line of purchaseOrder.lines || []) {
       const evaluated = evaluatePromiseLine({ line, purchaseOrder, receipts: receiptLines.get(line.id) || [], asOfDay, graceDays, earlyDays, timeZone })
       const withMoney = { ...evaluated, currency: text(purchaseOrder.currency) || null, amount: visibility.lineAmounts ? round(quantity(line.amount), 2) : null }
+      // Received in part where the reader cannot see: counted, not judged.
+      if (withheld.has(text(purchaseOrder.id))) {
+        if (['evaluated', 'not_received'].includes(evaluated.status) && inPeriod(evaluated.originalPromisedDate)) entry(id, purchaseOrder.supplierName).withheld.push(withMoney)
+        continue
+      }
       if (evaluated.status === 'evaluated' && inPeriod(evaluated.originalPromisedDate)) entry(id, purchaseOrder.supplierName).lines.push(withMoney)
       else if (evaluated.status === 'not_received' && inPeriod(evaluated.originalPromisedDate)) notDue.set(id, [...(notDue.get(id) || []), withMoney])
       else if (evaluated.status === 'original_not_recorded' && inPeriod(evaluated.currentPromisedDate)) entry(id, purchaseOrder.supplierName).notRecorded.push(withMoney)
@@ -542,7 +568,11 @@ export function buildSupplierScorecard({
     originalNotRecordedLines: supplier.notRecorded,
     notSentCount: supplier.notSent.length,
     notSentPurchaseOrders: [...supplier.notSent].sort((a, b) => text(a.promisedDate).localeCompare(text(b.promisedDate)) || a.purchaseOrderId.localeCompare(b.purchaseOrderId)),
+    // Deliveries left out because a receipt against them is in a warehouse the
+    // reader cannot see (only the count: no dates, lines or quantities).
+    withheldCount: groupDeliveryObligations(supplier.withheld).length,
   })).sort((a, b) => b.sampleSize - a.sampleSize || a.supplierName.localeCompare(b.supplierName))
+  if (rows.some((row) => row.withheldCount > 0) && !limitations.includes('deliveries_withheld_other_warehouses')) limitations = [...limitations, 'deliveries_withheld_other_warehouses']
 
   return {
     version: SUPPLIER_SCORECARD_VERSION,
@@ -597,10 +627,14 @@ export function createSupplierScorecardReadService({ prisma, now = () => new Dat
       // Whether a PO was delivered is a fact about the PO, not about the
       // receipts this reader may see: an order with a posted receipt in any
       // warehouse was sent to the supplier, so it is measured, not listed as
-      // not sent. Only the PO ids are read here.
-      const receivedPurchaseOrderIds = purchaseOrders.length && !actor.allWarehouses
-        ? (await prisma.receivingDocument.findMany({ where: { tenantId, poId: { in: purchaseOrders.map((row) => row.id) }, postingStatus: 'posted' }, select: { poId: true } })).map((row) => row.poId)
+      // not sent. Only the PO ids and warehouses are read here: a PO with a
+      // receipt in a warehouse the reader cannot see is withheld, not judged.
+      const receivedAnyWarehouse = purchaseOrders.length && !actor.allWarehouses
+        ? await prisma.receivingDocument.findMany({ where: { tenantId, poId: { in: purchaseOrders.map((row) => row.id) }, postingStatus: 'posted' }, select: { poId: true, warehouseId: true } })
         : []
+      const readable = new Set([...(actor.readWarehouseIds || [])])
+      const receivedPurchaseOrderIds = receivedAnyWarehouse.map((row) => row.poId)
+      const withheldPurchaseOrderIds = receivedAnyWarehouse.filter((row) => row.warehouseId && !readable.has(row.warehouseId)).map((row) => row.poId)
       const invoices = allowed('finance.supplier_invoice.read')
         ? await prisma.supplierInvoice.findMany({ where: { tenantId, ...supplierWhere }, include: { lines: true, matchRuns: { include: { exceptions: true } } }, orderBy: [{ id: 'asc' }] })
         : null
@@ -610,7 +644,7 @@ export function createSupplierScorecardReadService({ prisma, now = () => new Dat
       if (invoices === null) limitations.push('price_variances_hidden_by_permission')
       if (!actor.allWarehouses) limitations.push('receipts_limited_to_your_warehouses')
       return buildSupplierScorecard({
-        purchaseOrders, receipts, receivedPurchaseOrderIds, invoices, suppliers, period, asOfDay, timeZone, graceDays, supplierId,
+        purchaseOrders, receipts, receivedPurchaseOrderIds, withheldPurchaseOrderIds, invoices, suppliers, period, asOfDay, timeZone, graceDays, supplierId,
         visibility: { lineAmounts: allowed('procurement.prices.read'), invoiceAmounts: allowed('finance.amounts.read') },
         generatedAt: instant.toISOString(),
         limitations,

@@ -108,8 +108,36 @@ test('supplier tiers and owners are set with a reason, audited, filtered and cou
     const renamed = await asManager('PATCH', '/api/master-data/suppliers/SUP-T1', { supplierName: 'Alpha Components Ltd', expectedVersion: 5 })
     assert.deepEqual([renamed.status, renamed.payload.supplier.tier, renamed.payload.supplier.businessOwner?.name, renamed.payload.supplier.version], [200, 1, 'Tiers buyer', 6])
 
+    // Design audit L9-12: keeping the tier records a review, with a reason and
+    // the next review date, and the audit row keeps the indicators the
+    // reviewer saw, read by the server with their access (never the body's).
+    const reviewOf = (body) => asManager('POST', '/api/master-data/suppliers/SUP-T1/tier-review', body)
+    assert.deepEqual(await reviewOf({ reason: 'ok', expectedVersion: 6 }).then((r) => [r.status, r.payload.details?.map((d) => d.field)]), [422, ['reason']])
+    assert.deepEqual(await reviewOf({ reason: 'Quarterly review', nextReviewOn: '2027-02-30', expectedVersion: 6 }).then((r) => [r.status, r.payload.details?.map((d) => d.field)]), [422, ['nextReviewOn']])
+    assert.deepEqual(await reviewOf({ reason: 'Quarterly review', expectedVersion: 5 }).then((r) => [r.status, r.payload.code]), [409, 'VERSION_CONFLICT'])
+    const reviewed = await reviewOf({ reason: 'Still the only source of the flow controller', nextReviewOn: '2027-02-15', indicators: { onTime: { rate: 1 } }, expectedVersion: 6 })
+    assert.equal(reviewed.status, 200, JSON.stringify(reviewed.payload))
+    assert.deepEqual([reviewed.payload.supplier.tier, reviewed.payload.supplier.tierReason, reviewed.payload.supplier.tierNextReviewOn, reviewed.payload.supplier.version], [1, 'Second source withdrawn', '2027-02-15', 7])
+    assert.ok(reviewed.payload.supplier.tierReviewedAt)
+    const reviewRow = await prisma.auditLog.findFirst({ where: { tenantId: tenant, entityId: 'SUP-T1', action: 'tier_reviewed' } })
+    assert.deepEqual([reviewRow.metadata.tier, reviewRow.metadata.reason, reviewRow.metadata.nextReviewOn, reviewRow.metadata.version, reviewRow.actorId], [1, 'Still the only source of the flow controller', '2027-02-15', 7, `${tenant}-manager`])
+    // No purchase orders here: no deliveries and nothing overdue, as the list reads it.
+    assert.deepEqual([reviewRow.metadata.indicators.onTime, reviewRow.metadata.indicators.overduePos], [{ rate: null, count: 0, of: 0 }, 0])
+    const history = (await asManager('GET', '/api/master-data/suppliers/SUP-T1')).payload.supplier.tierHistory
+    assert.deepEqual([history[0].kind, history[0].tier, history[0].reason, history[0].nextReviewOn, 'indicators' in history[0]], ['review', 1, 'Still the only source of the flow controller', '2027-02-15', false])
+    // A change to the same tier is still refused; the review is the way to keep it.
+    assert.deepEqual(await tierOf('/api/master-data/suppliers/SUP-T1/tier', { tier: 1, reason: 'Same again', expectedVersion: 7 }).then((r) => [r.status, r.payload.code]), [422, 'TIER_UNCHANGED'])
+    // A change keeps the indicators and its next review date too.
+    const lowered = await tierOf('/api/master-data/suppliers/SUP-T2/tier', { tier: 3, reason: 'Occasional orders only', nextReviewOn: '2027-05-01', expectedVersion: 1 })
+    assert.deepEqual([lowered.status, lowered.payload.supplier.tierNextReviewOn], [200, '2027-05-01'])
+    const loweredRow = await prisma.auditLog.findFirst({ where: { tenantId: tenant, entityId: 'SUP-T2', action: 'tier_change' } })
+    assert.deepEqual([loweredRow.metadata.nextReviewOn, loweredRow.metadata.indicators.otif], ['2027-05-01', { rate: null, count: 0, of: 0 }])
+    // Others may not record a review.
+    const asReader = await signIn('viewer')
+    assert.deepEqual(await asReader('POST', '/api/master-data/suppliers/SUP-T1/tier-review', { reason: 'Not allowed', expectedVersion: 7 }).then((r) => [r.status, r.payload.code]), [403, 'PERMISSION_DENIED'])
+
     // Tabs: filtered and counted in the database, under the same search.
-    assert.equal((await tierOf('/api/master-data/suppliers/SUP-T2/tier', { tier: 2, reason: 'Regular orders, other sources exist', expectedVersion: 1 })).status, 200)
+    assert.equal((await tierOf('/api/master-data/suppliers/SUP-T2/tier', { tier: 2, reason: 'Regular orders, other sources exist', expectedVersion: 2 })).status, 200)
     const ids = (response) => response.payload.suppliers.map((row) => row.id)
     const all = await asManager('GET', '/api/master-data/suppliers')
     assert.deepEqual(all.payload.counts, { all: 3, mine: 0, tier1: 1, tier2: 1, tier3: 0, untiered: 1 })

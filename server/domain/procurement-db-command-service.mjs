@@ -3,9 +3,10 @@ import { procurementDocumentNumber } from "../../shared/document-numbering.mjs";
 import { assertAuthorized } from "../auth/authorization-service.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { resolveProvisionedActor } from "./pilot-identity.mjs";
-import { PURCHASE_ORDER_STATUS } from "./procurement-status-authority.mjs";
+import { PURCHASE_ORDER_STATUS, PURCHASE_REQUEST_STATUS } from "./procurement-status-authority.mjs";
 import { receivingDecimalString, receivingDecimalUnits } from "./receiving-transaction-policy.mjs";
 import { applyPromisedDateChanges, currentPromisedDay, isIssuedPurchaseOrder, promiseDay, recordOriginalPromises } from "./purchase-order-promise-dates.mjs";
+import { approvalAuthorIds, selfApprovalCheck, selfApprovalRefusal } from "./self-approval.mjs";
 
 export class ProcurementCommandError extends Error {
   constructor(code, message, status = 400, details) {
@@ -222,10 +223,19 @@ export function createDbProcurementCommandService({ prisma, env = process.env, i
         if (!command.from.includes(row.status)) fail("PURCHASE_ORDER_WORKFLOW_CONFLICT", `A ${row.status} purchase order cannot take the ${action} action.`, 409, { entityId: row.id, currentStatus: row.status, currentVersion: row.version });
         const elevated = command.elevatedFrom?.[row.status];
         if (elevated) assertAuthorized({ actor, permission: elevated, tenantId: actor.tenantId });
+        // Who created or submitted the order does not approve it, unless no
+        // one else may; then the audit row says so (design audit C4).
+        let selfApproval = null;
+        if (action === "approve") {
+          const check = await selfApprovalCheck(tx, { tenantId: actor.tenantId, actorId: actor.user.id, authorIds: approvalAuthorIds("purchase_order", row), permissionCode: permission });
+          if (check.blocked) { const refusal = selfApprovalRefusal("purchase order"); fail(refusal.code, refusal.message, refusal.status, { entityId: row.id }); }
+          selfApproval = check.auditFlag;
+        }
         if (action === "cancel" || action === "close") {
           // A receipt still being prepared against the PO would become unpostable.
           const openReceipt = await tx.receivingDocument.findFirst({ where: { tenantId: actor.tenantId, poId: row.id, postingStatus: "unposted", workflowStatus: { not: "cancelled" } }, select: { id: true, documentNumber: true } });
           if (openReceipt) fail("PURCHASE_ORDER_HAS_OPEN_RECEIPTS", `Cancel or post receipt ${openReceipt.documentNumber || openReceipt.id}, which is still being prepared for this purchase order, first.`, 409, { receivingDocumentId: openReceipt.id });
+          await supplierInvoiceGuard(tx, actor, row, action);
         }
         // What was still open when the PO was closed, for the audit and the PO.
         const closedOpenQuantities = action === "close"
@@ -241,15 +251,62 @@ export function createDbProcurementCommandService({ prisma, env = process.env, i
         // metadata keeps the same instant.
         const issuedAt = action === "issue" ? row.issuedAt || now() : null;
         const issued = action === "issue" ? { transmissionStatus: "issued_outside_flowchain", issuedAt: serial(issuedAt), issuedById: actor.user.id } : {};
-        // Approval fixes each dated line's original promise, which supplier
-        // scorecards and the on-time KPI measure against. Issuing records it
-        // for a line dated since; a line that has one keeps it.
-        const recordsPromises = action === "approve" || action === "issue";
+        if (action === "issue") {
+          const supplier = row.supplierId ? await tx.supplier.findFirst({ where: { id: row.supplierId, tenantId: actor.tenantId }, select: { status: true } }) : null;
+          if (supplier && String(supplier.status || "active").toLowerCase() !== "active") fail("SUPPLIER_NOT_ACTIVE", "This purchase order's supplier is not active. Activate the supplier before issuing the order.", 409, { entityId: row.id, supplierId: row.supplierId, supplierStatus: supplier.status });
+        }
+        // Issuing fixes each dated line's original promise, which supplier
+        // scorecards and the on-time KPI measure against: the supplier has the
+        // PO from then on. Approval does not, so the buyer can still set the
+        // date the supplier confirms (design audit L1-05). A PO received
+        // without being issued gets its original promise at the first receipt
+        // (receiving-posting-command-service.mjs). A line that has one keeps it.
+        const recordsPromises = action === "issue";
         const originalPromisesRecorded = recordsPromises ? await recordOriginalPromises(tx, { purchaseOrder: row }) : [];
         await tx.purchaseOrder.update({ where: { id: row.id }, data: { status: nextStatus, receivingBaseStatus, version: { increment: 1 }, ...(action === "issue" && !row.issuedAt ? { issuedAt } : {}), metadata: { ...(row.metadata || {}), ...issued, ...closed, approvalTimeline: timeline, lastApprovalAction: action, lastApprovalActorId: actor.user.id, lastApprovalReason: text(input.reason) || null, sourceDeviceId: text(input.sourceDeviceId) || null } } });
-        return { action: `purchase_order_${action}`, summary: `${action} purchase order ${row.id}.`, metadata: { reason: text(input.reason) || null, sourceDeviceId: text(input.sourceDeviceId) || null, ...(recordsPromises ? { originalPromisesRecorded } : {}), ...(action === "close" ? { closedOpenQuantities } : {}) } };
+        const restoredRequest = action === "cancel" || action === "reject" ? await restoreRequestDemand(tx, actor, row, action, text(input.reason)) : null;
+        return { action: `purchase_order_${action}`, summary: `${action} purchase order ${row.id}.`, metadata: { reason: text(input.reason) || null, sourceDeviceId: text(input.sourceDeviceId) || null, ...(recordsPromises ? { originalPromisesRecorded } : {}), ...(action === "close" ? { closedOpenQuantities } : {}), ...(restoredRequest ? { restoredPurchaseRequestId: restoredRequest } : {}), ...(selfApproval ? { selfApproval } : {}) } };
       },
     });
+  }
+
+  // Supplier invoices hold a PO open (design audit L1-10 / L7-03). A PO with
+  // a supplier invoice that is not cancelled cannot be cancelled: the invoice
+  // would wait for goods that never come. A PO cannot be closed while one of
+  // its invoices has a match difference nobody has reviewed yet: review it
+  // first (approve or accept it, or reject it and ask the supplier). The
+  // invoice's lines name the PO's lines, so an invoice is found either way.
+  async function supplierInvoiceGuard(tx, actor, row, action) {
+    const lineIds = row.lines.map((line) => line.id);
+    const ofThisOrder = { OR: [{ relatedPoId: row.id }, ...(lineIds.length ? [{ lines: { some: { purchaseOrderLineId: { in: lineIds } } } }] : [])] };
+    if (action === "cancel") {
+      const invoice = await tx.supplierInvoice.findFirst({ where: { tenantId: actor.tenantId, status: { not: "cancelled" }, ...ofThisOrder }, select: { id: true, invoiceNumber: true, status: true }, orderBy: { id: "asc" } });
+      if (invoice) fail("PURCHASE_ORDER_HAS_SUPPLIER_INVOICES", `Supplier invoice ${invoice.invoiceNumber || invoice.id} is recorded against this purchase order, so it cannot be cancelled. Cancel the invoice first, or close the order once its invoices are resolved.`, 409, { supplierInvoiceId: invoice.id, invoiceStatus: invoice.status });
+      return;
+    }
+    const held = await tx.financeMatchException.findFirst({ where: { tenantId: actor.tenantId, status: "open", supplierInvoice: { status: { not: "cancelled" }, ...ofThisOrder } }, select: { supplierInvoiceId: true, supplierInvoice: { select: { invoiceNumber: true } } }, orderBy: { id: "asc" } });
+    if (held) fail("PURCHASE_ORDER_HAS_INVOICE_EXCEPTIONS", `Supplier invoice ${held.supplierInvoice?.invoiceNumber || held.supplierInvoiceId} on this purchase order has a match difference that is still to review. Review it before closing the order.`, 409, { supplierInvoiceId: held.supplierInvoiceId });
+  }
+
+  // When the last PO made from a request is cancelled or rejected, the
+  // request is approved again, so its demand is not lost and it can be
+  // turned into a new PO (design audit L1-09). The request's own history
+  // says so, naming the PO. Returns the request's id when it moved.
+  async function restoreRequestDemand(tx, actor, purchaseOrder, action, reason) {
+    const requestId = text(purchaseOrder.sourceRequestId);
+    if (!requestId) return null;
+    const live = await tx.purchaseOrder.count({ where: { tenantId: actor.tenantId, sourceRequestId: requestId, status: { notIn: [CANCELLED, PURCHASE_ORDER_STATUS.REJECTED] } } });
+    if (live > 0) return null;
+    await tx.$queryRawUnsafe('SELECT "id" FROM "PurchaseRequest" WHERE "tenantId" = $1 AND "id" = $2 FOR UPDATE', actor.tenantId, requestId);
+    const request = await tx.purchaseRequest.findFirst({ where: { id: requestId, tenantId: actor.tenantId } });
+    if (!request || request.status !== PURCHASE_REQUEST_STATUS.CONVERTED) return null;
+    const at = serial(now());
+    const number = text(purchaseOrder.number) || purchaseOrder.id;
+    const version = Number(request.metadata?.version || 0) + 1;
+    const entry = { action: "demand_restored", actorId: actor.user.id, at, reason: reason || null, purchaseOrderId: purchaseOrder.id, purchaseOrderAction: action };
+    await tx.purchaseRequest.update({ where: { id: request.id }, data: { status: PURCHASE_REQUEST_STATUS.APPROVED, metadata: { ...(request.metadata || {}), version, lastAction: "demand_restored", lastActorId: actor.user.id, lastReason: reason || null, timeline: [...(Array.isArray(request.metadata?.timeline) ? request.metadata.timeline : []), entry] } } });
+    await tx.auditLog.create({ data: { id: idFactory(), tenantId: actor.tenantId, actorId: actor.user.id, source: "procurement_db_command_service", module: "procurement", action: "purchase_request_demand_restored", entityType: "PurchaseRequest", entityId: request.id, summary: `Purchase request ${text(request.number) || request.id} is approved again: purchase order ${number} was ${action === "cancel" ? "cancelled" : "rejected"}.`, metadata: { purchaseOrderId: purchaseOrder.id, purchaseOrderNumber: number, purchaseOrderAction: action, from: PURCHASE_REQUEST_STATUS.CONVERTED, to: PURCHASE_REQUEST_STATUS.APPROVED, version, reason: reason || null } } });
+    return request.id;
   }
 
   // Changes promised dates on lines of an issued PO. Each changed line gets a
@@ -271,10 +328,14 @@ export function createDbProcurementCommandService({ prisma, env = process.env, i
       context,
       payload: { id: text(id), expectedVersion, lines: changes, reason: text(input.reason) },
       execute: async (tx, actor, row) => {
-        if (!isIssuedPurchaseOrder(row)) fail("PURCHASE_ORDER_NOT_ISSUED", "Promised dates are revised on issued purchase orders.", 409, { entityId: row.id, currentStatus: row.status });
+        // An approved PO not issued yet takes the date the supplier confirms
+        // as a plain change: its original promise is recorded at issue or at
+        // the first receipt, so nothing is a revision yet (design audit L1-05).
+        // Once issued, every change is a revision.
+        if (!isIssuedPurchaseOrder(row) && row.status !== APPROVED) fail("PURCHASE_ORDER_NOT_ISSUED", "Promised dates are revised on approved or issued purchase orders.", 409, { entityId: row.id, currentStatus: row.status });
         const outcome = await applyPromisedDateChanges(tx, { tenantId: actor.tenantId, purchaseOrder: row, changes, reason: input.reason, actorId: actor.user.id, source: "procurement_db_command_service", at: now(), idFactory });
-        if (!outcome.revisions.length) fail("PROMISED_DATE_UNCHANGED", "The lines already have these promised dates.", 422, [{ field: "lines" }]);
-        return { action: "purchase_order_promised_dates_revised", summary: `Revised promised dates on ${outcome.revisions.length} line(s) of purchase order ${row.id}.`, metadata: { reason: text(input.reason), revisionIds: outcome.revisions.map((revision) => revision.id), originalPromisesRecorded: outcome.originalPromisesRecorded } };
+        if (!outcome.changedLineIds.length) fail("PROMISED_DATE_UNCHANGED", "The lines already have these promised dates.", 422, [{ field: "lines" }]);
+        return { action: "purchase_order_promised_dates_revised", summary: `${outcome.revisions.length ? "Revised" : "Set"} promised dates on ${outcome.changedLineIds.length} line(s) of purchase order ${row.id}.`, metadata: { reason: text(input.reason), revisionIds: outcome.revisions.map((revision) => revision.id), changedLineIds: outcome.changedLineIds, originalPromisesRecorded: outcome.originalPromisesRecorded } };
       },
     });
   }

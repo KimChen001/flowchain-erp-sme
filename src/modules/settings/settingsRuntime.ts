@@ -11,6 +11,8 @@ export type SettingsRuntime = {
     quantityTolerance: string; pricePercentageTolerance: string; priceAbsoluteTolerance: string; amountTolerance: string;
     // A PO created from an approved purchase request is approved with it (default on).
     approvedRequestApprovesPurchaseOrder?: boolean;
+    // Today may email follow-ups on overdue orders to suppliers (default off).
+    supplierFollowUpEmail?: boolean;
   };
   modules: { defaultModule: string; items: Array<{ id: string; label: string; enabled: boolean; order: number; roles: string[] }> };
   ai: { modelAssistEnabled?: boolean; capabilities: Array<{ id: string; label: string; level: string }>; evidenceRequired: boolean; retainDays: number };

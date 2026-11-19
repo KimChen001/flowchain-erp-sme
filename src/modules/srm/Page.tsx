@@ -12,15 +12,16 @@ import { toast } from "sonner";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { A, Card, Chip, Field, inputStyle, useConfirm } from "../../components/ui";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
-import { StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, listTableCardsRef, rowActionClass } from "../../components/ui/listLayout";
+import { ListSearchCard, PrimaryButton, RefreshButton, ResetButton, StatusChip, statusToneOf, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, listTableCardsRef, rowActionClass } from "../../components/ui/listLayout";
 import { EntityLink } from "../../components/business/EntityLink";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { useMasterDataWriteAccess } from "../master-data/writeAccess";
 import { PriceHistoryFacts, priceHistoryKey, usePoPrice, usePriceHistory } from "../procurement/PriceHistoryFacts";
+import { ListPager, usePagedRows } from "../procurement/listPaging";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import { apiErrorText } from "../../lib/apiErrorText";
-import { ON_TIME_HEADER_TIP } from "./supplierMetrics";
+import { METRIC_HEADER_TIPS } from "./supplierMetrics";
 import { DataImportLink } from "../master-data/DataImportLink";
 import { useRouteAvailability } from "../../app/routeAvailability";
 import { SupplierContractsPanel } from "../contracts/SupplierContractsPanel";
@@ -55,6 +56,8 @@ type Supplier = {
   tierReason: string | null;
   tierSetAt: string | null;
   tierSetBy: { id: string; name: string | null } | null;
+  tierReviewedAt?: string | null;
+  tierNextReviewOn?: string | null;
   businessOwner: { id: string; name: string | null } | null;
   tierHistory?: TierHistoryRow[];
 };
@@ -115,8 +118,13 @@ const empty = (currency = "") => ({
 const statusLabel = { draft: "草稿", active: "启用", inactive: "停用" };
 // The list's long metric headers wrap to two lines; the list scrolls
 // sideways with the code and actions columns kept in view, as on purchase orders.
-const WRAPPED_HEADERS = new Set(["经营品类", "Business owner", "Spend, 12 months", "Open POs", "Overdue POs", "On time, 90 days", "Open issues"]);
-const NUMERIC_HEADERS = new Set(["Spend, 12 months", "Open POs", "Overdue POs", "On time, 90 days", "Open issues"]);
+const WRAPPED_HEADERS = new Set(["经营品类", "Business owner", "Spend, 12 months", "Open POs", "Overdue POs", "On time, 90 days", "OTIF, 90 days", "Open issues"]);
+const NUMERIC_HEADERS = new Set(["Spend, 12 months", "Open POs", "Overdue POs", "On time, 90 days", "OTIF, 90 days", "Open issues"]);
+// A supplier's supplied items drawn at a time; the pager under the table
+// gives the true total.
+const SUPPLIED_ITEM_PAGE_SIZE = 25;
+// Suppliers to a page, as on the purchase order list (design audit U-14).
+const SUPPLIER_PAGE_SIZE = 50;
 
 function normalizeSupplier(value: Partial<Supplier> & Record<string, unknown>): Supplier {
   const text = (candidate: unknown, fallback = "") => String(candidate ?? "").trim() || fallback;
@@ -152,6 +160,8 @@ function normalizeSupplier(value: Partial<Supplier> & Record<string, unknown>): 
     tierReason: text(value.tierReason) || null,
     tierSetAt: text(value.tierSetAt) || null,
     tierSetBy: (value.tierSetBy as Supplier["tierSetBy"]) || null,
+    tierReviewedAt: text(value.tierReviewedAt) || null,
+    tierNextReviewOn: text(value.tierNextReviewOn) || null,
     businessOwner: (value.businessOwner as Supplier["businessOwner"]) || null,
     tierHistory: Array.isArray(value.tierHistory) ? (value.tierHistory as TierHistoryRow[]) : [],
   };
@@ -168,7 +178,7 @@ export default function SupplierMasterPage({
   onActiveContextChange?: (context: any) => void;
 }) {
   const { language, formatNumber } = useI18n();
-  const { count, spendCell, onTimeCell } = useSupplierMetricCells();
+  const { count, spendCell, onTimeCell, otifCell, workspaceCurrency: spendCurrency } = useSupplierMetricCells();
   const poPrice = usePoPrice();
   // A failed request in the interface language, never the server's own words.
   const failure = (reason: unknown) => apiErrorText(reason, language, ["Could not save the change. Try again.", "修改保存失败，请重试。"]);
@@ -347,7 +357,8 @@ export default function SupplierMasterPage({
     if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) issues.push({ field: 'email', message: 'Enter a valid email address.' });
     if (form.deliveryCycleDays && (!Number.isInteger(Number(form.deliveryCycleDays)) || Number(form.deliveryCycleDays) < 0)) issues.push({ field: 'deliveryCycleDays', message: 'Lead time must be a whole number of days, zero or greater.' });
     setFieldErrors(issues);
-    if (issues.length) { document.getElementById('supplier-' + issues[0].field)?.focus(); return; }
+    // The form focuses the first field with a message.
+    if (issues.length) return;
     savingRef.current = true; setSaving(true);
     try {
       const body: any = {
@@ -467,7 +478,8 @@ export default function SupplierMasterPage({
     }
   };
   const insightOf = (id: string): SupplierInsight | undefined => insights?.suppliers[id];
-  const sortedRows = sortSuppliersBy(rows, sortBy, insightOf);
+  const sortedRows = sortSuppliersBy(rows, sortBy, insightOf, spendCurrency);
+  const supplierPage = usePagedRows(sortedRows, SUPPLIER_PAGE_SIZE, [query, status, category, owner, tab, sortBy].join("|"));
   // Earlier PO prices of each supplied item from this supplier only, in the
   // link currency and the item's unit, in one request. Display only.
   // The item being linked gets the same facts under its reference price, in
@@ -476,18 +488,32 @@ export default function SupplierMasterPage({
   const relationshipHistoryKey = (r: Relationship) => (selected ? priceHistoryKey({ itemId: r.itemId, currency: r.currency, supplierId: selected.id }) : "");
   const relationFormHistoryKey = selected && writes.items ? priceHistoryKey({ itemId: relationForm.itemId, currency: relationForm.currency || selected.defaultCurrency, supplierId: selected.id }) : "";
   const relationshipHistory = usePriceHistory([...relationships.map(relationshipHistoryKey), relationFormHistoryKey]);
+  // One page of supplied items; another supplier starts again at page 1.
+  const suppliedItems = usePagedRows(relationships, SUPPLIED_ITEM_PAGE_SIZE, selected?.id || "");
   if (showForm) return <SupplierForm form={form} editing={!!editing} saving={saving} errors={fieldErrors} currencyWarning={currencyWarning} workspaceCurrency={workspaceCurrency} paymentTerms={paymentTerms} onChange={(key, value) => { setForm((current: any) => ({ ...current, [key]: value })); setFieldErrors(current => current.filter(error => error.field !== key)); }} onSave={save} onCancel={() => setShowForm(false)} />;
   if (selected)
     return (
       <div className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline"
-            onClick={detailBack.back}
-          >
-            <ArrowLeft size={13} />
-            {detailBack.label}</button>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline max-sm:min-h-9"
+          onClick={detailBack.back}
+        >
+          <ArrowLeft size={13} />
+          {detailBack.label}</button>
+        {/* The header card sits above the tabs, so every tab keeps the supplier's name (UI review 11). */}
+        <Card className="p-5" data-testid="supplier-detail-header">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="fc-page-title">{selected.supplierName}</h1>
+                <TierChip tier={selected.tier} />
+                <StatusChip label={copy(statusLabel[selected.status])} tone={statusToneOf(selected.status)} />
+              </div>
+              <div className="mt-1 text-xs" style={{ color: A.sub }}>
+                {selected.supplierCode}
+              </div>
+            </div>
           {writes.suppliers && (
             <div className="flex flex-wrap gap-2">
               <button
@@ -506,7 +532,8 @@ export default function SupplierMasterPage({
               </button>
             </div>
           )}
-        </div>
+          </div>
+        </Card>
         <div role="tablist" aria-label={selected.supplierName} className="flex gap-1 border-b" style={{ borderColor: A.border }}>
           {(canReadContracts ? (["details", "performance", "contracts"] as const) : (["details", "performance"] as const)).map((tab) => (
             <button key={tab} type="button" role="tab" aria-selected={detailTab === tab} data-testid={`supplier-tab-${tab}`} onClick={() => setDetailTab(tab)}
@@ -517,15 +544,7 @@ export default function SupplierMasterPage({
         </div>
         {detailTab === "performance" ? <SupplierPerformancePanel supplierId={selected.id} /> : detailTab === "contracts" && canReadContracts ? <SupplierContractsPanel supplierId={selected.id} /> : <>
         <Card className="p-5">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="fc-page-title">{selected.supplierName}</h1>
-            <TierChip tier={selected.tier} />
-            <StatusChip label={copy(statusLabel[selected.status])} tone={selected.status === "active" ? "success" : "neutral"} />
-          </div>
-          <div className="mt-1 text-xs" style={{ color: A.sub }}>
-            {selected.supplierCode}
-          </div>
-          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             {([
               ["基本信息", [
                 ["Short name", selected.shortName],
@@ -580,14 +599,14 @@ export default function SupplierMasterPage({
           {relationshipLimitation && <p role="alert" className="mt-2 text-xs text-amber-700">{copy("Supplied-item links are currently unavailable.")}</p>}
           {writes.items && <div className="mt-3 grid items-start gap-2 md:grid-cols-[minmax(0,2fr)_auto_minmax(0,1fr)_auto]">
             <select
-              aria-label={copy("选择 SKU")}
+              aria-label={copy("Select item")}
               value={relationForm.itemId}
               onChange={(e) =>
                 setRelationForm({ ...relationForm, itemId: e.target.value })
               }
               style={inputStyle}
             >
-              <option value="">{copy("选择 SKU")}</option>
+              <option value="">{copy("Select item")}</option>
               {items
                 .filter(
                   (i) => !relationships.some((r) => r.itemId === i.itemId),
@@ -642,7 +661,8 @@ export default function SupplierMasterPage({
             <div className="py-8 text-center text-xs" style={{ color: A.sub }}>
               {copy("暂无可供应物料")}</div>
           ) : (
-            <div className={`mt-3 ${tableScrollClass}`}>
+            <div className="mt-3">
+            <div className={tableScrollClass}>
             <table className={`w-full ${tableBodyTextClass}`}>
               <thead>
                 <tr style={listHeadRowStyle}>
@@ -664,8 +684,8 @@ export default function SupplierMasterPage({
                 </tr>
               </thead>
               <tbody>
-                {relationships.map((r, index) => (
-                  <tr key={r.relationshipId} className={listRowClass} style={listRowStyle(index, relationships.length)}>
+                {suppliedItems.pageRows.map((r, index) => (
+                  <tr key={r.relationshipId} className={listRowClass} style={listRowStyle(index, suppliedItems.pageRows.length)}>
                     <td className={`${tdClass} min-w-[160px]`}>
                       <EntityLink kind="item" id={r.itemId} className={tableLinkClass}>
                         {r.item?.sku || r.itemId} · {r.item?.itemName || ""}
@@ -710,6 +730,10 @@ export default function SupplierMasterPage({
               </tbody>
             </table>
             </div>
+            <div className="-mx-5 -mb-5">
+              <ListPager page={suppliedItems.page} pageSize={SUPPLIED_ITEM_PAGE_SIZE} total={relationships.length} onPage={suppliedItems.setPage} testId="supplied-item-pager" />
+            </div>
+            </div>
           )}
         </Card>
         <SupplierActivityCards
@@ -725,38 +749,22 @@ export default function SupplierMasterPage({
   // card with labelled filters, then the list with its tabs. The module shell
   // already shows the page title.
   const filtersApplied = Boolean(query || status || category || owner || tab !== "all");
+  const resetFilters = () => { setQuery(""); setStatus(""); setCategory(""); setOwner(""); };
   return (
     <div className="space-y-5">
-      <Card className="p-5">
-        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="fc-section-title" style={{ color: A.label }}>{copy("Supplier search")}</h2>
-            <div className="mt-1 text-xs" style={{ color: A.sub }}>{copy("Search suppliers by code, name, status, category and owner.")}</div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={load}
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium"
-              style={{ background: A.gray6, color: A.label }}
-            >
-              <RefreshCw size={13} />
-              {copy("刷新")}
-            </button>
-            <DataImportLink type="suppliers" className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700" />
-            {writes.suppliers && (
-              <button
-                type="button"
-                onClick={startCreate}
-                className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-xs font-medium text-white"
-              >
-                <Plus size={13} />
-                {copy("新增供应商")}
-              </button>
-            )}
-          </div>
-        </div>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+      {/* The shared search card (design audit U-16): on a phone only the
+          search shows; the other filters fold behind Filters. */}
+      <ListSearchCard
+        title={copy("Supplier search")}
+        subtitle={copy("Search suppliers by code, name, status, category and owner.")}
+        activeFilters={[status, category, owner].filter(Boolean).length}
+        actions={<>
+          <ResetButton onClick={resetFilters} />
+          <RefreshButton onClick={load} />
+          <DataImportLink type="suppliers" className={listButtonClass.secondary} />
+          {writes.suppliers && <PrimaryButton onClick={startCreate} testId="supplier-new">{copy("新增供应商")}</PrimaryButton>}
+        </>}
+      >
           <Field label={copy("Search")}>
             <label className="flex items-center gap-2" style={{ ...inputStyle, paddingTop: 0, paddingBottom: 0 }}>
               <Search size={14} style={{ color: A.gray2 }} />
@@ -800,8 +808,7 @@ export default function SupplierMasterPage({
               ))}
             </select>
           </Field>
-        </div>
-      </Card>
+      </ListSearchCard>
 
       <Card>
         <div className="flex flex-wrap items-end gap-3 px-5 pt-3" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
@@ -816,7 +823,7 @@ export default function SupplierMasterPage({
           <div className="ml-auto flex flex-wrap items-center gap-2 pb-2">
             <label className="flex items-center gap-1.5 text-xs" style={{ color: A.sub }}>
               {copy("Sort by")}
-              <select aria-label={copy("Sort by")} value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)} style={{ ...inputStyle, width: "auto", minWidth: 120, paddingTop: 4, paddingBottom: 4 }}>
+              <select aria-label={copy("Sort by")} className="max-sm:!py-2" value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)} style={{ ...inputStyle, width: "auto", minWidth: 120, paddingTop: 4, paddingBottom: 4 }}>
                 <option value="name">{copy("Name")}</option>
                 <option value="spend">{copy("Spend")}</option>
                 <option value="overdue">{copy("Overdue")}</option>
@@ -848,7 +855,7 @@ export default function SupplierMasterPage({
           </div>
         ) : (
           <div className={tableScrollClass} ref={listTableCardsRef}>
-            <table className={`w-full min-w-[1060px] text-left ${tableBodyTextClass}`}>
+            <table className={`w-full min-w-[1140px] text-left ${tableBodyTextClass}`}>
               <thead>
                 <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
                   {[
@@ -859,11 +866,12 @@ export default function SupplierMasterPage({
                     "Open POs",
                     "Overdue POs",
                     "On time, 90 days",
+                    "OTIF, 90 days",
                     "Open issues",
                     "状态",
                     ...(writes.suppliers ? ["操作"] : []),
                   ].map((h) => (
-                    <th key={copy(h)} title={h === "On time, 90 days" ? copy(ON_TIME_HEADER_TIP) : undefined} className={`${thClass} align-bottom${WRAPPED_HEADERS.has(h) ? " !whitespace-normal min-w-[84px] max-w-[120px]" : ""}${NUMERIC_HEADERS.has(h) ? " text-right" : ""}${h === "供应商" ? " sticky left-0 z-20 bg-white" : h === "操作" ? " sticky right-0 z-20 bg-white" : ""}`} style={{ color: A.gray1 }}>
+                    <th key={copy(h)} title={METRIC_HEADER_TIPS[h] ? copy(METRIC_HEADER_TIPS[h]) : undefined} className={`${thClass} align-bottom${WRAPPED_HEADERS.has(h) ? " !whitespace-normal min-w-[84px] max-w-[120px]" : ""}${NUMERIC_HEADERS.has(h) ? " text-right" : ""}${h === "供应商" ? " sticky left-0 z-20 bg-white" : h === "操作" ? " sticky right-0 z-20 bg-white" : ""}`} style={{ color: A.gray1 }}>
                       {/* One supplier per row: the singular, not the Suppliers module name. */}
                       {h === "供应商" ? (language === "en-US" ? "Supplier" : "供应商") : copy(h)}
                     </th>
@@ -871,8 +879,8 @@ export default function SupplierMasterPage({
                 </tr>
               </thead>
               <tbody>
-                {sortedRows.map((row, index) => (
-                  <tr key={row.id} className="transition-colors hover:bg-blue-50/40" style={{ borderBottom: index < sortedRows.length - 1 ? "0.5px solid rgba(0,0,0,0.04)" : "none" }}>
+                {supplierPage.pageRows.map((row, index) => (
+                  <tr key={row.id} className={listRowClass} style={listRowStyle(index, supplierPage.pageRows.length)}>
                     <td className={`${tdIdClass} sticky left-0 z-10 max-w-[240px] bg-white`}>
                       <EntityLink kind="supplier" id={row.id} className={tableLinkClass}>
                         {row.supplierCode}
@@ -887,13 +895,10 @@ export default function SupplierMasterPage({
                     <td className={tdNumericRightClass}>{count(insightOf(row.id)?.openPos)}</td>
                     <td className={tdNumericRightClass}>{count(insightOf(row.id)?.overduePos)}</td>
                     <td className={tdNumericRightClass}>{onTimeCell(insightOf(row.id))}</td>
+                    <td className={tdNumericRightClass}>{otifCell(insightOf(row.id))}</td>
                     <td className={tdNumericRightClass}>{count(insightOf(row.id)?.openIssues)}</td>
                     <td className={tdNowrapClass}>
-                      {row.status === "active"
-                        ? <Chip label={copy(statusLabel[row.status])} color={A.green} bg="#f0faf4" />
-                        : row.status === "draft"
-                          ? <Chip label={copy(statusLabel[row.status])} color={A.orange} bg="#fff8f0" />
-                          : <Chip label={copy(statusLabel[row.status])} color={A.gray1} bg={A.gray6} />}
+                      <StatusChip label={copy(statusLabel[row.status])} tone={statusToneOf(row.status)} />
                     </td>
                     {writes.suppliers && <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
                       <div className="flex items-center gap-1.5">
@@ -909,6 +914,7 @@ export default function SupplierMasterPage({
             </table>
           </div>
         )}
+        {!error && rows.length > 0 && <ListPager page={supplierPage.page} pageSize={SUPPLIER_PAGE_SIZE} total={sortedRows.length} onPage={supplierPage.setPage} testId="supplier-list-pager" />}
       </Card>
       {confirmDialog.element}
     </div>

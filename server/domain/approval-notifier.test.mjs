@@ -73,13 +73,13 @@ test("a submitted PR emails each approver once, in their language, with only its
   const prisma = stubPrisma({
     documents: { purchaseRequest: [{ id: "PR-AB12", tenantId, status: "submitted", amount: "999.00", supplierName: "Globex" }] },
     users: [
-      approver("u-manager-en", { permissions: ["procurement.purchase_order.approve"] }),
-      approver("u-manager-zh", { languagePreference: "zh-CN", permissions: ["procurement.purchase_order.approve"] }),
-      approver("u-submitter", { permissions: ["procurement.purchase_order.approve"] }),
-      approver("u-opted-out", { approvalEmailsEnabled: false, permissions: ["procurement.purchase_order.approve"] }),
-      approver("u-disabled", { status: "disabled", permissions: ["procurement.purchase_order.approve"] }),
+      approver("u-manager-en", { permissions: ["procurement.purchase_request.approve"] }),
+      approver("u-manager-zh", { languagePreference: "zh-CN", permissions: ["procurement.purchase_request.approve"] }),
+      approver("u-submitter", { permissions: ["procurement.purchase_request.approve"] }),
+      approver("u-opted-out", { approvalEmailsEnabled: false, permissions: ["procurement.purchase_request.approve"] }),
+      approver("u-disabled", { status: "disabled", permissions: ["procurement.purchase_request.approve"] }),
       approver("u-viewer", { permissions: ["procurement.purchase_order.read"] }),
-      approver("u-bad-address", { email: "not-an-email", permissions: ["procurement.purchase_order.approve"] }),
+      approver("u-bad-address", { email: "not-an-email", permissions: ["procurement.purchase_request.approve"] }),
     ],
   });
   const { service, mailer, logger } = notifier({ prisma });
@@ -98,7 +98,7 @@ test("a submitted PR emails each approver once, in their language, with only its
   const [query] = prisma.calls.userQueries;
   assert.equal(query.where.tenantId, tenantId);
   assert.deepEqual(query.where.id, { not: "u-submitter" });
-  assert.deepEqual(query.where.roleAssignments, { some: { status: "active", role: { status: "active", permissions: { some: { permissionCode: "procurement.purchase_order.approve" } } } } });
+  assert.deepEqual(query.where.roleAssignments, { some: { status: "active", role: { status: "active", permissions: { some: { permissionCode: "procurement.purchase_request.approve" } } } } });
 
   assert.equal(prisma.calls.audits.length, 1);
   const [audit] = prisma.calls.audits;
@@ -231,7 +231,7 @@ test("the kill switch, a missing production origin and a workspace default of Ch
   for (const value of ["off", "OFF", "false", "0"]) assert.equal(approvalEmailsEnabled({ FLOWCHAIN_APPROVAL_EMAILS: value }), false);
   const prisma = stubPrisma({
     documents: { purchaseRequest: [{ id: "PR-ZH", tenantId, status: "submitted" }] },
-    users: [approver("u-manager", { permissions: ["procurement.purchase_order.approve"] })],
+    users: [approver("u-manager", { permissions: ["procurement.purchase_request.approve"] })],
     tenant: { defaultLanguage: "zh-CN" },
   });
   let factoryCalls = 0;
@@ -277,7 +277,7 @@ test("an exception review that leaves another exception open, or rejects one, se
 test("a failed audit write after sending is logged as approval_email_audit_failed, not as a failed send", async () => {
   const prisma = stubPrisma({
     documents: { purchaseRequest: [{ id: "PR-AUDIT", tenantId, status: "submitted" }] },
-    users: [approver("u-manager", { permissions: ["procurement.purchase_order.approve"] })],
+    users: [approver("u-manager", { permissions: ["procurement.purchase_request.approve"] })],
   });
   prisma.auditLog.create = async () => { throw Object.assign(new Error("audit table locked"), { code: "P2034" }); };
   const { service, mailer, logger } = notifier({ prisma });

@@ -28,7 +28,6 @@ async function enterInvoice(page: Page, number: string, quantity: string, unitPr
   const line = page.getByTestId("supplier-invoice-line").first();
   await line.locator("input").nth(0).fill(quantity);
   if (unitPrice) await line.locator("input").nth(1).fill(unitPrice);
-  await page.getByTestId("supplier-invoice-preview").click();
   await expect(page.getByTestId("supplier-invoice-create")).toBeEnabled();
   await page.getByTestId("supplier-invoice-create").click();
   await expect(page).toHaveURL(/\/app\/procurement\/bills\/[0-9a-f-]{36}$/);
@@ -76,9 +75,73 @@ test("a rejected overcharge is not offered for approval and can be cancelled", a
   const rejectId = await reject.getAttribute("data-testid");
   await run(page, String(rejectId), "Price above the PO");
   await expect(page.getByTestId("invoice-approve")).toHaveCount(0);
-  await run(page, "invoice-cancel", "Supplier billed above the PO price");
+  // Cancelling asks why in a dialog (design audit U-17).
+  await page.getByTestId("invoice-cancel").click();
+  const cancel = page.getByTestId("invoice-cancel-dialog");
+  await expect(cancel).toContainText("UI-INV-002");
+  await cancel.getByTestId("invoice-cancel-dialog-field").fill("Supplier billed above the PO price");
+  await cancel.getByTestId("invoice-cancel-dialog-confirm").click();
   await expect(page.getByTestId("supplier-invoice-actions")).not.toContainText(/Cancel invoice|取消发票/);
   await expect(page.getByTestId("supplier-invoice-detail")).toContainText(/Cancelled|已取消/);
+});
+
+// A price difference is one difference: the match does not raise it again as
+// an amount difference (design audit B2, L2-03).
+test("a price difference is one difference, approved with one note", async ({ page }) => {
+  await signIn(page, "manager@example.com");
+  await page.goto("/app/procurement/bills");
+  await page.getByTestId("supplier-invoice-new").click();
+  await page.getByTestId("supplier-invoice-supplier").selectOption({ index: 1 });
+  await page.getByTestId("supplier-invoice-receipt").selectOption({ index: 1 });
+  await page.getByTestId("supplier-invoice-number").fill("UI-INV-PRICE");
+  await page.getByTestId("supplier-invoice-due").fill("2026-11-01");
+  const line = page.getByTestId("supplier-invoice-line").first();
+  await line.locator("input").nth(0).fill("2");
+  await line.locator("input").nth(1).fill("12");
+  // A hint, not a refusal: the price is above the order's.
+  await expect(line.getByTestId("supplier-invoice-price-above")).toContainText(/above the PO price|比采购单价高/);
+  await page.getByTestId("supplier-invoice-create").click();
+  await expect(page).toHaveURL(/\/app\/procurement\/bills\/[0-9a-f-]{36}$/);
+  // The header says when the invoice was issued and is due, and in which currency.
+  await expect(page.getByTestId("supplier-invoice-due-date")).not.toHaveText("—");
+  await expect(page.getByTestId("supplier-invoice-currency-fact")).not.toHaveText("—");
+  await run(page, "invoice-submit");
+  await run(page, "invoice-match");
+  const match = page.getByTestId("supplier-invoice-match");
+  const price = match.locator('[data-testid="match-exception"][data-type="price"]');
+  const amount = match.locator('[data-testid="match-exception"][data-type="amount"]');
+  await expect(price).toContainText(/Price difference|价格差异/);
+  await expect(amount).toHaveCount(0);
+  await expect(match.getByTestId("supplier-invoice-match-summary")).toContainText(/1 line difference to review|1 处行差异待复核/);
+  const approve = price.locator('[data-testid^="exception-approve-"]').first();
+  const approveId = String(await approve.getAttribute("data-testid"));
+  await approve.click();
+  // Confirm works before Preview; an empty note is named under its field.
+  await expect(page.getByTestId(`${approveId}-confirm`)).toBeEnabled();
+  await page.getByTestId(`${approveId}-confirm`).click();
+  await expect(page.getByTestId(`${approveId}-reason`)).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByTestId(`${approveId}-reason-error`)).toContainText(/Enter why you accept this difference\.|请填写处理说明。/);
+  await page.getByTestId(`${approveId}-reason`).fill("Supplier raised the price; buyer agreed");
+  await page.getByTestId(`${approveId}-confirm`).click();
+  await expect(page.getByTestId(`${approveId}-panel`)).toHaveCount(0);
+  // It is approved with the note, and the match is no longer an exception.
+  await expect(match.locator('[data-testid^="exception-approve-"]')).toHaveCount(0);
+  await expect(price).toContainText("Supplier raised the price; buyer agreed");
+  await expect(match).toContainText(/Variance approved|差异已批准/);
+  await expect(page.getByTestId("supplier-invoice-variance-reason")).toHaveCount(0);
+  // The header no longer reads "Exception", and a toast leads back up to Approve.
+  await expect(page.getByTestId("supplier-invoice-ready-to-approve")).toHaveText(/Variance approved, ready to approve|差异已批准，待批准/);
+  await expect(page.getByTestId("supplier-invoice-status")).not.toContainText(/^(Exception|异常)$/);
+  const toast = page.locator("[data-sonner-toast]").filter({ hasText: /Differences approved\. Next: approve the invoice|差异已批准，下一步：批准发票/ });
+  await expect(toast).toBeVisible();
+  await toast.getByRole("button", { name: /Go to Approve|前往批准/ }).click();
+  await expect(page.getByTestId("invoice-approve")).toBeFocused();
+  await run(page, "invoice-approve");
+  await expect(page.locator("[data-sonner-toast]").filter({ hasText: /Approved UI-INV-PRICE|已批准 UI-INV-PRICE/ })).toBeVisible();
+  await expect(page.getByTestId("supplier-invoice-payable")).toBeVisible();
+  // Approved, nothing paid yet: the invoice reads "To pay".
+  await expect(page.getByTestId("supplier-invoice-status")).toContainText(/To pay|待付款/);
+  await expect(page.getByTestId("supplier-invoice-next")).toContainText(/Next|下一步/);
 });
 
 test("a second bill numbered as a format variant is flagged, dismissed with a reason, then approved", async ({ page }) => {

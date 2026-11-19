@@ -2,6 +2,8 @@ import {
   outboundDecimalString as decimalString,
   outboundDecimalUnits as decimalUnits,
 } from "./outbound-transaction-policy.mjs";
+import { executableAuthorizedUnits } from "./return-authorization-closure-policy.mjs";
+import { returnLineQuarantineLayers } from "./quarantine-disposition-lineage.mjs";
 
 const text = (value) => String(value ?? "").trim();
 const fixed = (value) =>
@@ -74,9 +76,62 @@ function postedByLine(authorization, excludedPostingId = "") {
   return map;
 }
 
+// A release may put stock at another location of the same warehouse (L8-14).
+// Lines stored before that have no destination location: their destination
+// is the line's own location.
+const destinationLocationOf = (line) =>
+  line.destinationLocationKey == null
+    ? line.location ?? null
+    : line.destinationLocation ?? null;
+const destinationLocationKeyOf = (line) =>
+  line.destinationLocationKey == null
+    ? text(line.locationKey)
+    : text(line.destinationLocationKey);
+const optionalText = (value) => (value == null ? null : text(value));
+
+// Resolves the available stock record a release goes into when the user
+// chose a location rather than an existing record: the record for the item
+// at that location of the quarantine stock's warehouse, created by the draft
+// command when it does not exist yet (only for an active item and warehouse).
+async function destinationTarget(prisma, tenantId, requestLine, source, location) {
+  const locationKey = location.toLowerCase();
+  const existing = await prisma.inventoryBalance.findFirst({
+    where: {
+      tenantId,
+      sku: requestLine.sku,
+      warehouseKey: source.warehouseId,
+      locationKey,
+    },
+  });
+  if (existing) return { destination: existing };
+  const [warehouse, item] = await Promise.all([
+    prisma.warehouse.findFirst({
+      where: { tenantId, id: source.warehouseId },
+      select: { status: true },
+    }),
+    prisma.item.findFirst({
+      where: { tenantId, id: requestLine.itemId },
+      select: { status: true },
+    }),
+  ]);
+  return {
+    destination: null,
+    create: {
+      itemId: requestLine.itemId,
+      sku: requestLine.sku,
+      itemName: requestLine.itemName,
+      unit: requestLine.unit || null,
+      warehouseId: source.warehouseId,
+      location: location || null,
+      locationKey,
+    },
+    blocked: warehouse?.status !== "active" || item?.status !== "active",
+  };
+}
+
 const totalAuthorized = (authorization) =>
   authorization.lines.reduce(
-    (sum, line) => sum + decimalUnits(line.authorizedQuantity),
+    (sum, line) => sum + executableAuthorizedUnits(line),
     0n,
   );
 const totalPosted = (authorization, excluded = "") =>
@@ -233,7 +288,7 @@ export async function buildQuarantineReleaseDraftPlan({
       continue;
     }
     const remaining =
-      decimalUnits(authorizationLine.authorizedQuantity) -
+      executableAuthorizedUnits(authorizationLine) -
       (used.get(authorizationLine.id) || 0n);
     if (quantityUnits > remaining)
       issues.push(
@@ -248,24 +303,38 @@ export async function buildQuarantineReleaseDraftPlan({
         ),
       );
     const sourceId = text(submitted.quarantineBalanceId);
-    const destinationId = text(
+    const selectedDestinationId = text(
       submitted.destinationInventoryBalanceId,
     );
+    // The destination is an existing available balance, or a location of the
+    // source warehouse (an empty string means no location).
+    const selectedLocation = optionalText(submitted.destinationLocation);
     if (
       !sourceId ||
-      !destinationId ||
+      Boolean(selectedDestinationId) === (selectedLocation !== null) ||
       text(submitted.inventoryBalanceId)
     )
       issues.push(
         issue(
           "RETURN_POSTING_BALANCE_SELECTION_INVALID",
-          "Quarantine release requires one source quarantine balance and one existing destination available balance.",
+          "Quarantine release requires one source quarantine balance and one destination: an available balance or a location in the same warehouse.",
           422,
         ),
       );
     const source = sourceById.get(sourceId);
-    const destination = destinationById.get(destinationId);
     const requestLine = authorizationLine.returnRequestLine;
+    const target =
+      !selectedDestinationId && selectedLocation !== null && source
+        ? await destinationTarget(
+            prisma,
+            tenantId,
+            requestLine,
+            source,
+            selectedLocation,
+          )
+        : { destination: destinationById.get(selectedDestinationId) || null };
+    const destination = target.destination;
+    const destinationId = destination?.id || "";
     if (!source)
       issues.push(
         issue(
@@ -274,7 +343,15 @@ export async function buildQuarantineReleaseDraftPlan({
           404,
         ),
       );
-    if (!destination)
+    if (target.create && target.blocked)
+      issues.push(
+        issue(
+          "RETURN_POSTING_BALANCE_CREATE_BLOCKED",
+          "A new available stock record needs an active item and an active warehouse.",
+          409,
+        ),
+      );
+    if (!destination && !target.create && selectedDestinationId)
       issues.push(
         issue(
           "RETURN_POSTING_DESTINATION_BALANCE_NOT_FOUND",
@@ -313,17 +390,42 @@ export async function buildQuarantineReleaseDraftPlan({
           409,
         ),
       );
+    // Any location of the quarantine stock's warehouse (L8-14).
     if (
       source &&
       destination &&
-      (source.warehouseId !== destination.warehouseId ||
-        !same(source.locationKey, destination.locationKey))
+      source.warehouseId !== destination.warehouseId
     )
       issues.push(
         issue(
           "RETURN_POSTING_LOCATION_POLICY_MISMATCH",
-          "Quarantine release must use an existing available balance in the same warehouse and location.",
+          "Quarantine release must put stock into the same warehouse.",
           409,
+        ),
+      );
+    // A release takes this return's own goods: the receipt layers of this
+    // return line in the chosen quarantine stock record that no release or
+    // supplier return has used yet (L8-09).
+    const ownLayers = source
+      ? (
+          await returnLineQuarantineLayers({
+            prisma,
+            tenantId,
+            returnRequestLineIds: [requestLine.id],
+            quarantineBalanceId: source.id,
+          })
+        ).get(requestLine.id)
+      : null;
+    if (source && quantityUnits > (ownLayers?.remainingUnits || 0n))
+      issues.push(
+        issue(
+          "RETURN_RELEASE_EXCEEDS_RETURN_QUARANTINE",
+          "Release quantity exceeds what this return still has in the chosen quarantine stock.",
+          409,
+          {
+            returnAuthorizationLineId: authorizationLine.id,
+            remainingQuantity: fixed(ownLayers?.remainingUnits || 0n),
+          },
         ),
       );
     normalized.push({
@@ -342,6 +444,17 @@ export async function buildQuarantineReleaseDraftPlan({
       warehouseId: source?.warehouseId || destination?.warehouseId || "",
       location: source?.location || destination?.location || null,
       locationKey: source?.locationKey || destination?.locationKey || "",
+      destinationLocation: destination
+        ? destination.location || null
+        : target.create?.location || null,
+      destinationLocationKey: destination
+        ? text(destination.locationKey)
+        : text(target.create?.locationKey),
+      // Set when the draft command has to create the available stock record.
+      createsDestinationBalance:
+        !destination && target.create ? target.create : null,
+      // The receipt layers the release posting consumes (L8-09).
+      sourceMovementIds: ownLayers?.sourceMovementIds || [],
       source,
       destination,
     });
@@ -442,6 +555,7 @@ export async function buildQuarantineReleasePostingPlan({
       text(row.quarantineBalanceId) !== line.quarantineBalanceId ||
       text(row.destinationInventoryBalanceId) !==
         line.destinationInventoryBalanceId ||
+      destinationLocationKeyOf(row) !== line.destinationLocationKey ||
       row.inventoryBalanceId
     )
       issues.push(
@@ -578,8 +692,8 @@ export async function buildQuarantineReleasePostingPlan({
           itemName: line.itemName,
           unit: line.unit,
           warehouseId: line.warehouseId,
-          location: line.location,
-          locationKey: line.locationKey,
+          location: line.destinationLocation,
+          locationKey: line.destinationLocationKey,
           quantity: line.quantity,
           balanceType: "available",
           balanceId: line.destinationInventoryBalanceId,
@@ -656,6 +770,7 @@ export async function buildQuarantineReleaseReversalPlan({
       movement,
     ]),
   );
+  // The available-side movement sits at the destination location.
   const valid = (line, movement, type, balanceId, quantityField) =>
     movement &&
     movement.tenantId === tenantId &&
@@ -664,7 +779,12 @@ export async function buildQuarantineReleaseReversalPlan({
     movement.itemId === line.itemId &&
     movement.sku === line.sku &&
     movement.warehouseId === line.warehouseId &&
-    same(movement.locationKey, line.locationKey) &&
+    same(
+      movement.locationKey,
+      type === "quarantine_release_available_in"
+        ? destinationLocationKeyOf(line)
+        : line.locationKey,
+    ) &&
     same(movement.unit, line.unit) &&
     sameUnits(movement[quantityField], line.quantity) &&
     sameUnits(
@@ -739,7 +859,7 @@ export async function buildQuarantineReleaseReversalPlan({
       source.warehouseId !== line.warehouseId ||
       destination.warehouseId !== line.warehouseId ||
       !same(source.locationKey, line.locationKey) ||
-      !same(destination.locationKey, line.locationKey)
+      !same(destination.locationKey, destinationLocationKeyOf(line))
     )
       issues.push(
         issue(
@@ -880,8 +1000,8 @@ export async function buildQuarantineReleaseReversalPlan({
           itemName: line.itemName,
           unit: line.unit,
           warehouseId: line.warehouseId,
-          location: line.location,
-          locationKey: line.locationKey,
+          location: destinationLocationOf(line),
+          locationKey: destinationLocationKeyOf(line),
           quantity: fixed(decimalUnits(line.quantity)),
           balanceType: "available",
           balanceId: line.destinationInventoryBalanceId,

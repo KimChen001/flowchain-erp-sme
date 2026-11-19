@@ -24,7 +24,10 @@ export function defineAiTool({ name, description, parameters = {}, required = []
   return Object.freeze({
     name,
     description,
-    schema: Object.freeze({ type: 'object', properties: parameters, required, additionalProperties: false }),
+    // An empty `required` is left out: a schema without one requires nothing,
+    // and every request carries every tool's schema (2026-11-17: room for
+    // record_history in the earlier-turn budget).
+    schema: Object.freeze({ type: 'object', properties: parameters, ...(required.length ? { required } : {}), additionalProperties: false }),
     available,
     run,
     ...(assistantV2Only ? { assistantV2Only: true } : {}),
@@ -39,7 +42,7 @@ export function validateAiToolArgs(schema, input) {
   if (typeof args !== 'object' || Array.isArray(args)) return { ok: false, errors: ['arguments must be an object'] }
   const errors = []
   for (const key of Object.keys(args)) if (!schema.properties[key]) errors.push(`unknown argument ${key}`)
-  for (const key of schema.required) if (args[key] === undefined || args[key] === null || args[key] === '') errors.push(`missing argument ${key}`)
+  for (const key of schema.required || []) if (args[key] === undefined || args[key] === null || args[key] === '') errors.push(`missing argument ${key}`)
   for (const [key, rule] of Object.entries(schema.properties)) {
     const value = args[key]
     if (value === undefined || value === null) continue
@@ -97,6 +100,18 @@ export function aiToolList(rows, limit) {
   return { rows: all.slice(0, size), total: all.length, more: Math.max(0, all.length - size) }
 }
 
+// The sources a result rests on whose read stopped at the repository's limit
+// (facts.limitations: truncated), so the result says its rows and counts
+// cover only the latest ones (design audit 2026-11-15, L5-05: a count over a
+// cut read was answered as complete). Spread into a result: { partial } or {}.
+export const PARTIAL_NOTE = 'Only the latest records were read: say a count from this covers those.'
+export function aiToolPartial(facts, sources) {
+  const cut = array(facts?.limitations).filter((row) => row?.code === 'truncated' && sources.includes(row.source))
+  if (!cut.length) return {}
+  const limits = cut.map((row) => Number(row.limit)).filter((value) => Number.isFinite(value) && value > 0)
+  return { partial: { sources: [...new Set(cut.map((row) => row.source))], ...(limits.length ? { limit: Math.min(...limits) } : {}), note: PARTIAL_NOTE } }
+}
+
 // The record a row names: its type, id and label, for links and grounding.
 export const aiToolRef = (type, id, label) => ({ type, id: text(id), label: text(label) || text(id) })
 
@@ -142,4 +157,28 @@ export function aiToolPurchaseOrder(facts, query) {
 function numbered(value) {
   const match = fold(value).match(/^(.*?)(\d+)$/)
   return match ? { prefix: match[1].replace(/[\s_-]+/g, ''), number: Number(match[2]) } : null
+}
+
+// An item named by its SKU or by its name, as the user or a draft wrote it
+// (2026-11-08: a lookup of "White Hanging Heart T-Light Holder" in the SKU
+// field found nothing, and the answer would not state the stock). Case,
+// quotes, dashes and spaces do not matter; one item whose name holds the
+// words is that item; several are offered back to choose from.
+const nameKey = (value) => text(value).normalize('NFKC').toLowerCase().replace(/[\u2018\u2019\u201c\u201d"'`]/g, '').replace(/[\u2010-\u2015\u2212]/g, '-').replace(/\s+/g, ' ').trim()
+export function aiStockSku(facts, value) {
+  const wanted = text(value)
+  if (!wanted) return { error: 'not_found' }
+  const items = [...array(facts.inventory?.rows), ...array(facts.inventory?.masterOnly)]
+  const bySku = items.find((row) => text(row.sku).toLowerCase() === wanted.toLowerCase())
+  if (bySku) return { sku: bySku.sku }
+  const key = nameKey(wanted)
+  const exact = items.filter((row) => row.itemName && nameKey(row.itemName) === key)
+  // Spaces and dashes do not matter either ("Cake Stand" for Regency
+  // Cakestand 3 Tier, 2026-11-08).
+  const compact = (value) => nameKey(value).replace(/[\s-]+/g, '')
+  const contains = (row) => row.itemName && key.length >= 3 && (nameKey(row.itemName).includes(key) || compact(row.itemName).includes(compact(key)))
+  const matches = exact.length ? exact : items.filter(contains)
+  if (matches.length === 1) return { sku: matches[0].sku }
+  if (matches.length > 1) return { error: 'ambiguous', candidates: matches.slice(0, 10).map((row) => ({ sku: row.sku, itemName: row.itemName || null })) }
+  return { error: 'not_found' }
 }

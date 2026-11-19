@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { resolveProvisionedActor } from './pilot-identity.mjs'
-import { assertAuthorized } from '../auth/authorization-service.mjs'
+import { assertAuthorized, can } from '../auth/authorization-service.mjs'
 import { escapeLikePattern } from '../persistence/like-pattern.mjs'
 import { outboundRequestHash } from './outbound-posting-command-service.mjs'
-import { outboundDecimalString as fixed, outboundDecimalUnits as units } from './outbound-transaction-policy.mjs'
-import { CUSTOMER_NAMESPACE } from './master-data-commands.mjs'
+import { outboundDecimalString as fixed, outboundDecimalUnits as units, SHIPMENT_HOLDING_CUSTOMER_INVOICE_STATUSES } from './outbound-transaction-policy.mjs'
+import { CUSTOMER_NAMESPACE, customerCreditStatus } from './master-data-commands.mjs'
 import { allocateDocumentNumber } from './document-numbering.mjs'
 import { SALES_ORDER_DEMAND_FILTERS, salesOrderRiskWhere } from '../repositories/db-sales-order-read-repository.mjs'
 
@@ -35,15 +35,21 @@ const amount = (quantityValue, priceValue) => {
   const product = units(quantityValue) * units(priceValue)
   return fixed((product + 5_000n) / 10_000n)
 }
-const commandPermission = (commandType) => commandType === 'create_sales_order_draft' ? 'sales_order.create' : commandType === 'revise_sales_order_draft' ? 'sales_order.revise' : commandType === 'hold_sales_order' ? 'sales_order.cancel' : 'sales_order.submit'
+const commandPermission = (commandType) => commandType === 'create_sales_order_draft' ? 'sales_order.create' : commandType === 'revise_sales_order_draft' ? 'sales_order.revise' : commandType === 'hold_sales_order' ? 'sales_order.hold' : 'sales_order.submit'
 
 async function actorFor(prisma, context) { return resolveProvisionedActor(prisma, context?.identity || context) }
 
 // A customer from the workspace's Customers master data.
 const customerOf = (record) => {
   const payload = record?.payload && typeof record.payload === 'object' ? record.payload : {}
-  return { id: text(payload.id) || record.id, code: record.recordKey, name: text(payload.name), currency: text(payload.currency) || null, paymentTerms: text(payload.paymentTerms) || null, status: text(payload.status) || 'active' }
+  return { id: text(payload.id) || record.id, code: record.recordKey, name: text(payload.name), currency: text(payload.currency) || null, paymentTerms: text(payload.paymentTerms) || null, status: text(payload.status) || 'active', creditStatus: customerCreditStatus(payload.creditStatus) }
 }
+
+// The order form's item search: the matches shown at a time, and how many of a
+// draft's own items are added by id. The customer list's bound.
+const ENTRY_ITEM_OPTIONS = 50
+const ENTRY_ITEM_IDS = 200
+const ENTRY_CUSTOMER_LIMIT = 10000
 
 // An order placed for a chosen customer keeps the customer's id and the name
 // recorded in Customers, so its invoices and receivables follow one customer
@@ -55,7 +61,9 @@ async function chosenCustomer(tx, tenantId, customerId) {
   if (!customer?.name || customer.status !== 'active') fail('SALES_ORDER_CUSTOMER_NOT_FOUND', 'Choose an active customer from Customers.', 422)
   return customer
 }
-async function authoritativeLines(prisma, tenantId, lines) {
+// requireActive: a new or revised order needs active items; holding or
+// resuming one already confirmed does not (design audit L4-03).
+async function authoritativeLines(prisma, tenantId, lines, { requireActive = true } = {}) {
   if (!Array.isArray(lines) || !lines.length) fail('SALES_ORDER_VALIDATION_FAILED', 'At least one sales order line is required.', 422)
   const normalized = lines.map((line) => {
     const orderedQuantity = quantity(line.quantity ?? line.orderedQuantity)
@@ -63,9 +71,9 @@ async function authoritativeLines(prisma, tenantId, lines) {
     return { itemId: text(line.itemId), orderedQuantity, unitPrice, amount: amount(orderedQuantity, unitPrice) }
   })
   if (normalized.some((line) => !line.itemId)) fail('SALES_ORDER_VALIDATION_FAILED', 'Every line requires an item.', 422)
-  const items = await prisma.item.findMany({ where: { tenantId, id: { in: [...new Set(normalized.map((line) => line.itemId))] }, status: 'active' } })
+  const items = await prisma.item.findMany({ where: { tenantId, id: { in: [...new Set(normalized.map((line) => line.itemId))] }, ...(requireActive ? { status: 'active' } : {}) } })
   const map = new Map(items.map((item) => [item.id, item]))
-  if (normalized.some((line) => !map.has(line.itemId))) fail('SALES_ORDER_ITEM_INVALID', 'Every line must reference an active item in this workspace.', 422)
+  if (normalized.some((line) => !map.has(line.itemId))) fail('SALES_ORDER_ITEM_INVALID', requireActive ? 'Every line must reference an active item in this workspace.' : 'Every line must reference an item in this workspace.', 422)
   // Lines are read back ordered by id, so the ids of one order's lines share
   // a random part and end in their position: they show in the order entered.
   const batch = randomUUID()
@@ -162,9 +170,17 @@ export function createSalesOrderWorkbenchService({ prisma, idFactory = randomUUI
       const lines = await authoritativeLines(tx, actor.tenantId, payload.lines)
       const currency = text(payload.header.currency || current.currency).toUpperCase()
       if (!/^[A-Z]{3}$/.test(currency)) fail('SALES_ORDER_VALIDATION_FAILED', 'Currency must be a three-letter code.', 422)
-      const customer = text(payload.header.customerId) ? await chosenCustomer(tx, actor.tenantId, text(payload.header.customerId)) : null
+      // A header field the request leaves out keeps its value: a client that
+      // sends only new lines does not clear the customer or the promised date
+      // (design audit L4-14). Sent empty, it is cleared.
+      const header = payload.header
+      const customerSent = Object.hasOwn(header, 'customerId')
+      const customer = customerSent && text(header.customerId) ? await chosenCustomer(tx, actor.tenantId, text(header.customerId)) : null
+      const customerId = customerSent ? customer?.id || null : current.customerId
+      const customerName = customer?.name || text(header.customerName || current.customerName)
+      const promisedDate = Object.hasOwn(header, 'promisedDate') ? (header.promisedDate ? new Date(header.promisedDate) : null) : current.promisedDate
       await tx.salesOrderLine.deleteMany({ where: { salesOrderId: current.id } })
-      const order = await tx.salesOrder.update({ where: { id: current.id }, data: { customerName: customer?.name || text(payload.header.customerName || current.customerName), customerId: customer?.id || null, promisedDate: payload.header.promisedDate ? new Date(payload.header.promisedDate) : null, currency, version: { increment: 1 }, lines: { create: lines } }, include: { lines: { orderBy: { id: 'asc' } } } })
+      const order = await tx.salesOrder.update({ where: { id: current.id }, data: { customerName, customerId, promisedDate, currency, version: { increment: 1 }, lines: { create: lines } }, include: { lines: { orderBy: { id: 'asc' } } } })
       return { order, summary: `Sales order ${order.orderNumber} draft revised.` }
     })
   }
@@ -182,7 +198,18 @@ export function createSalesOrderWorkbenchService({ prisma, idFactory = randomUUI
       // Everything is shipped, so there is nothing left to hold back.
       if (action === 'hold' && current.fulfillmentStatus === 'fully_fulfilled') fail('SALES_ORDER_INVALID_STATE', 'A fully shipped sales order cannot be put on hold.', 409)
       if (!current.lines.length) fail('SALES_ORDER_VALIDATION_FAILED', 'Sales order requires at least one line.', 422)
-      await authoritativeLines(tx, actor.tenantId, current.lines.map((line) => ({ itemId: line.itemId, quantity: fixed(units(line.orderedQuantity)), unitPrice: line.unitPrice === null || line.unitPrice === undefined ? null : fixed(units(line.unitPrice)) })))
+      // Confirming commits the order, so it needs what invoicing will: a price
+      // on every line (zero for a free item) and a customer from Customers
+      // that is active and not restricted (design audit L4-13, L4-26). An
+      // order was invoiced only after it shipped, too late to fix.
+      if (action === 'confirm') {
+        const unpriced = current.lines.filter((line) => line.unitPrice === null || line.unitPrice === undefined)
+        if (unpriced.length) fail('SALES_ORDER_PRICE_REQUIRED', 'Enter a price on every line before confirming; use 0 for a free item.', 422, { lineIds: unpriced.map((line) => line.id) })
+        if (!current.customerId) fail('SALES_ORDER_CUSTOMER_REQUIRED', 'Choose the customer from Customers before confirming.', 422)
+        const customer = await chosenCustomer(tx, actor.tenantId, current.customerId)
+        if (customer.creditStatus === 'restricted') fail('SALES_ORDER_CUSTOMER_RESTRICTED', `${customer.name} is restricted in Customers, so its orders cannot be confirmed.`, 409)
+      }
+      await authoritativeLines(tx, actor.tenantId, current.lines.map((line) => ({ itemId: line.itemId, quantity: fixed(units(line.orderedQuantity)), unitPrice: line.unitPrice === null || line.unitPrice === undefined ? null : fixed(units(line.unitPrice)) })), { requireActive: action === 'confirm' })
       const order = await tx.salesOrder.update({ where: { id: current.id }, data: { workflowStatus: definition[1], version: { increment: 1 } }, include: { lines: { orderBy: { id: 'asc' } } } })
       return { order, summary: `Sales order ${order.orderNumber} ${action} completed.` }
     })
@@ -214,18 +241,57 @@ export function createSalesOrderReadService({ prisma, lifecycleCapability = { en
       prisma.salesOrder.findMany({ where: { tenantId: actor.tenantId }, distinct: ['currency'], select: { currency: true }, orderBy: { currency: 'asc' } }),
     ])
     const currencies = [...new Set((currencyRows || []).map((row) => text(row.currency).toUpperCase()).filter(Boolean))]
-    return { dataSource: 'Authoritative PostgreSQL', page, pageSize, total, currencies, capabilities: { salesOrderLifecycle: lifecycleCapability }, orders: rows.map((row) => { const order = publicOrder(row); return { ...order, totalLines: row.lines.length, orderedQuantity: fixed(row.lines.reduce((sum, line) => sum + units(line.orderedQuantity), 0n)), reservedQuantity: fixed(row.lines.reduce((sum, line) => sum + units(line.reservedQuantity), 0n)), fulfilledQuantity: fixed(row.lines.reduce((sum, line) => sum + units(line.fulfilledQuantity), 0n)) } }) }
+    const invoiced = await invoicedQuantities(actor, rows)
+    return { dataSource: 'Authoritative PostgreSQL', page, pageSize, total, currencies, capabilities: { salesOrderLifecycle: lifecycleCapability }, orders: rows.map((row) => { const order = publicOrder(row); return { ...order, totalLines: row.lines.length, orderedQuantity: fixed(row.lines.reduce((sum, line) => sum + units(line.orderedQuantity), 0n)), reservedQuantity: fixed(row.lines.reduce((sum, line) => sum + units(line.reservedQuantity), 0n)), fulfilledQuantity: fixed(row.lines.reduce((sum, line) => sum + units(line.fulfilledQuantity), 0n)), invoicedQuantity: invoiced ? fixed(invoiced.get(row.id) || 0n) : null } }) }
   }
-  async function entryData(context) {
+  // How much of each listed order's shipped goods is invoiced, for the list's
+  // invoicing column: the quantities on customer invoices that hold their
+  // shipment (submitted, approved, issued or disputed; a draft does not), as
+  // operational finance counts them. Read only, and only for a reader who may
+  // read customer invoices; null for anyone else.
+  async function invoicedQuantities(actor, rows) {
+    if (!can({ actor, permission: 'finance.customer_invoice.read', tenantId: actor.tenantId })) return null
+    const byOrder = new Map()
+    if (!rows.length) return byOrder
+    const lines = await prisma.customerInvoiceLine.findMany({
+      where: { customerInvoice: { tenantId: actor.tenantId, salesOrderId: { in: rows.map((row) => row.id) }, status: { in: [...SHIPMENT_HOLDING_CUSTOMER_INVOICE_STATUSES] } } },
+      select: { quantity: true, customerInvoice: { select: { salesOrderId: true } } },
+    })
+    for (const line of lines) {
+      const orderId = line.customerInvoice?.salesOrderId
+      if (orderId) byOrder.set(orderId, (byOrder.get(orderId) || 0n) + units(line.quantity))
+    }
+    return byOrder
+  }
+  // The order form searches items on the server (design audit L4-01): before,
+  // it listed the first 200 active items by SKU and nothing past them could be
+  // ordered. itemQuery matches SKU or name; itemIds adds the items a draft
+  // already has, whatever their status, so its lines keep their names.
+  // view=items answers the item search alone, without customers.
+  async function entryData(context, params = {}) {
     const actor = await actorFor(prisma, context)
     assertAuthorized({ actor, permission: 'sales_order.read', tenantId: actor.tenantId })
-    const [items, customerRecords] = await Promise.all([
-      prisma.item.findMany({ where: { tenantId: actor.tenantId, status: 'active' }, select: { id: true, sku: true, name: true, unit: true }, orderBy: { sku: 'asc' }, take: 200 }),
-      prisma.runtimeRecord.findMany({ where: { tenantId: actor.tenantId, namespace: CUSTOMER_NAMESPACE }, orderBy: { recordKey: 'asc' }, take: 2000 }),
+    const itemQuery = text(params.itemQuery).slice(0, 100)
+    const itemIds = [...new Set(text(params.itemIds).split(',').map(text).filter(Boolean))].slice(0, ENTRY_ITEM_IDS)
+    const itemsOnly = text(params.view) === 'items'
+    const itemSelect = { id: true, sku: true, name: true, unit: true }
+    const itemWhere = { tenantId: actor.tenantId, status: 'active', ...(itemQuery ? { OR: [{ sku: { contains: itemQuery, mode: 'insensitive' } }, { name: { contains: itemQuery, mode: 'insensitive' } }] } : {}) }
+    const [matches, chosen, customerRecords] = await Promise.all([
+      prisma.item.findMany({ where: itemWhere, select: itemSelect, orderBy: { sku: 'asc' }, take: ENTRY_ITEM_OPTIONS + 1 }),
+      itemIds.length ? prisma.item.findMany({ where: { tenantId: actor.tenantId, id: { in: itemIds } }, select: itemSelect }) : [],
+      // Every customer up to a high bound (L4-19: it stopped at 2,000), in
+      // record order; the form says so when the bound cuts the list.
+      itemsOnly ? [] : prisma.runtimeRecord.findMany({ where: { tenantId: actor.tenantId, namespace: CUSTOMER_NAMESPACE }, orderBy: { recordKey: 'asc' }, take: ENTRY_CUSTOMER_LIMIT + 1 }),
     ])
-    // The active customers an order can be placed for, by name.
-    const customers = customerRecords.map(customerOf).filter((customer) => customer.name && customer.status === 'active').sort((a, b) => a.name.localeCompare(b.name)).map(({ status, ...customer }) => customer)
-    return { dataSource: 'Authoritative PostgreSQL', capabilities: { salesOrderLifecycle: lifecycleCapability }, items: lifecycleCapability.enabled ? items : [], customers: lifecycleCapability.enabled ? customers : [] }
+    const seen = new Set()
+    const items = [...chosen, ...matches.slice(0, ENTRY_ITEM_OPTIONS)].filter((item) => !seen.has(item.id) && seen.add(item.id))
+    const itemsMore = matches.length > ENTRY_ITEM_OPTIONS
+    const customersTruncated = customerRecords.length > ENTRY_CUSTOMER_LIMIT
+    // The active customers an order can be placed for, by name, with the
+    // country and address Customers records, so the order form can search them.
+    const customers = customerRecords.slice(0, ENTRY_CUSTOMER_LIMIT).map((record) => ({ ...customerOf(record), country: text(record?.payload?.country) || null, address: text(record?.payload?.address) || null })).filter((customer) => customer.name && customer.status === 'active').sort((a, b) => a.name.localeCompare(b.name)).map(({ status, ...customer }) => customer)
+    if (itemsOnly) return { dataSource: 'Authoritative PostgreSQL', capabilities: { salesOrderLifecycle: lifecycleCapability }, items: lifecycleCapability.enabled ? items : [], itemsMore }
+    return { dataSource: 'Authoritative PostgreSQL', capabilities: { salesOrderLifecycle: lifecycleCapability }, items: lifecycleCapability.enabled ? items : [], itemsMore, customers: lifecycleCapability.enabled ? customers : [], customersTruncated }
   }
   return { listOrders, entryData }
 }

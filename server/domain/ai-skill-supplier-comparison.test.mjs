@@ -78,3 +78,26 @@ test('the comparison needs the scorecard, and says why it has none', async () =>
   assert.equal(runSupplierComparison(facts, { route: {} }).hidden, true)
   assert.equal(runSupplierComparison(facts, { route: { scorecardError: 'SCORECARD_PERIOD_TOO_LONG' } }).unavailable, 'SCORECARD_PERIOD_TOO_LONG')
 })
+
+// Design audit L9-03: on time passes a partial first receipt, so the
+// suppliers are ranked by OTIF, the column the supplier list and Supplier
+// evaluation now show beside on time. A supplier without 5 settled
+// deliveries for OTIF is named with its count, not ranked.
+test('without named suppliers the ranking is by OTIF, not by on time alone', async () => {
+  const { facts } = await scenarioFacts()
+  const row = (supplierId, supplierName, onTime, otif) => ({ supplierId, supplierName, sampleSize: 5, sampleStatus: 'ok', withheldCount: 0, metrics: { onTime: { rate: onTime, count: onTime * 5, of: 5 }, otif: { rate: otif, count: otif * 5, of: 5 }, rejectedLines: { count: 1, of: 10, rate: 0.1 } } })
+  const card = { period: { from: '2026-07-17', to: '2026-10-14' }, suppliers: [
+    row('X', 'Partial Parts', 1, 0.6),
+    row('Y', 'Whole Goods', 0.8, 0.8),
+    { supplierId: 'Z', supplierName: 'Short Sample', sampleSize: 5, sampleStatus: 'ok', withheldCount: 2, metrics: { onTime: { rate: 1, count: 5, of: 5 }, otif: { rate: null, count: 2, of: 2 } } },
+  ] }
+  const best = runSupplierComparison(facts, { route: { scorecard: card, signals: { compare: { mode: 'best' } } } })
+  assert.deepEqual(best.suppliers.map((supplier) => supplier.name), ['Whole Goods', 'Partial Parts'])
+  assert.deepEqual(best.few, [{ name: 'Short Sample', deliveries: 5 }])
+  assert.equal(best.suppliers[1].rejectedLines.rate, 0.1)
+  const worst = runSupplierComparison(facts, { route: { scorecard: card, signals: { compare: { mode: 'worst' } } } })
+  assert.deepEqual(worst.suppliers.map((supplier) => supplier.name), ['Partial Parts', 'Whole Goods'])
+  // Named, the supplier keeps the deliveries withheld from this reader.
+  const named = runSupplierComparison(facts, { route: { scorecard: card, entities: { suppliers: [{ id: 'Z', name: 'Short Sample' }] } } })
+  assert.equal(named.suppliers[0].withheld, 2)
+})

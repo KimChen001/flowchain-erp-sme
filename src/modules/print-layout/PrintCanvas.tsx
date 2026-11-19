@@ -1,5 +1,18 @@
 import type React from "react";
 import type { PrintDocumentData, PrintLayoutElement, PrintLayoutTemplate } from "./printLayoutTypes";
+import { useI18n } from "../../i18n/I18n";
+import { printBands } from "./printPaging";
+
+// The words the canvas prints itself, in the interface language (design audit L16).
+// The page number is where the numbers go: in print the browser numbers each
+// page at its foot (printPageRule in printPaging.ts), never a fixed "1 of 1"
+// (design audit L11-17).
+const CANVAS_COPY = {
+  pageNumber: ["Page n of N", "第 n 页 / 共 N 页"],
+  colon: [": ", "："],
+  barcode: ["Barcode placeholder", "条码占位"],
+  qrcode: ["QR code placeholder", "二维码占位"],
+} as const;
 
 function textValue(value: unknown) {
   if (value === undefined || value === null || value === "") return "—";
@@ -7,6 +20,8 @@ function textValue(value: unknown) {
 }
 
 function ElementContent({ element, data, instanceValues }: { element: PrintLayoutElement; data: PrintDocumentData; instanceValues: Record<string, string> }) {
+  const { language } = useI18n();
+  const say = (key: keyof typeof CANVAS_COPY) => CANVAS_COPY[key][language === "en-US" ? 0 : 1];
   const style: React.CSSProperties = {
     fontSize: element.style?.fontSize || 12,
     fontWeight: element.style?.bold ? 700 : element.style?.fontWeight || 400,
@@ -25,12 +40,12 @@ function ElementContent({ element, data, instanceValues }: { element: PrintLayou
     );
   }
   if (element.type === "line") return <div style={{ borderTop: `${element.style?.borderWidth || 1}px solid #111`, marginTop: element.height / 2 }} />;
-  if (element.type === "pageNumber") return <div style={style}>第 1 页 / 共 1 页</div>;
-  if (element.type === "barcode") return <div className="print-placeholder-code" style={style}><small>条码占位</small><br />||||| {textValue(data[element.field || "documentNo"])}</div>;
-  if (element.type === "qrcode") return <div className="print-placeholder-qr" style={style}><small>二维码占位</small><br />QR<br />{textValue(data[element.field || "documentNo"])}</div>;
+  if (element.type === "pageNumber") return <div style={style} data-testid="print-page-number">{say("pageNumber")}</div>;
+  if (element.type === "barcode") return <div className="print-placeholder-code" style={style}><small>{say("barcode")}</small><br />||||| {textValue(data[element.field || "documentNo"])}</div>;
+  if (element.type === "qrcode") return <div className="print-placeholder-qr" style={style}><small>{say("qrcode")}</small><br />QR<br />{textValue(data[element.field || "documentNo"])}</div>;
   const mode = element.contentMode || (element.type === "field" ? "field" : "static");
   const value = mode === "instance" ? instanceValues[element.id] : mode === "field" ? data[element.field || ""] : element.value;
-  if (element.type === "field" || mode === "field") return <div style={style}><span className="print-field-label">{element.title}：</span>{textValue(value)}</div>;
+  if (element.type === "field" || mode === "field") return <div style={style}><span className="print-field-label">{element.title}{say("colon")}</span>{textValue(value)}</div>;
   if (element.type === "signature") return <div className="print-multiline-content" style={style}>{value ? String(value) : element.title}</div>;
   return <div className="print-multiline-content" style={style}>{value ? String(value) : element.placeholder || element.title}</div>;
 }
@@ -84,23 +99,32 @@ export default function PrintCanvas({
         style={{ width: template.page.width, height: template.page.height, transform: `scale(${scale})` }}
         onPointerDown={() => onSelect("")}
       >
-        {template.elements.filter((element) => element.visible).map((element) => (
-          <div
-            key={element.id}
-            className={`print-layout-element ${selectedId === element.id ? "is-selected" : ""} ${element.style?.bordered ? "is-bordered" : ""}`}
-            data-testid={`print-element-${element.id}`}
-            data-element-id={element.id}
-            data-instance-empty={(element.contentMode === "instance" && !instanceValues[element.id]) || undefined}
-            role="button"
-            tabIndex={0}
-            onPointerDown={(event) => startPointer(event, element, "move")}
-            onClick={(event) => { event.stopPropagation(); onSelect(element.id); }}
-            style={{ left: element.x, top: element.y, width: element.width, height: element.height, borderWidth: element.style?.borderWidth }}
-          >
-            <ElementContent element={element} data={data} instanceValues={instanceValues} />
-            {selectedId === element.id && element.resizable && (
-              <span className="print-resize-handle" data-testid="print-resize-handle" onPointerDown={(event) => startPointer(event, element, "resize")} />
-            )}
+        {/* On screen a band is no box of its own (display: contents), so each
+            element sits where it was placed on the sheet. In print the bands
+            let the lines table grow and push what is below it down
+            (printBands in printPaging.ts). */}
+        {printBands(template.elements.filter((element) => element.visible)).map((band) => (
+          <div key={band.id} className={`print-canvas-band print-canvas-band-${band.id}`} data-print-band={band.id} style={{ "--print-band-height": `${band.height}px` } as React.CSSProperties}>
+            {band.elements.map((element) => (
+              <div
+                key={element.id}
+                className={`print-layout-element ${selectedId === element.id ? "is-selected" : ""} ${element.style?.bordered ? "is-bordered" : ""}`}
+                data-testid={`print-element-${element.id}`}
+                data-element-id={element.id}
+                data-element-type={element.type}
+                data-instance-empty={(element.contentMode === "instance" && !instanceValues[element.id]) || undefined}
+                role="button"
+                tabIndex={0}
+                onPointerDown={(event) => startPointer(event, element, "move")}
+                onClick={(event) => { event.stopPropagation(); onSelect(element.id); }}
+                style={{ left: element.x, top: element.y, width: element.width, height: element.height, borderWidth: element.style?.borderWidth, "--print-top": `${element.y - band.offset}px`, "--print-height": `${element.height}px` } as React.CSSProperties}
+              >
+                <ElementContent element={element} data={data} instanceValues={instanceValues} />
+                {selectedId === element.id && element.resizable && (
+                  <span className="print-resize-handle" data-testid="print-resize-handle" onPointerDown={(event) => startPointer(event, element, "resize")} />
+                )}
+              </div>
+            ))}
           </div>
         ))}
       </div>

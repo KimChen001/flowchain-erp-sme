@@ -8,7 +8,12 @@ import {
   returnGovernanceFixed as fixed,
   returnGovernanceUnits as units,
 } from "./return-governance-policy.mjs";
+import {
+  buildReturnAuthorizationClosurePlan,
+  isLivePosting,
+} from "./return-authorization-closure-policy.mjs";
 import { assertAuthorized, can } from "../auth/authorization-service.mjs";
+import { approvalAuthorIds, selfApprovalCheck } from "./self-approval.mjs";
 
 export class ReturnGovernanceReadError extends Error {
   constructor(code, message, status = 400, details) {
@@ -78,6 +83,7 @@ function requestModel(request) {
     sourceDocumentNumber: request.sourceDocumentNumber,
     reasonCode: request.reasonCode,
     reasonDetail: request.reasonDetail,
+    resolution: request.resolution || "credit",
     requestedAt: iso(request.requestedAt),
     submittedAt: iso(request.submittedAt),
     rejectedAt: iso(request.rejectedAt),
@@ -112,6 +118,7 @@ function lineModel(line) {
 }
 
 function authorizationModel(authorization) {
+  const posted = postedByAuthorizationLine(authorization);
   return {
     id: authorization.id,
     authorizationNumber: authorization.authorizationNumber,
@@ -124,6 +131,8 @@ function authorizationModel(authorization) {
     cancellationReason: authorization.cancellationReason,
     expiresAt: iso(authorization.expiresAt),
     expiredAt: iso(authorization.expiredAt),
+    remainderClosedAt: iso(authorization.remainderClosedAt),
+    remainderReason: authorization.remainderReason || null,
     version: authorization.version,
     createdAt: iso(authorization.createdAt),
     updatedAt: iso(authorization.updatedAt),
@@ -131,17 +140,45 @@ function authorizationModel(authorization) {
       id: line.id,
       returnRequestLineId: line.returnRequestLineId,
       authorizedQuantity: fixed(units(line.authorizedQuantity)),
+      closedQuantity: fixed(units(line.closedQuantity || 0)),
+      ...(posted
+        ? { postedQuantity: fixed(posted.get(line.id) || 0n) }
+        : {}),
       dispositionRoute: line.dispositionRoute,
       version: line.version,
     })),
   };
 }
 
+// Posted (not reversed) quantity per authorization line, when the postings
+// and their lines were loaded.
+function postedByAuthorizationLine(authorization) {
+  const postings = authorization.postings;
+  if (!Array.isArray(postings) || postings.some((row) => !Array.isArray(row.lines)))
+    return null;
+  const posted = new Map();
+  for (const posting of postings) {
+    if (posting.postingStatus !== "posted" || posting.reversedAt) continue;
+    for (const line of posting.lines)
+      posted.set(
+        line.returnAuthorizationLineId,
+        (posted.get(line.returnAuthorizationLineId) || 0n) + units(line.quantity),
+      );
+  }
+  return posted;
+}
+
 function actionModel(actor, request, capabilities) {
   const requestEnabled = capabilities["return-request"]?.enabled === true;
   const authorizationEnabled =
     capabilities["return-authorization"]?.enabled === true;
-  const requestAllowed = permission(actor, "returns.request.revise");
+  const canRevise =
+    permission(actor, "returns.request.revise") &&
+    (request.returnType !== "customer_return" ||
+      permission(actor, "returns.customer_request.manage"));
+  const canSubmit = permission(actor, "returns.request.submit");
+  const canCancel = permission(actor, "returns.request.cancel");
+  const requestAllowed = canRevise || canSubmit || canCancel;
   const activeAuthorization = request.authorizations?.some((row) =>
     ["draft", "approved", "partially_executed"].includes(row.workflowStatus),
   );
@@ -151,15 +188,15 @@ function actionModel(actor, request, capabilities) {
   return {
     revise:
       requestEnabled &&
-      permission(actor, "returns.request.submit") &&
+      canRevise &&
       request.workflowStatus === "draft",
     submit:
       requestEnabled &&
-      permission(actor, "returns.request.cancel") &&
+      canSubmit &&
       request.workflowStatus === "draft",
     cancel:
       requestEnabled &&
-      requestAllowed &&
+      canCancel &&
       ["draft", "submitted"].includes(request.workflowStatus) &&
       !activeAuthorization,
     authorize:
@@ -189,14 +226,26 @@ function authorizationActions(actor, authorization, capabilities, now) {
   const unexecuted = ["draft", "approved"].includes(
     authorization.workflowStatus,
   );
+  const live = authorization.postings.filter(isLivePosting);
+  const noOpenPostings = live.every(
+    (posting) => posting.postingStatus !== "unposted",
+  );
   return {
-    cancel: enabled && permission(actor, "returns.authorization.cancel") && unexecuted && !authorization.postings.length,
+    cancel: enabled && permission(actor, "returns.authorization.cancel") && unexecuted && !live.length,
     expire:
       enabled &&
       permission(actor, "returns.authorization.expire") &&
       unexecuted &&
-      !authorization.postings.length &&
+      !live.length &&
       Boolean(authorization.expiresAt && authorization.expiresAt <= now),
+    closeRemainder:
+      enabled &&
+      permission(actor, "returns.authorization.cancel") &&
+      authorization.workflowStatus === "partially_executed" &&
+      noOpenPostings,
+    openPostingNumbers: live
+      .filter((posting) => posting.postingStatus === "unposted")
+      .map((posting) => posting.postingNumber),
     blockingReasonCodes: [
       ...(!enabled ? ["RETURN_AUTHORIZATION_CAPABILITY_NOT_AVAILABLE"] : []),
       ...(!permission(actor, "returns.authorization.cancel") && !permission(actor, "returns.authorization.expire") ? ["PERMISSION_DENIED"] : []),
@@ -238,6 +287,7 @@ function requestInput(request) {
     contextDocumentId: request.contextDocumentId || request.sourceDocumentId,
     reasonCode: request.reasonCode,
     reasonDetail: request.reasonDetail,
+    resolution: request.resolution || "credit",
     lines: request.lines.map((line) => ({
       sourceDocumentLineId: line.sourceDocumentLineId,
       requestedQuantity: String(line.requestedQuantity),
@@ -730,12 +780,26 @@ export function createReturnGovernanceReadService({
           )
         : [],
     ]);
+    // Authorize and Reject are not offered to who requested or submitted the
+    // return while someone else who reads its warehouses may authorize it, as
+    // the authorization command rules (design audit C4, L8-25).
+    const actions = actionModel(resolved, request, capabilities);
+    const selfBlocked = (actions.authorize || actions.reject) && (await selfApprovalCheck(prisma, {
+      tenantId: resolved.tenantId,
+      actorId: resolved.user?.id,
+      authorIds: approvalAuthorIds("return_authorization", request),
+      permissionCode: "returns.authorization.approve",
+      warehouseIds: warehouseIds(request.lines),
+    })).blocked;
+    const availableActions = selfBlocked ? { ...actions, authorize: false, reject: false } : actions;
     return {
       dataSource: "Authoritative PostgreSQL",
       request: requestModel(request),
       lines: request.lines.map(lineModel),
       authorizations: request.authorizations.map(authorizationModel),
-      availableActions: actionModel(resolved, request, capabilities),
+      availableActions,
+      // Whether this reader may authorize the return now.
+      canApprove: availableActions.authorize === true,
       evidence: [...requestEvidence, ...authorizationEvidence].sort((a, b) =>
         String(a.occurredAt).localeCompare(String(b.occurredAt)),
       ),
@@ -754,7 +818,7 @@ export function createReturnGovernanceReadService({
       where: { id: text(authorizationId), tenantId: resolved.tenantId },
       include: {
         lines: { orderBy: { id: "asc" } },
-        postings: true,
+        postings: { include: { lines: true } },
         returnRequest: {
           include: { lines: { orderBy: { id: "asc" } } },
         },
@@ -797,11 +861,125 @@ export function createReturnGovernanceReadService({
     };
   }
 
+  async function previewReject(requestId, input, context) {
+    const resolved = await actor(context);
+    const request = await prisma.returnRequest.findFirst({
+      where: { id: text(requestId), tenantId: resolved.tenantId },
+      include: { lines: true, authorizations: true },
+    });
+    if (!request)
+      fail("RETURN_REQUEST_NOT_FOUND", "Return request was not found.", 404);
+    assertWarehouseAccess(resolved, warehouseIds(request.lines), "read", {
+      maskExistence: true,
+    });
+    const blockingIssues = [];
+    if (!permission(resolved, "returns.authorization.reject"))
+      blockingIssues.push({
+        code: "PERMISSION_DENIED",
+        message: "Return request access is denied.",
+        status: 403,
+      });
+    if (request.workflowStatus !== "submitted")
+      blockingIssues.push({
+        code: "RETURN_REQUEST_NOT_SUBMITTED",
+        message: "Only a submitted return request can be rejected.",
+        status: 409,
+      });
+    if (!text(input?.authorizationNumber))
+      blockingIssues.push({
+        code: "RETURN_AUTHORIZATION_NUMBER_REQUIRED",
+        message: "authorizationNumber is required.",
+        status: 422,
+      });
+    if (!text(input?.reason))
+      blockingIssues.push({
+        code: "RETURN_REASON_REQUIRED",
+        message: "A rejection reason is required.",
+        status: 422,
+      });
+    if (
+      request.authorizations.some((row) =>
+        ["draft", "approved", "partially_executed"].includes(
+          row.workflowStatus,
+        ),
+      )
+    )
+      blockingIssues.push({
+        code: "RETURN_AUTHORIZATION_ALREADY_ACTIVE",
+        message: "An active authorization prevents request rejection.",
+        status: 409,
+      });
+    return {
+      operation: "reject_return_request",
+      allowed: blockingIssues.length === 0,
+      blockingIssues,
+      warnings: [],
+      inventoryMutation: false,
+      request: requestModel(request),
+      factsToCreate: { auditEvents: 1, inventoryMovements: 0 },
+    };
+  }
+
+  // Preview of cancel, expire or close remainder on an authorization.
+  async function previewAuthorizationClosure(
+    authorizationId,
+    action,
+    input,
+    context,
+  ) {
+    const resolved = await actor(context);
+    assertAuthorized({
+      actor: resolved,
+      permission:
+        action === "expire"
+          ? "returns.authorization.expire"
+          : "returns.authorization.cancel",
+      tenantId: resolved.tenantId,
+    });
+    const plan = await buildReturnAuthorizationClosurePlan({
+      prisma,
+      tenantId: resolved.tenantId,
+      authorizationId,
+      action,
+      now: now(),
+    });
+    if (plan.authorization)
+      assertWarehouseAccess(resolved, plan.warehouseIds, "read", {
+        maskExistence: true,
+      });
+    else if (plan.blockingIssues[0]?.status === 404)
+      fail(
+        plan.blockingIssues[0].code,
+        plan.blockingIssues[0].message,
+        404,
+      );
+    const blockingIssues = [...plan.blockingIssues];
+    if (action !== "expire" && !text(input?.reason))
+      blockingIssues.push({
+        code: "RETURN_REASON_REQUIRED",
+        message: "A reason is required.",
+        status: 422,
+      });
+    return {
+      operation: plan.operation,
+      allowed: blockingIssues.length === 0,
+      blockingIssues,
+      warnings: [],
+      inventoryMutation: false,
+      lines: plan.lines || [],
+      authorizationStatusAfter: plan.authorizationStatusAfter || null,
+      requestStatusAfter: plan.requestStatusAfter || null,
+      factsToCreate: { auditEvents: 1, inventoryMovements: 0 },
+    };
+  }
+
   return {
     entryData,
     previewRequest,
     previewSubmit,
     previewCancel,
+    previewReject,
+    previewAuthorizationClosure,
     previewAuthorization,
     listRequests,
     listAuthorizations,
@@ -810,3 +988,9 @@ export function createReturnGovernanceReadService({
     authorizationWorkbench,
   };
 }
+
+// The button rules, exported for unit tests.
+export {
+  actionModel as returnRequestAvailableActions,
+  authorizationActions as returnAuthorizationAvailableActions,
+};

@@ -32,7 +32,8 @@ export function approvalEmailsEnabled(env = process.env) {
 // link opens, and whether the document is waiting now (re-read after commit).
 const DOCUMENTS = Object.freeze({
   purchase_request: {
-    permission: "procurement.purchase_order.approve",
+    // A request's own approve code since design audit C4.
+    permission: "procurement.purchase_request.approve",
     path: (id) => `/app/procurement/requests/${encodeURIComponent(id)}`,
     async load(prisma, { tenantId, documentId }) {
       const row = documentId ? await prisma.purchaseRequest.findFirst({ where: { id: documentId, tenantId }, select: { id: true, number: true, status: true } }) : null;

@@ -32,14 +32,15 @@ async function run(page: Page, id: string, reason?: string) {
 }
 
 // Opens the payment form, optionally changes the amount it offers (what is
-// outstanding), previews and confirms.
+// outstanding), reads what it would leave and records it: one step, no
+// separate Preview (round 8b).
 async function recordPayment(page: Page, { amount, reference, status }: { amount?: (offered: number) => string; reference: string; status: RegExp }) {
   await page.getByTestId("payment-record").click();
+  await expect(page.getByTestId("payment-preview")).toHaveCount(0);
   const field = page.getByTestId("payment-amount");
   if (amount) await field.fill(amount(Number(await field.inputValue())));
   await page.getByTestId("payment-method").selectOption("check");
   await page.getByTestId("payment-reference").fill(reference);
-  await page.getByTestId("payment-preview").click();
   await expect(page.getByTestId("payment-preview-result")).toContainText(status);
   await page.getByTestId("payment-confirm").click();
   await expect(page.getByTestId("payment-record-panel")).toHaveCount(0);
@@ -51,7 +52,6 @@ test("a bill to pay is paid in two parts and a wrong payment is voided", async (
   await expect(page.getByTestId("supplier-invoice-receipt")).toHaveValue("finance-browser-grn");
   await page.getByTestId("supplier-invoice-number").fill("UI-PAY-BILL");
   await page.getByTestId("supplier-invoice-due").fill("2026-11-01");
-  await page.getByTestId("supplier-invoice-preview").click();
   await expect(page.getByTestId("supplier-invoice-create")).toBeEnabled();
   await page.getByTestId("supplier-invoice-create").click();
   await expect(page).toHaveURL(/\/app\/procurement\/bills\/[0-9a-f-]{36}$/);
@@ -61,13 +61,37 @@ test("a bill to pay is paid in two parts and a wrong payment is voided", async (
 
   const payable = page.getByTestId("supplier-invoice-payable");
   await expect(payable.getByTestId("payment-records-empty")).toBeVisible();
+  // With nothing left to do on the invoice itself, it points to the payment.
+  await expect(page.getByTestId("supplier-invoice-next")).toContainText(/Next: record the payment|下一步：登记付款/);
+  // The form follows the form standard: required marks, the amount as the
+  // currency writes it, a bank transfer by default, and Confirm that checks
+  // the fields itself, with the message under the field.
+  await page.getByTestId("payment-record").click();
+  await expect(page.getByTestId("payment-amount")).toHaveValue(/^\d+\.\d{2}$/);
+  await expect(page.getByTestId("payment-amount")).toHaveAttribute("aria-required", "true");
+  // A bank transfer first; outside US dollars, no ACH.
+  await expect(page.getByTestId("payment-method")).toHaveValue("wire");
+  await expect(page.getByTestId("payment-method").locator("option").first()).toHaveAttribute("value", "wire");
+  await expect(page.getByTestId("payment-method").locator('option[value="ach"]')).toHaveCount(0);
+  await expect(page.getByTestId("payment-reference")).toHaveAttribute("placeholder", /^(Bank or payment reference|银行流水号或付款参考号)$/);
+  await page.getByTestId("payment-amount").fill("");
+  await expect(page.getByTestId("payment-confirm")).toBeEnabled();
+  await page.getByTestId("payment-confirm").click();
+  await expect(page.getByTestId("payment-amount")).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByTestId("payment-record-panel")).toContainText(/Enter the amount\.|请输入金额。/);
+  // Cancel · Record payment, on the right: Cancel closes the form.
+  await page.getByTestId("payment-record-panel").getByRole("button", { name: /^(Cancel|取消)$/ }).click();
   await recordPayment(page, { amount: (offered) => (offered / 2).toFixed(2), reference: "CHK-1001", status: /Partly paid|部分付款/ });
+  // The form closes and a toast says what was recorded.
+  await expect(page.locator("[data-sonner-toast]").filter({ hasText: /Payment of .+ recorded|已登记付款 / })).toBeVisible();
   await expect(payable.getByTestId("payment-row")).toHaveCount(1);
   await expect(payable).toContainText(/Partly paid|部分付款/);
   // The form offers what is still outstanding: paying it settles the bill.
   await recordPayment(page, { reference: "CHK-1002", status: /Paid|已结清/ });
   await expect(payable.getByTestId("payment-row")).toHaveCount(2);
   await expect(page.getByTestId("payment-record")).toHaveCount(0);
+  // Paid in full shows on the invoice too.
+  await expect(page.getByTestId("supplier-invoice-status")).toContainText(/Paid|已结清/);
 
   // The second check bounced: void it, and the amount is owed again.
   const bounced = payable.getByTestId("payment-row").filter({ hasText: "CHK-1002" });
@@ -78,10 +102,21 @@ test("a bill to pay is paid in two parts and a wrong payment is voided", async (
   await expect(payable).toContainText(/Partly paid|部分付款/);
   await expect(page.getByTestId("payment-record")).toBeVisible();
 
-  // Bills to pay link back to their bill.
+  // The supplier invoice list says where the payment stands, not "Approved",
+  // and its Partly paid card lists it.
+  await page.goto("/app/procurement/bills?status=partially_settled");
+  const billRow = page.getByTestId("operational-finance-invoice-list").locator("tbody tr").filter({ hasText: "UI-PAY-BILL" });
+  await expect(billRow).toContainText(/Partly paid|部分付款/);
+  await expect(page.getByTestId("supplier-invoice-metrics")).toContainText(/Partly paid|部分付款/);
+
+  // Bills to pay link back to their bill, which opens at its payment card
+  // and links back to the payables.
   await page.goto("/app/finance/payables");
   await page.getByTestId("operational-finance-payable-list").getByRole("link", { name: "AP-UI-PAY-BILL" }).click();
-  await expect(page).toHaveURL(/\/app\/procurement\/bills\/[0-9a-f-]{36}$/);
+  await expect(page).toHaveURL(/\/app\/procurement\/bills\/[0-9a-f-]{36}\?returnTo=%2Fapp%2Ffinance%2Fpayables$/);
+  await expect(page.getByTestId("supplier-invoice-payable")).toBeInViewport();
+  await page.getByTestId("back-to-payables").click();
+  await expect(page).toHaveURL(/\/app\/finance\/payables$/);
 });
 
 test("a customer payment settles the receivable of an issued invoice", async ({ page }) => {
@@ -90,8 +125,7 @@ test("a customer payment settles the receivable of an issued invoice", async ({ 
   await expect(page.getByTestId("customer-invoice-shipment")).toHaveValue("finance-browser-shipment-USD");
   // No number to type: the server assigns CI-YYYYMM-NNNN when the draft is saved.
   await page.getByTestId("customer-invoice-due").fill("2026-11-15");
-  await page.getByTestId("customer-invoice-preview").click();
-  await expect(page.getByTestId("customer-invoice-create")).toBeEnabled();
+  // Create draft checks the form, previews the invoice and creates it in one click.
   await page.getByTestId("customer-invoice-create").click();
   await expect(page).toHaveURL(/\/app\/sales\/invoices\/[0-9a-f-]{36}$/);
   const numberHeading = page.getByTestId("customer-invoice-detail").getByRole("heading", { name: /^CI-\d{6}-\d{4,}$/ });
@@ -103,9 +137,23 @@ test("a customer payment settles the receivable of an issued invoice", async ({ 
 
   const receivable = page.getByTestId("customer-invoice-receivable");
   await expect(receivable).toContainText(`AR-${invoiceNumber}`);
+  // Issued, nothing received yet: the invoice reads To be paid and points to the payment.
+  await expect(page.getByTestId("customer-invoice-status")).toContainText(/To be paid|待收款/);
+  await expect(page.getByTestId("customer-invoice-next")).toBeVisible();
   await recordPayment(page, { reference: "WIRE-77", status: /Paid|已结清/ });
+  await expect(page.locator("[data-sonner-toast]").filter({ hasText: /Customer payment of .+ recorded|已登记收款 / })).toBeVisible();
   await expect(receivable.getByTestId("payment-row")).toHaveCount(1);
   await expect(receivable).toContainText(/Paid|已结清/);
+  // Paid in full shows on the invoice itself, with nothing else to do, and in its history.
+  await expect(page.getByTestId("customer-invoice-status")).toContainText(/Paid|已结清/);
+  await expect(page.getByTestId("customer-invoice-status")).not.toContainText(/Issued|已开具/);
+  await expect(page.getByTestId("customer-invoice-no-actions")).toContainText(/Paid in full|已全额收款/);
+  await expect(page.getByTestId("customer-invoice-history-payment")).toContainText("WIRE-77");
+
+  // The invoice list says Paid too, and its Paid filter lists it.
+  await page.goto("/app/sales/invoices?status=settled");
+  const invoiceRow = page.getByTestId("customer-invoice-row").filter({ hasText: invoiceNumber });
+  await expect(invoiceRow).toContainText(/Paid|已结清/);
 
   await page.goto("/app/finance/receivables");
   const row = page.getByTestId("receivables-workbench").getByRole("row").filter({ hasText: invoiceNumber });

@@ -35,13 +35,13 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
     inventory inventory:stock inventory:movements inventory:warnings
     inventory:reorder inventory:lots inventory:serials inventory:bins
     inventory:exceptions
-    sales sales:orders sales:risks sales:evidence sales:order-detail
+    sales sales:orders sales:shipments sales:risks sales:evidence sales:order-detail
     sales:invoices sales:invoice-detail sales:invoice-document
     reports reports:overview reports:procurement reports:sales
     reports:inventory reports:finance reports:suppliers reports:library
     settings settings:profile settings:warehouse-access settings:readiness
     settings:company settings:roles settings:numbering settings:review
-    settings:modules settings:ai settings:audit
+    settings:ai settings:audit
   `),
   EXTENSION: ids(`
     procurement:receiving:new procurement:receiving:edit procurement:returns
@@ -69,23 +69,12 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
     review-actions:data-limited
   `),
   INTERNAL: ids(`
-    settings:advanced
-    exception-cases exception-cases:open exception-cases:review
-    collaboration-drafts collaboration-drafts:review
-    collaboration-drafts:limited
-    audit-history audit-history:ai audit-history:drafts audit-history:data
-    audit-history:objects
-    pilot-readiness pilot-readiness:modules pilot-readiness:data
-    pilot-readiness:ai pilot-readiness:governance
-    pilot-readiness:checklist
   `),
   // Owner decision: internal settlement, cashbook and the settlement
   // workflow, and the empty sales delivery and receipt pages, are frozen
   // (FROZEN_PRODUCT_ROUTE_IDS); forecast / MRP is unavailable.
   FROZEN: new Set([
     ...ids(`
-    forecast forecast:cockpit forecast:demand forecast:mrp
-    forecast:replenishment forecast:parameters
   `),
     ...FROZEN_PRODUCT_ROUTE_IDS,
   ]),
@@ -132,6 +121,9 @@ const primaryNavigation: Record<
   // both present.
   contracts: { navigationOrder: 65, navigationLabel: "合同" },
   "master-data:items": { navigationOrder: 70, navigationLabel: "物料" },
+  // Customers, warehouses, locations, payment terms, tax codes, imports and
+  // print templates, which had no sidebar entry (design audit L6-07, L7-40).
+  "master-data": { navigationOrder: 72, navigationLabel: "基础资料" },
   // Money owed to suppliers and by customers. Shown only while the
   // operational finance capability and the finance.overview.read permission
   // are both present. Bills and invoices themselves live under Purchasing and
@@ -150,7 +142,7 @@ export const legacyRouteRedirects: Record<
   string,
   { to: string; search?: string }
 > = {
-  imports: { to: "universal-intake" },
+  imports: { to: "master-data:import" },
   "procurement:invoices": { to: "procurement:bills" },
   "procurement:invoice-detail": { to: "procurement:bill-detail" },
   "finance:invoices": { to: "procurement:bills" },
@@ -190,7 +182,7 @@ const authoritativeWriteRouteIds = ids(`
   procurement:requests procurement:request-detail
   procurement:orders procurement:order-detail
   settings settings:profile settings:warehouse-access settings:company
-  settings:roles settings:numbering settings:review settings:modules
+  settings:roles settings:numbering settings:review
   settings:ai
 `);
 
@@ -211,14 +203,8 @@ const ownerByModule: Record<string, string> = {
   "mobile-operations": "src/modules/mobile",
   reports: "src/modules/reports",
   settings: "src/modules/settings",
-  forecast: "src/modules/forecast",
-  imports: "src/modules/imports",
   "universal-intake": "src/modules/intake",
-  "exception-cases": "src/modules/exception-cases",
-  "collaboration-drafts": "src/modules/collaboration-drafts",
   "review-actions": "src/modules/action-drafts",
-  "audit-history": "src/modules/audit-history",
-  "pilot-readiness": "src/modules/pilot-readiness",
 };
 
 const apiByModule: Record<string, string> = {
@@ -232,14 +218,9 @@ const apiByModule: Record<string, string> = {
   "mobile-operations": "/api/mobile/*",
   reports: "/api/reports/*",
   settings: "/api/settings/*",
-  forecast: "/api/forecast-plans, /api/mrp-plan",
   imports: "retired legacy import APIs",
   "universal-intake": "/api/intake/*",
-  "exception-cases": "/api/exception-cases",
-  "collaboration-drafts": "transient draft preview",
-  "review-actions": "/api/action-drafts",
-  "audit-history": "/api/audit-log",
-  "pilot-readiness": "/api/pilot-readiness",
+  "review-actions": "/api/review-first-action-workflow",
 };
 
 const routeCapability = new Map<string, string>();
@@ -262,9 +243,12 @@ const mapCapability = (capability: string, routeIds: string) => {
   for (const routeId of ids(routeIds))
     assignUniquePolicy(routeCapability, routeId, capability, "capability policy");
 };
+// The shipment list and page are read with the sales capability; drafting,
+// posting and reversing keep their own capabilities, checked by the API
+// (design audit L4-28: the page needed the write switch to be read).
 mapCapability(
   "sales",
-  "sales sales:orders sales:risks sales:evidence sales:order-detail sales:invoices sales:invoice-detail sales:invoice-document",
+  "sales sales:orders sales:risks sales:evidence sales:order-detail sales:invoices sales:invoice-detail sales:invoice-document sales:shipments sales:shipment-detail",
 );
 mapCapability(
   "stock-transfer",
@@ -392,7 +376,7 @@ mapPermission(
 );
 mapPermission(
   "shipment.read",
-  "sales:delivery sales:delivery:new sales:delivery:edit sales:receipts sales:receipts:new sales:shipment-detail sales:delivery-detail sales:receipt-detail",
+  "sales:delivery sales:delivery:new sales:delivery:edit sales:receipts sales:receipts:new sales:shipments sales:shipment-detail sales:delivery-detail sales:receipt-detail",
 );
 mapPermission("finance.overview.read", "finance finance:overview");
 mapPermission("finance.payable.read", "finance:payables");
@@ -432,13 +416,12 @@ mapPermission(
   "settings.workspace.read",
   "settings settings:profile settings:warehouse-access settings:company settings:ai",
 );
-mapPermission("settings.diagnostics.read", "settings:readiness settings:advanced");
+mapPermission("settings.diagnostics.read", "settings:readiness");
 mapPermission("settings.roles.read", "settings:roles");
 mapPermission("settings.numbering.read", "settings:numbering");
 mapPermission("custom_field.read", "settings:custom-fields");
 mapPermission("settings.review_policy.read", "settings:review");
-mapPermission("settings.modules.read", "settings:modules");
-mapPermission("audit.read", "settings:audit audit-history audit-history:ai audit-history:drafts audit-history:data audit-history:objects");
+mapPermission("audit.read", "settings:audit");
 mapPermission(
   "contracts.contract.read",
   "contracts contracts:list contracts:ending contracts:new contracts:detail",
@@ -557,11 +540,13 @@ function limitationFor(
   if (compatibilityRouteIds.has(route.id))
     return "Compatibility extension; not part of the default SME Core surface.";
   if (route.id === "imports")
-    return "Retired legacy root; redirects exactly to Universal Intake.";
+    return "Retired legacy root; redirects to the data import page.";
   if (legacyRouteRedirects[route.id])
     return `Moved; redirects to ${legacyRouteRedirects[route.id].to}.`;
   if (financeWriteGatedRouteIds.has(route.id))
     return "Reading needs only the read permission; recording, matching, approving and issuing need the operational finance capability, checked by the API.";
+  if (route.id === "sales:shipments" || route.id === "sales:shipment-detail")
+    return "Reading needs shipment.read; a reader limited to some warehouses sees the shipments in them. Drafting, posting and reversing need the outbound capabilities, checked by the API.";
   if (classification === "LEGACY")
     return "Retired legacy route; no one-to-one Universal Intake replacement exists.";
   if (classification === "EXTENSION")

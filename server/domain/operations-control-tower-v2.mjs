@@ -7,6 +7,7 @@ import {
 import { buildInventoryItems as buildInventoryReadItems } from './inventory-read.mjs'
 import { buildSupplierEntityIndex } from './ai-supplier-operational-query.mjs'
 import { buildAiResponseContractV2 } from './ai-response-contract-v2.mjs'
+import { isPastDueOn, workspaceDueToday } from './due-day.mjs'
 
 export const FORBIDDEN_OPERATIONS_ACTION_PATTERN = /自动批准|自动下单|正式创建\s*PO|下发\s*PO|发送\s*PO|发布\s*RFQ|邀请供应商|发送供应商邮件|提交收货|Receive Submit|Submit Receipt|修改库存|库存过账|Post Invoice|Approve Invoice|Mark as Paid|Payment execution|Export to Accounting|会计过账|付款|修改供应商主数据|修改付款条款|更新银行账户|更新税务信息|发布风险评级|自动黑名单|自动暂停供应商|合同签署/i
 export const FORBIDDEN_OPERATIONS_TECHNICAL_PATTERN = /JSON|dry-run|tenantId|userId|datasetId|writesDb|writesFiles|tool_result|provider|fallback|deterministic|mock|fake|demo|UAT|sample data|demo data|response_card|entityType|documentType|raw enum/i
@@ -40,19 +41,6 @@ function uniqueBy(items = [], keyOf = (item) => item.id) {
     result.push(item)
   }
   return result
-}
-function dateMs(value = '') {
-  const raw = text(value)
-  const iso = raw.match(/^20\d{2}-\d{2}-\d{2}/)?.[0]
-  if (iso) return new Date(`${iso}T00:00:00.000Z`).getTime()
-  const zh = raw.match(/(\d{1,2})月(\d{1,2})日/)
-  if (zh) return new Date(`2026-${String(zh[1]).padStart(2, '0')}-${String(zh[2]).padStart(2, '0')}T00:00:00.000Z`).getTime()
-  return 0
-}
-function isPastDue(value = '', now = new Date()) {
-  const due = dateMs(value)
-  if (!due) return false
-  return due < Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
 }
 function isClosed(status = '') {
   return /已完成|已取消|已关闭|已收货|已转PO|已授标|已付款|completed|closed|cancelled|canceled|paid/i.test(text(status))
@@ -261,7 +249,7 @@ function buildSupplierRiskItems(data, documents) {
     })
   }).filter(Boolean)
 }
-function buildPoItems(data, documents, now) {
+function buildPoItems(data, documents, today) {
   return asArray(data.purchaseOrders).map((po) => {
     const id = rawPoId(po)
     if (!id) return null
@@ -269,7 +257,7 @@ function buildPoItems(data, documents, now) {
     const unreceivedQty = Math.max(0, line.orderedQty - line.receivedQty)
     const doc = documents.find((item) => item.documentType === 'po' && item.id === id)
     if (!unreceivedQty || isClosed(doc?.status || po.status)) return null
-    const overdue = isPastDue(po.eta || po.expectedDate || doc?.expectedDate, now)
+    const overdue = isPastDueOn(po.eta || po.expectedDate || doc?.expectedDate, today)
     const score = 42 + Math.min(25, unreceivedQty * 2) + (overdue ? 30 : 0) + Math.min(15, toNumber(po.amount, 0) / 10000)
     const grns = rawGrnsForPo(data, id)
     const ev = [
@@ -394,13 +382,13 @@ function buildMatchItems(data, documents) {
     })),
   ]
 }
-function buildRfqItems(data, documents) {
+function buildRfqItems(data, documents, today) {
   return documents.filter((doc) => doc.documentType === 'rfq' && !isClosed(doc.status) && toNumber(doc.pendingSupplierCount, 0) > 0).map((rfq) => actionItem({
     id: `rfq-pending-${rfq.id}`,
     category: 'rfq_pending_response',
     categoryLabel: 'RFQ 待回复',
     title: `${rfq.number || rfq.id} 报价回复不足`,
-    priorityScore: 45 + Math.min(25, toNumber(rfq.pendingSupplierCount, 0) * 10) + (isPastDue(rfq.dueDate) ? 20 : 0),
+    priorityScore: 45 + Math.min(25, toNumber(rfq.pendingSupplierCount, 0) * 10) + (isPastDueOn(rfq.dueDate, today) ? 20 : 0),
     status: rfq.status,
     owner: '寻源采购',
     dueLabel: rfq.dueDate ? `截止 ${rfq.dueDate}` : '截止待确认',
@@ -417,13 +405,13 @@ function buildRfqItems(data, documents) {
     dataLimitations: [limitation('报价完整性', '供应商报价、交期和结算条款仍需人工确认。')],
   }))
 }
-function buildRequisitionItems(data, documents) {
+function buildRequisitionItems(data, documents, today) {
   return documents.filter((doc) => doc.documentType === 'pr' && !isClosed(doc.status)).slice(0, 5).map((pr) => actionItem({
     id: `pr-waiting-${pr.id}`,
     category: 'requisition_waiting',
     categoryLabel: 'PR 待处理',
     title: `${pr.number || pr.id} 等待转 RFQ / PO 草稿`,
-    priorityScore: 40 + (/高/.test(pr.priority) ? 25 : 0) + (isPastDue(pr.requiredDate || pr.dueDate) ? 20 : 0),
+    priorityScore: 40 + (/高/.test(pr.priority) ? 25 : 0) + (isPastDueOn(pr.requiredDate || pr.dueDate, today) ? 20 : 0),
     status: pr.status,
     owner: pr.buyer || pr.requester || '采购申请',
     dueLabel: pr.requiredDate ? `需求 ${pr.requiredDate}` : '需求日期待确认',
@@ -535,15 +523,16 @@ function prioritizeWithCategoryCoverage(items = [], limit = 28) {
   return chosen.sort((a, b) => b.priorityScore - a.priorityScore || a.id.localeCompare(b.id))
 }
 export function buildOperationsControlTowerV2(data = {}, options = {}) {
-  const now = options.now || new Date()
+  // Due dates are judged on the workspace's calendar day (options.timeZone).
+  const today = workspaceDueToday(options)
   const documents = buildProcurementDocuments(data)
   const items = uniqueBy([
     ...buildSupplierRiskItems(data, documents),
-    ...buildPoItems(data, documents, now),
+    ...buildPoItems(data, documents, today),
     ...buildReceivedNotInvoicedItems(data, documents),
     ...buildMatchItems(data, documents),
-    ...buildRfqItems(data, documents),
-    ...buildRequisitionItems(data, documents),
+    ...buildRfqItems(data, documents, today),
+    ...buildRequisitionItems(data, documents, today),
     ...buildInventoryRiskItems(data, documents),
     ...buildDataQualityItems(data, documents),
   ], (item) => item.id)

@@ -82,3 +82,41 @@ test('a supplier saved without a payment term stores none, and a chosen term mus
   await saveSupplierMaster(prisma(legacy), 'SUP-Y', { expectedVersion: 1, paymentTermsId: 'NET30', email: 'ap@legacy.example' }, 'user', { tenantId: 'tenant' });
   assert.equal(saved.metadata.paymentTermsId, 'NET30');
 });
+
+// Design audit V-B-01 (L10 side finding): a writer who cannot read the
+// registration, tax and bank details was shown "****1234" and cannot change
+// them. Whatever such a writer sends is not saved, a new supplier gets none,
+// and the audit row names the fields that were sent. Only a caller that says
+// the writer may read them (scope.sensitiveFieldsWritable) changes them.
+test('a writer who cannot read bank details cannot write them either', async () => {
+  let saved, audit;
+  const stored = { creditCode: '91310000MA1K', taxIdentificationNumber: '12-3456789', bankName: 'First Bank', bankAccountName: 'Supplier A LLC', bankAccountNumber: '000123456789' };
+  const old = { id: 'SUP-A', code: 'SUP-A', name: 'Supplier A', metadata: { version: 3, defaultCurrency: 'USD', ...stored } };
+  const tx = (row) => ({
+    supplier: { findFirst: async () => row, create: async ({ data }) => (saved = data), update: async ({ data }) => (saved = data) },
+    tenant: { findUnique: async () => ({ currency: 'USD' }) },
+    auditLog: { create: async ({ data }) => (audit = data) },
+  });
+  const prisma = (row) => ({ $transaction: callback => callback(tx(row)) });
+  const blind = { bankAccountNumber: '999900001111', bankAccountName: 'Someone Else', taxIdentificationNumber: '', creditCode: '****MA1K', contactName: 'Dana Lee' };
+
+  for (const scope of [{ tenantId: 'tenant' }, { tenantId: 'tenant', sensitiveFieldsWritable: false }]) {
+    await saveSupplierMaster(prisma(old), 'SUP-A', { ...blind, expectedVersion: 3 }, 'buyer', scope);
+    assert.deepEqual([saved.metadata.creditCode, saved.metadata.taxIdentificationNumber, saved.metadata.bankAccountName, saved.metadata.bankAccountNumber], [stored.creditCode, stored.taxIdentificationNumber, stored.bankAccountName, stored.bankAccountNumber]);
+    assert.equal(saved.metadata.contactName, 'Dana Lee');
+    assert.deepEqual(audit.metadata.restrictedFieldsKept, ['taxIdentificationNumber', 'bankAccountName', 'bankAccountNumber']);
+  }
+  // A new supplier from such a writer gets no bank details; empty fields from
+  // the form are not reported.
+  await saveSupplierMaster(prisma(null), null, { supplierCode: 'SUP-N', supplierName: 'New Supplier', bankAccountNumber: '999900001111', creditCode: '' }, 'buyer', { tenantId: 'tenant' });
+  assert.equal(Object.hasOwn(saved.metadata, 'bankAccountNumber') || Object.hasOwn(saved.metadata, 'creditCode'), false);
+  assert.deepEqual(audit.metadata.restrictedFieldsKept, ['bankAccountNumber']);
+  // Resaving the masked values changes nothing and reports nothing.
+  await saveSupplierMaster(prisma(old), 'SUP-A', { bankAccountNumber: '****6789', contactName: 'Dana Lee', expectedVersion: 3 }, 'buyer', { tenantId: 'tenant' });
+  assert.equal(saved.metadata.bankAccountNumber, stored.bankAccountNumber);
+  assert.equal(Object.hasOwn(audit.metadata, 'restrictedFieldsKept'), false);
+  // A writer who may read them changes them; a masked value still keeps the stored one.
+  await saveSupplierMaster(prisma(old), 'SUP-A', { bankAccountNumber: '555500002222', creditCode: '****MA1K', taxIdentificationNumber: '', expectedVersion: 3 }, 'finance-manager', { tenantId: 'tenant', sensitiveFieldsWritable: true });
+  assert.deepEqual([saved.metadata.bankAccountNumber, saved.metadata.creditCode, saved.metadata.taxIdentificationNumber], ['555500002222', stored.creditCode, '']);
+  assert.equal(Object.hasOwn(audit.metadata, 'restrictedFieldsKept'), false);
+});

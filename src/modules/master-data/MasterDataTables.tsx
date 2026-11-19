@@ -1,6 +1,7 @@
 import { A, Chip } from "../../components/ui";
 import {
   listTableCardsRef,
+  tableBodyTextClass,
   tableMinSmClass,
   tableScrollClass,
   tdIdClass,
@@ -51,28 +52,33 @@ export default function MasterDataTables({
   const { copy, language, locale } = useMasterDataCopy();
 
   if (tab === "warehouses") {
+    // A column no warehouse has a value for is left out, and "Available"
+    // shows only when some warehouse is not, so a short list is not mostly
+    // dashes. Every dash is the same muted grey.
+    const has = (pick: (item: WarehouseBin) => unknown) => warehouses.some((item) => { const value = pick(item); return value !== null && value !== undefined && value !== "" && value !== 0; });
+    const columns: Array<{ label: string; show: boolean; cell: (item: WarehouseBin) => React.ReactNode; className?: string }> = [
+      { label: "Warehouse code", show: true, className: tdIdClass, cell: (item) => <BusinessEntityLink entityType="warehouse" entityId={item.warehouseId || item.warehouseCode}>{item.warehouseCode}</BusinessEntityLink> },
+      { label: "Warehouse name", show: true, className: `${tdNameClass} max-w-[180px] truncate font-medium`, cell: (item) => <span style={{ color: A.label }}>{item.warehouseName}</span> },
+      { label: "Zone", show: has((item) => item.zone), cell: (item) => orNotProvided(item.zone) },
+      { label: "Bin", show: has((item) => item.bin), cell: (item) => item.bin ? <BusinessEntityLink entityType="bin" entityId={item.bin}>{item.bin}</BusinessEntityLink> : NOT_PROVIDED },
+      { label: "Capacity", show: has((item) => item.capacity), className: tdNumericClass, cell: (item) => item.capacity ? item.capacity.toLocaleString(locale) : NOT_PROVIDED },
+      { label: "Utilization", show: has((item) => item.capacity), className: tdNumericClass, cell: (item) => item.capacity ? <span style={{ color: item.utilization > 0.85 ? A.red : A.label }}>{formatPercent(item.utilization, locale)}</span> : NOT_PROVIDED },
+      { label: "Temperature requirement", show: has((item) => item.temperatureRequirement), cell: (item) => orNotProvided(item.temperatureRequirement) },
+      { label: "QA status", show: true, cell: (item) => { const style = statusStyle(item.qaStatus); return <Chip label={item.qaStatus} color={style.color} bg={style.bg} />; } },
+      { label: "Available", show: warehouses.some((item) => !item.available), cell: (item) => <BoolText value={item.available} /> },
+      { label: "Owner", show: has((item) => item.owner), cell: (item) => orNotProvided(item.owner) },
+      { label: "Actions", show: true, cell: (item) => <BusinessEntityLink entityType="warehouse" entityId={item.warehouseId || item.warehouseCode} className="rounded-md bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-600">{copy("Details")}</BusinessEntityLink> },
+    ];
+    const shown = columns.filter((column) => column.show);
     return (
       <div className={tableScrollClass} ref={listTableCardsRef}>
-        <table className={tableMinSmClass}>
-          <HeaderRow labels={["Warehouse code", "Warehouse name", "Zone", "Bin", "Capacity", "Utilization", "Temperature requirement", "QA status", "Available", "Owner", "Actions"]} />
-          <tbody>{warehouses.map((item, index) => {
-            const style = statusStyle(item.qaStatus);
-            return (
-              <tr key={`${item.warehouseCode}-${item.bin}`} style={{ borderBottom: index < warehouses.length - 1 ? "0.5px solid rgba(0,0,0,0.04)" : "none" }}>
-                <td className={tdIdClass}><BusinessEntityLink entityType="warehouse" entityId={item.warehouseId || item.warehouseCode}>{item.warehouseCode}</BusinessEntityLink></td>
-                <td className={`${tdNameClass} max-w-[180px] truncate font-medium`} style={{ color: A.label }}>{item.warehouseName}</td>
-                <td className={tdNowrapClass} style={{ color: A.sub }}>{orNotProvided(item.zone)}</td>
-                <td className={tdNowrapClass}>{item.bin ? <BusinessEntityLink entityType="bin" entityId={item.bin}>{item.bin}</BusinessEntityLink> : NOT_PROVIDED}</td>
-                <td className={tdNumericClass} style={{ color: A.sub }}>{item.capacity ? item.capacity.toLocaleString(locale) : NOT_PROVIDED}</td>
-                <td className={`${tdNumericClass} font-medium`} style={{ color: item.utilization > 0.85 ? A.red : A.label }}>{item.capacity ? formatPercent(item.utilization, locale) : NOT_PROVIDED}</td>
-                <td className={tdNowrapClass} style={{ color: A.sub }}>{orNotProvided(item.temperatureRequirement)}</td>
-                <td className={tdNowrapClass}><Chip label={item.qaStatus} color={style.color} bg={style.bg} /></td>
-                <td className={tdNowrapClass}><BoolText value={item.available} /></td>
-                <td className={tdNowrapClass} style={{ color: A.sub }}>{orNotProvided(item.owner)}</td>
-                <td className={tdNowrapClass}><BusinessEntityLink entityType="warehouse" entityId={item.warehouseId || item.warehouseCode} className="rounded-md bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-600">{copy("Details")}</BusinessEntityLink></td>
-              </tr>
-            );
-          })}</tbody>
+        <table className={shown.length > 6 ? tableMinSmClass : `w-full text-left ${tableBodyTextClass}`}>
+          <HeaderRow labels={shown.map((column) => column.label)} />
+          <tbody>{warehouses.map((item, index) => (
+            <tr key={`${item.warehouseCode}-${item.bin}`} style={{ borderBottom: index < warehouses.length - 1 ? "0.5px solid rgba(0,0,0,0.04)" : "none" }}>
+              {shown.map((column) => <td key={column.label} className={column.className || tdNowrapClass} style={column.className ? undefined : { color: A.sub }}>{column.cell(item)}</td>)}
+            </tr>
+          ))}</tbody>
         </table>
       </div>
     );

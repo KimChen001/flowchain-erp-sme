@@ -96,14 +96,14 @@ All Evidence Graph routes are GET-only and do not create drafts, write audit eve
 | `GET` | `/api/inventory/sales-order-impact?salesOrderId=:id` | Read | inventory allocation read model | None | Inventory allocation impact for a customer order. |
 | `GET` | `/api/inventory/po-supply-impact?poId=:id` | Read | inventory allocation read model | None | PO incoming supply impact on SKUs and customer orders. |
 | `GET` | `/api/inventory/reorder-list` | Read | inventory allocation read model, items, posted shipments, item suppliers | None | Items to reorder ranked by order-by date from the recorded reorder point and 90-day shipped demand; prepares purchase requests, orders nothing. |
+| `GET` | `/api/inventory/reorder-list/forecast` | Read | as the reorder list, with up to two years of posted shipments, and the local forecast service | None | Per listed item, the TimesFM 2.5 suggested reorder point for the same days (`tools/forecast-service`); 404 unless `FLOWCHAIN_FORECAST_URL` is set. |
 | `GET` | `/api/inventory-movements` | Read | legacy movement route | None | Compatibility movement endpoint. |
 
 ## Action Drafts
 
 | Method | Path | Class | Source | Mutation | Notes |
 |---|---|---|---|---|---|
-| `GET` | `/api/action-drafts/schema` | Read | action draft boundary helper | None | Lists supported draft types and confirmation boundary. |
-| `POST` | `/api/action-drafts/preview` | Preview | action draft preview helpers | None | Preview-only; no PR/RFQ/PO creation and no supplier message sending. |
+| — | — | — | — | — | No action draft routes remain: schema, preview, save and "used" were removed in November 2026 with the unreachable review shell. |
 
 ## Audit Log
 

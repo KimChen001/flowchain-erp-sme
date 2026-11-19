@@ -79,12 +79,19 @@ test("SME navigation, direct access and browser history follow the route manifes
 
   await page.goto("/app/overview");
   await expect(page).toHaveURL(/\/app\/overview\/risks$/);
+  // The home page is named as the sidebar names it, once in the trail.
   await expect(
     page.getByTestId("module-subnav").getByRole("link", {
-      name: "首页概览",
+      name: "今日",
       exact: true,
     }),
   ).toHaveAttribute("aria-current", "page");
+  // A one-step trail would only repeat the tab and title, so Today has none.
+  await expect(page.getByTestId("app-breadcrumb")).toHaveCount(0);
+  // /app/today opens the same page.
+  await page.goto("/app/today");
+  await expect(page).toHaveURL(/\/app\/overview\/risks$/);
+  await expect(page.getByTestId("not-found-recovery")).toHaveCount(0);
   // The badge's details follow the interface language (Chinese here).
   await expect(page.getByTitle(/通用录入已关闭/)).toBeVisible();
   const sidebar = page.locator("aside");
@@ -96,11 +103,15 @@ test("SME navigation, direct access and browser history follow the route manifes
     "销售",
     "供应商",
     "物料",
+    // Customers and the other master data pages (design audit L6-07).
+    "基础资料",
     "报表",
-    "AI 助手",
   ]) {
     await expect(sidebar.getByRole("button", { name: label, exact: true })).toBeVisible();
   }
+  // The assistant opens from its floating button, not a second sidebar entry.
+  await expect(sidebar.getByRole("button", { name: "AI 助手", exact: true })).toHaveCount(0);
+  await expect(page.getByTestId("ai-assistant-toggle")).toBeVisible();
   for (const hidden of [
     "应付与应收",
     "系统参数",
@@ -132,6 +143,7 @@ test("SME navigation, direct access and browser history follow the route manifes
     { label: "销售", path: /\/app\/sales\/orders$/ },
     { label: "供应商", path: /\/app\/master-data\/suppliers$/ },
     { label: "物料", path: /\/app\/master-data\/items$/ },
+    { label: "基础资料", path: /\/app\/master-data\/customers$/ },
     { label: "报表", path: /\/app\/reports\/overview$/ },
   ]) {
     await sidebar
@@ -264,9 +276,12 @@ test("SME navigation, direct access and browser history follow the route manifes
 
   await page.goto("/app/procurement/three-way-match");
   await expect(page.getByTestId("procurement-three-way-match-list")).toBeVisible();
+  // A match is shown by its supplier invoice number; the MATCH- id stays in
+  // the link's address (UI review 7).
   await expect(
-    page.getByText("MATCH-LOCAL-DEMO-INV-001", { exact: true }),
+    page.getByTestId("three-way-match-record-list").getByText("LOCAL-DEMO-INV-001", { exact: true }),
   ).toBeVisible();
+  await expect(page.getByText("MATCH-LOCAL-DEMO-INV-001", { exact: true })).toHaveCount(0);
   await expect(page.getByText("三单匹配列表尚未接入")).toHaveCount(0);
   await expect(
     page.getByTestId("module-subnav").getByRole("link", {
@@ -332,8 +347,9 @@ test("SME navigation, direct access and browser history follow the route manifes
   // No internal storage or beta labels on a customer's receipt.
   await expect(page.getByText("Beta · PostgreSQL", { exact: true })).toHaveCount(0);
 
+  // Data intake is a closed preview; the old imports address opens the import that works (W-08).
   await page.goto("/app/imports");
-  await expect(page).toHaveURL(/\/app\/universal-intake$/);
+  await expect(page).toHaveURL(/\/app\/master-data\/import$/);
 });
 
 test("procurement invoice and match records use canonical authoritative read details", async ({
@@ -484,17 +500,6 @@ test("capability registry failure and frozen routes fail closed", async ({
   request,
 }) => {
   await login(page, request);
-  await page.addInitScript(() => {
-    localStorage.setItem(
-      "flowchain:module-settings",
-      JSON.stringify({
-        items: [
-          { id: "procurement", enabled: true },
-          { id: "forecast", enabled: true },
-        ],
-      }),
-    );
-  });
   await governRouteAccess(page, { capabilityFailure: true });
 
   await page.goto("/app/inventory/transfers");
@@ -509,8 +514,9 @@ test("capability registry failure and frozen routes fail closed", async ({
   await page.goto("/app/procurement/contracts");
   await expect(page).toHaveURL(/\/app\/contracts\/list$/);
   await expect(page.getByTestId("capability-registry-unavailable")).toBeVisible();
+  // Forecast / MRP was removed: its old address is not a page.
   await page.goto("/app/forecast/mrp");
-  await expect(page.getByTestId("capability-route-blocked")).toBeVisible();
+  await expect(page.getByTestId("not-found-recovery")).toBeVisible();
 });
 
 test("exact route permissions govern primary navigation and direct access", async ({
@@ -671,7 +677,7 @@ test("legacy root preserves URL semantics while retired children stay truthful",
 }) => {
   await login(page, request);
   await page.goto("/app/imports?source=old#batch");
-  await expect(page).toHaveURL(/\/app\/universal-intake\?source=old#batch$/);
+  await expect(page).toHaveURL(/\/app\/master-data\/import\?source=old#batch$/);
 
   await page.goto("/app/imports/failed");
   await expect(page).toHaveURL(/\/app\/imports\/failed$/);
@@ -679,6 +685,6 @@ test("legacy root preserves URL semantics while retired children stay truthful",
   await expect(page.getByTestId("capability-route-blocked")).toBeVisible();
   await expect(page.getByText("能力暂不可用", { exact: true })).toBeVisible();
   await page.goBack();
-  await expect(page).toHaveURL(/\/app\/universal-intake\?source=old#batch$/);
+  await expect(page).toHaveURL(/\/app\/master-data\/import\?source=old#batch$/);
 });
 

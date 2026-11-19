@@ -137,7 +137,8 @@ test('a bill recorded before its receipt waits for it, and only then is matched 
     await order(prisma, 'BBR-PO-3', { quantity: '5.0000' })
     const exact = await call(prisma, 'finance', 'POST', '/api/finance/supplier-invoices', { ...bill('BBR-PO-3', 'BBR-3', '5.0000'), idempotencyKey: 'bbr-create-3' })
     assert.equal(exact.status, 201, JSON.stringify(exact.body))
-    await call(prisma, 'finance', 'POST', `/api/finance/supplier-invoices/${exact.body.entityId}/submit`, { expectedVersion: 0, idempotencyKey: 'bbr-submit-3' })
+    // The administrator submits it, so the finance specialist may approve it (design audit C4).
+    await call(prisma, 'admin', 'POST', `/api/finance/supplier-invoices/${exact.body.entityId}/submit`, { expectedVersion: 0, idempotencyKey: 'bbr-submit-3' })
     await receipt(prisma, 'BBR-GRN-3', 'BBR-PO-3', '5.0000')
     const link3 = await call(prisma, 'finance', 'POST', `/api/finance/supplier-invoices/${exact.body.entityId}/link-receipt`, { expectedVersion: 1, receivingDocumentId: 'BBR-GRN-3', idempotencyKey: 'bbr-link-3' })
     assert.equal(link3.status, 200, JSON.stringify(link3.body))

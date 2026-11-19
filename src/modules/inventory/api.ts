@@ -183,7 +183,7 @@ function normalizeInventoryItems(apiItems: ApiInventoryItem[], fallback: Invento
     const min = numberValue(item.safetyStock, fallbackItem?.min || 0);
     return {
       sku: text(item.sku, fallbackItem?.sku || `SKU-${index + 1}`),
-      name: text(item.itemName, fallbackItem?.name || text(item.sku, `物料 ${index + 1}`)),
+      name: text(item.itemName, fallbackItem?.name || text(item.sku, "—")),
       category: text(item.category, fallbackItem?.category || "未分类"),
       qty,
       min,

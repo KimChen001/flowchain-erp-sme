@@ -1,11 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
+import { FocusFirstField } from "../../components/ui/FocusFirstField";
 import { useLocation, useSearchParams } from "react-router";
 import { useDetailBack } from "../../components/navigation/useDetailBack";
-import { AlertCircle, CheckCircle2, FileSpreadsheet, Package, Pencil, Plus, Truck } from "lucide-react";
+import { ListPager, usePagedRows } from "../procurement/listPaging";
+
+const ITEM_PAGE_SIZE = 50;
+import { AlertCircle, ArrowLeft, CheckCircle2, FileSpreadsheet, Package, Pencil, Plus, Truck } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
+import { toast } from "sonner";
 import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
-import { RefreshButton, ResetButton, listButtonClass } from "../../components/ui/listLayout";
+import { RefreshButton, ResetButton, StatusChip, listButtonClass } from "../../components/ui/listLayout";
 import {
   listTableCardsRef,
   tableBodyTextClass,
@@ -28,6 +33,7 @@ import { unitLabel as sharedUnitLabel } from "../../i18n/unitLabels";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { apiErrorText } from "../../lib/apiErrorText";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
+import { ItemStockAndOrders } from "./ItemStockAndOrders";
 
 export type MasterItem = {
   itemId: string;
@@ -46,6 +52,8 @@ export type MasterItem = {
   defaultWarehouseId: string;
   safetyStock: number;
   reorderPoint: number;
+  orderUpToLevel: number | null;
+  lotSize: number | null;
   minimumOrderQuantity: number;
   purchaseLeadTimeDays: number;
   defaultSupplierId: string;
@@ -61,36 +69,67 @@ export type MasterItem = {
   createdAt: string;
   updatedBy: string;
   updatedAt: string;
+  // What someone recorded (null when nothing was); the fields above fill gaps
+  // for display, such as pcs, an MOQ of 1 or zeros.
+  recorded?: { unit: string | null; category: string | null; safetyStock: number | null; reorderPoint: number | null; orderUpToLevel?: number | null; lotSize?: number | null; minimumOrderQuantity: number | null; purchaseLeadTimeDays: number | null; purchaseUnit: string | null; itemType: string | null } | null;
 };
-// Stored defaults are language-neutral: no category until one is chosen, and
-// the unit code "pcs" (shown translated), so an English user never stores 件.
-const empty: Partial<MasterItem> = {
-  itemType: "material",
-  category: "",
-  baseUnit: "pcs",
-  purchaseUnit: "pcs",
-  status: "active",
-  purchasable: true,
-  inventoryItem: true,
-};
+// The edit form's values as typed: numbers stay text until saved, so an empty
+// field is sent as null ("not recorded"), never 0.
+type ItemDraft = Record<string, string | boolean>;
+const NUMBER_FIELDS = ["safetyStock", "reorderPoint", "orderUpToLevel", "lotSize", "minimumOrderQuantity", "purchaseLeadTimeDays"];
+const FLAG_FIELDS = ["purchasable", "inventoryItem", "batchManaged", "serialManaged", "shelfLifeManaged"];
+// A new item starts with nothing made up: no unit, category or numbers until
+// someone enters them (design audit L4-20: the unit defaulted to pcs).
+const EMPTY_DRAFT: ItemDraft = { sku: "", itemName: "", shortName: "", itemType: "", category: "", brand: "", specification: "", baseUnit: "", purchaseUnit: "", defaultWarehouseId: "", taxCodeId: "", safetyStock: "", reorderPoint: "", orderUpToLevel: "", lotSize: "", minimumOrderQuantity: "", purchaseLeadTimeDays: "", barcode: "", manufacturerPartNumber: "", comments: "", status: "active", purchasable: true, inventoryItem: true, batchManaged: false, serialManaged: false, shelfLifeManaged: false };
+// An item as the form edits it: the values someone recorded, read from
+// `recorded`, not the display fill-ins (design audit L4-02).
+function draftOf(item: MasterItem): ItemDraft {
+  const recorded = item.recorded || null;
+  const numberText = (value: number | null | undefined) => (value === null || value === undefined ? "" : String(value));
+  return {
+    ...EMPTY_DRAFT,
+    sku: item.sku, itemName: item.itemName, shortName: item.shortName, brand: item.brand, specification: item.specification,
+    itemType: recorded ? recorded.itemType || "" : item.itemType,
+    category: recorded ? recorded.category || "" : item.category,
+    baseUnit: recorded ? recorded.unit || "" : item.baseUnit,
+    purchaseUnit: recorded ? recorded.purchaseUnit || "" : item.purchaseUnit,
+    defaultWarehouseId: item.defaultWarehouseId, taxCodeId: item.taxCodeId, barcode: item.barcode, manufacturerPartNumber: item.manufacturerPartNumber, comments: item.comments,
+    safetyStock: numberText(recorded ? recorded.safetyStock : item.safetyStock),
+    reorderPoint: numberText(recorded ? recorded.reorderPoint : item.reorderPoint),
+    orderUpToLevel: numberText(recorded?.orderUpToLevel ?? item.orderUpToLevel),
+    lotSize: numberText(recorded?.lotSize ?? item.lotSize),
+    minimumOrderQuantity: numberText(recorded ? recorded.minimumOrderQuantity : item.minimumOrderQuantity),
+    purchaseLeadTimeDays: numberText(recorded ? recorded.purchaseLeadTimeDays : item.purchaseLeadTimeDays),
+    status: item.status, purchasable: item.purchasable, inventoryItem: item.inventoryItem, batchManaged: item.batchManaged, serialManaged: item.serialManaged, shelfLifeManaged: item.shelfLifeManaged,
+  };
+}
+// What a save sends: for a new item every field filled in; for an existing
+// one only the fields changed, so changing the name writes nothing else (no
+// pcs, no 0). An emptied number is sent as null.
+export function itemSaveBody(draft: ItemDraft, initial: ItemDraft | null): Record<string, unknown> {
+  const value = (key: string) => {
+    const raw = draft[key];
+    if (NUMBER_FIELDS.includes(key)) return String(raw ?? "").trim() === "" ? null : Number(raw);
+    return typeof raw === "boolean" ? raw : String(raw ?? "").trim();
+  };
+  const keys = Object.keys(draft).filter((key) => (initial ? key !== "sku" && draft[key] !== initial[key] : FLAG_FIELDS.includes(key) || key === "status" || String(draft[key] ?? "").trim() !== ""));
+  return Object.fromEntries(keys.map((key) => [key, value(key)]));
+}
 const FLAG_LABELS: Record<string, { en: string; zh: string }> = {
   purchasable: { en: "Purchasable", zh: "可采购" },
   inventoryItem: { en: "Inventory item", zh: "库存物料" },
-  batchManaged: { en: "Batch managed", zh: "批次管理" },
-  serialManaged: { en: "Serial managed", zh: "序列号管理" },
-  shelfLifeManaged: { en: "Shelf-life managed", zh: "保质期管理" },
 };
 const flagLabel = (key: string, language: string) => FLAG_LABELS[key]?.[language === "en-US" ? "en" : "zh"] || key;
 // Item types and units are stored as codes; known ones are shown in the
 // interface language and anything else as stored.
 const ITEM_TYPE_LABELS: Record<string, string> = { material: "Material" };
 // The reorder list reads a missing, zero or negative reorder point as none
-// (server/domain/reorder-list.mjs), and the form saves 0 for an empty field.
+// (server/domain/reorder-list.mjs); an emptied field is saved as none.
 const hasReorderPoint = (item: MasterItem) => item.reorderPoint > 0;
 type SupplierName = { id: string; supplierCode?: string; supplierName?: string };
 
+// No item ID field: the server makes the id (design audit L4-20).
 const fields: Array<[keyof MasterItem, string, string]> = [
-  ["itemId", "物料 ID", "text"],
   ["sku", "SKU 编码", "text"],
   ["itemName", "物料名称", "text"],
   ["shortName", "简称", "text"],
@@ -104,6 +143,10 @@ const fields: Array<[keyof MasterItem, string, string]> = [
   ["taxCodeId", "税码", "text"],
   ["safetyStock", "安全库存", "number"],
   ["reorderPoint", "再订货点", "number"],
+  // The (s, S) rule (design audit C3): empty, the reorder list assumes the
+  // reorder point plus a week of demand.
+  ["orderUpToLevel", "补货目标库存", "number"],
+  ["lotSize", "订货批量", "number"],
   ["minimumOrderQuantity", "最小起订量", "number"],
   ["purchaseLeadTimeDays", "采购提前期（天）", "number"],
   ["barcode", "条码", "text"],
@@ -138,6 +181,8 @@ function normalizeMasterItem(item: Partial<MasterItem> & Record<string, unknown>
     defaultWarehouseId: text(item.defaultWarehouseId),
     safetyStock: number(item.safetyStock),
     reorderPoint: number(item.reorderPoint),
+    orderUpToLevel: item.orderUpToLevel === null || item.orderUpToLevel === undefined || !Number.isFinite(Number(item.orderUpToLevel)) ? null : Number(item.orderUpToLevel),
+    lotSize: item.lotSize === null || item.lotSize === undefined || !Number.isFinite(Number(item.lotSize)) ? null : Number(item.lotSize),
     minimumOrderQuantity: number(item.minimumOrderQuantity ?? item.moq, 1),
     purchaseLeadTimeDays: number(item.purchaseLeadTimeDays ?? item.leadTimeDays),
     defaultSupplierId: text(item.defaultSupplierId || item.preferredSupplierId),
@@ -153,6 +198,7 @@ function normalizeMasterItem(item: Partial<MasterItem> & Record<string, unknown>
     createdAt: text(item.createdAt),
     updatedBy: text(item.updatedBy, "system"),
     updatedAt: text(item.updatedAt),
+    recorded: (item.recorded as MasterItem["recorded"]) || null,
   };
 }
 
@@ -164,7 +210,9 @@ export default function ItemMasterWorkbench({
   onNavigate?: (routeId: string, focus?: unknown) => void;
 }) {
   const { copy, language, locale } = useMasterDataCopy();
-  const { formatDateTime } = useI18n();
+  const { formatDateTime, formatNumber } = useI18n();
+  // Records written by an import or a seed name "system" as their author.
+  const actorName = (value?: string | null) => (!value || value === "system" ? (language === "en-US" ? "System" : "系统") : value);
   const warehouseName = useWarehouseNames();
   // Creating and editing items needs master_data.item.manage.
   const canEdit = useMasterDataWriteAccess().items;
@@ -177,12 +225,16 @@ export default function ItemMasterWorkbench({
   useDetailCrumb(selected ? `${selected.sku} · ${selected.itemName}` : null);
   // On the item's own page (/app/master-data/items/:id) the item is the page
   // title (H1); opened in place from the list it sits under the list's H1.
-  const onDetailRoute = /^\/app\/master-data\/items\/[^/]+$/.test(useLocation().pathname);
+  const pathname = useLocation().pathname;
+  const onDetailRoute = /^\/app\/master-data\/items\/[^/]+$/.test(pathname);
   const ItemTitle = onDetailRoute ? "h1" : "h2";
   const detailBack = useDetailBack("/app/master-data/items", ["Back to items", "返回 SKU 列表"], () => setSelected(null));
   // A failed request in the interface language, never the server's own words.
   const loadFailed = (cause: unknown) => apiErrorText(cause, language, ["Could not load items. Try again.", copy("Could not load items. Try again.")]);
-  const [editing, setEditing] = useState<Partial<MasterItem> | null>(null);
+  // The form's values and what they were when it opened (null for a new item).
+  const [editing, setEditing] = useState<ItemDraft | null>(null);
+  const [editingFrom, setEditingFrom] = useState<ItemDraft | null>(null);
+  const startEditing = (item: MasterItem | null) => { const draft = item ? draftOf(item) : { ...EMPTY_DRAFT }; setEditing(draft); setEditingFrom(item ? draft : null); };
   const [query, setQuery] = useState("");
   const [searchParams, setSearchParams] = useSearchParams();
   const status = searchParams.get("status") || "";
@@ -233,6 +285,9 @@ export default function ItemMasterWorkbench({
       ),
     [items, query, status, type, category, gap],
   );
+  // One page of the list is drawn, as on the other long lists; the search and
+  // filters run over every item, and a new search starts at page 1.
+  const paged = usePagedRows(shown, ITEM_PAGE_SIZE, [query, status, type, category, gap].join("|"));
   const distinct = (values: string[]) => [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b, locale));
   const types = useMemo(() => distinct(items.map((item) => item.itemType)), [items, locale]);
   const categories = useMemo(() => distinct(items.map((item) => item.category)), [items, locale]);
@@ -261,13 +316,16 @@ export default function ItemMasterWorkbench({
       const url = isNew
         ? "/api/master-data/items"
         : `/api/master-data/items/${encodeURIComponent(selected.itemId)}`;
-      const result = await apiJson<{ item: MasterItem }>(url, {
+      const result = await apiJson<{ item: MasterItem & { nameAlsoUsedBy?: Array<{ code: string }> } }>(url, {
         method: isNew ? "POST" : "PATCH",
         body: JSON.stringify({
-          ...editing,
-          expectedVersion: selected?.version,
+          ...itemSaveBody(editing, isNew ? null : editingFrom),
+          ...(isNew ? {} : { expectedVersion: selected?.version }),
         }),
       });
+      // Saved either way; a name another item has is worth a second look (design audit L4-18).
+      const same = result.item.nameAlsoUsedBy || [];
+      if (same.length) toast.warning(copy("Another item already has this name: {codes}", { codes: same.map((row) => row.code).join(", ") }));
       setSelected(result.item);
       setEditing(null);
       setError("");
@@ -279,10 +337,11 @@ export default function ItemMasterWorkbench({
   if (editing)
     return (
       <Card className="p-5">
+        <FocusFirstField />
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-base font-semibold">
-              {selected ? `${copy("编辑")} ${selected.sku}` : copy("新建 SKU")}
+              {selected ? `${copy("编辑")} ${selected.sku}` : copy("New item")}
             </h2>
             <p className="text-xs" style={{ color: A.sub }}>
               {copy("基础信息、采购库存属性与追踪属性")}
@@ -304,25 +363,19 @@ export default function ItemMasterWorkbench({
             <Field key={key} label={copy(label)}>
               <input
                 aria-label={copy(label)}
-                disabled={Boolean(selected) && key === "itemId"}
+                // The SKU is locked once the item exists (design audit L4-20).
+                disabled={Boolean(selected) && key === "sku"}
+                title={selected && key === "sku" ? copy("The SKU cannot change once the item exists.") : undefined}
                 type={inputType}
                 value={String(editing[key] ?? "")}
-                onChange={(event) =>
-                  setEditing({
-                    ...editing,
-                    [key]:
-                      inputType === "number"
-                        ? Number(event.target.value)
-                        : event.target.value,
-                  })
-                }
+                onChange={(event) => setEditing({ ...editing, [key]: event.target.value })}
                 style={inputStyle}
               />
             </Field>
           ))}
           <Field label={copy("状态")}>
             <select
-              value={editing.status}
+              value={String(editing.status)}
               onChange={(e) =>
                 setEditing({ ...editing, status: e.target.value })
               }
@@ -336,9 +389,9 @@ export default function ItemMasterWorkbench({
             [
               "purchasable",
               "inventoryItem",
-              "batchManaged",
-              "serialManaged",
-              "shelfLifeManaged",
+              // Batch, serial and shelf-life tracking are not built yet: no receipt,
+              // shipment or count records a lot, serial or expiry date, so the
+              // switches stay hidden and stored values are kept (design audit L3-13).
             ] as const
           ).map((key) => (
             <label key={key} className="flex items-center gap-2 text-xs">
@@ -371,32 +424,44 @@ export default function ItemMasterWorkbench({
     if (!value || Number.isNaN(new Date(value).getTime())) return NOT_PROVIDED;
     return formatDateTime(value);
   };
+  // On an item's own address, wait for the item rather than drawing the list
+  // and its empty counts first; an address that names no item shows the list.
+  const routeKey = onDetailRoute ? decodeURIComponent(pathname.split("/").pop() || "").toLowerCase() : "";
+  const routeNamesItem = !loaded || items.some((row) => [row.itemId, row.sku].some((value) => String(value || "").toLowerCase() === routeKey));
+  if (!selected && onDetailRoute && !error && routeNamesItem)
+    return <Card className="p-5" data-testid="item-detail-loading"><p className="text-sm" style={{ color: A.sub }}>{copy("Loading item…")}</p></Card>;
   if (selected)
     return (
+      <div className="space-y-4">
+      {/* Above the card, as on the other detail pages (BackToListLink). */}
+      <button
+        type="button"
+        className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline max-sm:min-h-9"
+        onClick={detailBack.back}
+      >
+        <ArrowLeft size={13} />{detailBack.label}
+      </button>
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <button
-              className="text-xs text-blue-600"
-              onClick={detailBack.back}
-            >
-              ← {detailBack.label}
-            </button>
-            <ItemTitle className={onDetailRoute ? "fc-page-title mt-2" : "mt-2 text-base font-semibold"} style={{ color: A.label }} data-testid="item-detail-title">
-              {selected.sku} · {selected.itemName}
-            </ItemTitle>
-            <p className="text-xs" style={{ color: A.sub }}>
-              {statusLabel(selected.status)} · v{selected.version}
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <ItemTitle className={onDetailRoute ? "fc-page-title" : "text-base font-semibold"} style={{ color: A.label }} data-testid="item-detail-title">
+                {selected.sku} · {selected.itemName}
+              </ItemTitle>
+              <StatusChip label={statusLabel(selected.status)} tone={selected.status === "active" ? "success" : "neutral"} />
+            </div>
+            <p className="mt-1 text-xs" style={{ color: A.sub }} data-testid="item-detail-version">
+              v{selected.version}
             </p>
           </div>
           {canEdit && (
             <button
               type="button"
-              onClick={() => setEditing(selected)}
-              className={listButtonClass.primary}
+              onClick={() => startEditing(selected)}
+              className={listButtonClass.secondary}
             >
               <Pencil size={13} />
-              {copy("编辑 SKU")}
+              {copy("Edit item")}
             </button>
           )}
         </div>
@@ -411,18 +476,21 @@ export default function ItemMasterWorkbench({
           ))}
         </div>
         <div className="mt-4 text-xs text-slate-500">
-          {copy("Created: {by} · {at}", { by: selected.createdBy, at: auditTime(selected.createdAt) })}
+          {copy("Created: {by} · {at}", { by: actorName(selected.createdBy), at: auditTime(selected.createdAt) })}
           <br />
-          {copy("Updated: {by} · {at}", { by: selected.updatedBy, at: auditTime(selected.updatedAt) })}
+          {copy("Updated: {by} · {at}", { by: actorName(selected.updatedBy), at: auditTime(selected.updatedAt) })}
         </div>
       </Card>
+      {/* Its stock per warehouse, latest movements and orders still to ship. */}
+      <ItemStockAndOrders itemId={selected.itemId} sku={selected.sku} baseUnit={selected.baseUnit} />
+      </div>
     );
   // Laid out like the other list pages (purchase orders, sales orders):
   // item-level counts, a search card with labelled filters, then the list.
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <ActionableMetricCard label={copy("Items")} value={loaded ? String(items.length) : "—"} description={copy("{count} active", { count: activeCount })} to="/app/master-data/items" icon={Package} color={A.blue} />
+        <ActionableMetricCard label={copy("Items")} value={loaded ? String(items.length) : "—"} description={loaded ? copy("{count} active", { count: activeCount }) : NOT_PROVIDED} to="/app/master-data/items" icon={Package} color={A.blue} />
         <ActionableMetricCard label={copy("Inactive items")} value={loaded ? String(items.length - activeCount) : "—"} description={copy("Kept for history, not offered on new documents")} to="/app/master-data/items?status=inactive" icon={CheckCircle2} color={A.gray1} />
         <ActionableMetricCard label={copy("No reorder point")} value={loaded ? String(items.filter((item) => item.status === "active" && !hasReorderPoint(item)).length) : "—"} description={copy("Active items the reorder list cannot check")} to="/app/master-data/items?gap=reorder" icon={AlertCircle} color={A.orange} />
         <ActionableMetricCard label={copy("No preferred supplier")} value={loaded ? String(items.filter((item) => item.status === "active" && !item.defaultSupplierId).length) : "—"} description={copy("Active items without a supplier to order from")} to="/app/master-data/items?gap=supplier" icon={Truck} color={A.purple} />
@@ -447,17 +515,17 @@ export default function ItemMasterWorkbench({
                 className={listButtonClass.primary}
                 onClick={() => {
                   setSelected(null);
-                  setEditing({ ...empty });
+                  startEditing(null);
                 }}
               >
-                <Plus size={13} />{copy("新建 SKU")}
+                <Plus size={13} />{copy("New item")}
               </button>
             )}
           </div>
         </div>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-5">
           <Field label={copy("Search")}>
-            <input aria-label={copy("搜索 SKU")} placeholder={copy("搜索 SKU 编码或物料名称")} value={query} onChange={(e) => setQuery(e.target.value)} style={inputStyle} />
+            <input aria-label={copy("Search items")} placeholder={copy("搜索 SKU 编码或物料名称")} value={query} onChange={(e) => setQuery(e.target.value)} style={inputStyle} />
           </Field>
           <Field label={copy("Status")}>
             <select aria-label={copy("状态筛选")} value={status} onChange={(e) => setStatus(e.target.value)} style={inputStyle}>
@@ -492,7 +560,7 @@ export default function ItemMasterWorkbench({
         <div className="flex items-center gap-3 px-5 py-3.5" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
           <div>
             <div className="text-sm font-semibold" style={{ color: A.label }}>{copy("Item list")}</div>
-            <div className="mt-0.5 text-[11px]" style={{ color: A.sub }}>{copy(items.length === 1 ? "1 item, {shown} shown" : "{total} items, {shown} shown", { total: items.length, shown: shown.length })}</div>
+            <div className="mt-0.5 text-[11px]" style={{ color: A.sub }}>{loaded ? copy(items.length === 1 ? "1 item, {shown} shown" : "{total} items, {shown} shown", { total: formatNumber(items.length), shown: formatNumber(paged.pageRows.length) }) : NOT_PROVIDED}</div>
           </div>
         </div>
         {error && <p className="px-5 pt-3 text-xs text-red-600">{error}</p>}
@@ -524,8 +592,8 @@ export default function ItemMasterWorkbench({
                   </td>
                 </tr>
               )}
-              {shown.map((item, index) => (
-                <tr key={item.itemId} className="transition-colors hover:bg-blue-50/40" style={{ borderBottom: index < shown.length - 1 ? "0.5px solid rgba(0,0,0,0.04)" : "none" }}>
+              {paged.pageRows.map((item, index) => (
+                <tr key={item.itemId} className="transition-colors hover:bg-blue-50/40" style={{ borderBottom: index < paged.pageRows.length - 1 ? "0.5px solid rgba(0,0,0,0.04)" : "none" }}>
                   <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
                     <EntityLink kind="item" id={item.itemId} className={tableLinkClass}>
                       {item.sku}
@@ -563,7 +631,7 @@ export default function ItemMasterWorkbench({
                           className="rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium"
                           onClick={() => {
                             setSelected(item);
-                            setEditing(item);
+                            startEditing(item);
                           }}
                         >
                           {copy("编辑")}
@@ -576,6 +644,7 @@ export default function ItemMasterWorkbench({
             </tbody>
           </table>
         </div>
+        <ListPager page={paged.page} pageSize={ITEM_PAGE_SIZE} total={shown.length} onPage={paged.setPage} testId="item-list-pager" />
       </Card>
     </div>
   );

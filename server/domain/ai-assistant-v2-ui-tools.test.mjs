@@ -4,7 +4,7 @@ import { aiSkillScenario } from './test-fixtures/ai-skill-scenario.mjs'
 import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { AI_READ_TOOL_COLUMNS, runAiReadTool } from './ai-read-tool-runner.mjs'
-import { AI_ASSISTANT_V2_UI_TOOLS, aiUiColumnCode, aiUiSourceHandles, aiUiToolsFor } from './ai-assistant-v2-ui-tools.mjs'
+import { AI_ASSISTANT_V2_UI_TOOLS, aiUiColumnCode, aiUiSourceHandles, aiUiToolsFor, namesAnItem } from './ai-assistant-v2-ui-tools.mjs'
 import { AI_SKILL_SIGNAL_SEVERITY } from './ai-skill-signals.mjs'
 import { safeParsePartProps } from '../../shared/assistant-protocol.mjs'
 import { PURCHASE_SUGGESTION_SOURCES } from '../../shared/purchase-suggestion.mjs'
@@ -16,12 +16,14 @@ import { PURCHASE_ORDER_COMMANDS } from './procurement-db-command-service.mjs'
 import { latestOrderPlan } from './ai-assistant-v2.mjs'
 
 // LDM-001's link to its preferred supplier: 12 days' lead time, a minimum
-// order of 100 and a reference price of 95 USD. With a reorder point of 200
-// the fixture suggests 100 (the gap of 52 raised to the minimum).
+// order of 100 and a reference price of 95 USD. With a reorder point of 285
+// and a position of 233 (design audit C2: on hand, incoming, PO-006 pending
+// approval and PR-001, less SO-001's backorder) the fixture suggests 100 (the
+// gap of 52 raised to the minimum).
 const link = (extra = {}) => ({ id: 'ITEM-001::SUP-001', payload: { itemId: 'ITEM-001', supplierId: 'SUP-001', preferred: true, active: true, approved: true, leadTimeDays: 12, minimumOrderQuantity: 100, referencePrice: 95, currency: 'USD', ...extra } })
 const highReorderPoint = (data) => {
-  data.items[0].reorderPoint = 200
-  data.balances[0].reorderPoint = 200
+  data.items[0].reorderPoint = 285
+  data.balances[0].reorderPoint = 285
 }
 const tool = (name) => AI_ASSISTANT_V2_UI_TOOLS.find((entry) => entry.name === name)
 const at = (value, path) => path.split('.').reduce((entry, key) => (entry === null || entry === undefined ? undefined : entry[key]), value)
@@ -58,7 +60,7 @@ function assertPart(built, component) {
 const assertError = (built, code) => assert.equal(built.error?.code, code, JSON.stringify(built))
 
 test('every UI tool follows the contract: kind ui, a closed input schema, frozen', () => {
-  assert.deepEqual(AI_ASSISTANT_V2_UI_TOOLS.map((entry) => entry.name), ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices', 'suggest_purchase_request', 'show_setup_steps', 'suggest_setup_records', 'offer_record_actions', 'suggest_followups'])
+  assert.deepEqual(AI_ASSISTANT_V2_UI_TOOLS.map((entry) => entry.name), ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices', 'suggest_purchase_request', 'show_setup_steps', 'suggest_setup_records', 'offer_record_actions', 'suggest_followups', 'show_decisions'])
   assert.ok(Object.isFrozen(AI_ASSISTANT_V2_UI_TOOLS))
   for (const entry of AI_ASSISTANT_V2_UI_TOOLS) {
     assert.ok(Object.isFrozen(entry))
@@ -71,7 +73,7 @@ test('every UI tool follows the contract: kind ui, a closed input schema, frozen
 })
 
 test('the display tools are marked, and every source parameter asks for the handle a result gives', () => {
-  assert.deepEqual(AI_ASSISTANT_V2_UI_TOOLS.filter((entry) => entry.display).map((entry) => entry.name), ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices', 'show_setup_steps'])
+  assert.deepEqual(AI_ASSISTANT_V2_UI_TOOLS.filter((entry) => entry.display).map((entry) => entry.name), ['show_table', 'show_records', 'show_chart', 'show_kpis', 'offer_choices', 'show_setup_steps', 'show_decisions'])
   for (const entry of AI_ASSISTANT_V2_UI_TOOLS.filter((item) => item.inputSchema.properties.source)) {
     assert.match(entry.inputSchema.properties.source.description, /#1/, entry.name)
     assert.doesNotMatch(entry.inputSchema.properties.source.description, /tool_use id/, entry.name)
@@ -592,6 +594,21 @@ test('suggest_followups keeps 1 to 3 questions of at most 90 characters', async 
   assertError(build('suggest_followups', { questions: ['a', 'b', 'c', 'd'] }), 'invalid_input')
 })
 
+test('suggest_followups asks again for a chip that is not in the answer\'s language', async () => {
+  const { ctx, build } = await workspace()
+  // An English answer: an English chip, even naming a Chinese supplier, is fine.
+  assertPart(build('suggest_followups', { questions: ['Show the late orders from 华东电子'] }), 'followups')
+  const chinese = build('suggest_followups', { questions: ['Which orders are late?', '哪些订单逾期了？'] })
+  assertError(chinese, 'wrong_language')
+  assert.match(chinese.error.message, /English/)
+  // A Chinese answer: a chip may name records in English, but has Chinese words.
+  ctx.language = 'zh-CN'
+  assertPart(build('suggest_followups', { questions: ['PO-202610-0024 的催货信息', '给 Acme Home Goods 写催货邮件'] }), 'followups')
+  const english = build('suggest_followups', { questions: ['Give me a follow-up message for PO-202610-0024'] })
+  assertError(english, 'wrong_language')
+  assert.match(english.error.message, /Chinese/)
+})
+
 test('every value a part shows is in its source result', async () => {
   const { ctx, call, build } = await workspace()
   await call('toolu_stock', 'stock_position')
@@ -941,14 +958,19 @@ async function recordCard({ roleKey = 'workspace-administrator', requests = {}, 
 
 test('the record card steps follow the commands\' own status rules', () => {
   const targets = { submit: 'submitted', approve: 'approved', reject: 'rejected', create_po: 'converted' }
-  for (const [step, from] of Object.entries(RECORD_ACTION_RULES.purchase_request)) {
-    if (step === 'create_rfq') assert.equal(from, 'approved')
-    else assert.ok(PR_TRANSITIONS[from].includes(targets[step]), `${step} from ${from}`)
-  }
+  for (const [step, from] of Object.entries(RECORD_ACTION_RULES.purchase_request)) assert.ok(PR_TRANSITIONS[from].includes(targets[step]), `${step} from ${from}`)
   for (const [step, from] of Object.entries(RECORD_ACTION_RULES.purchase_order)) assert.deepEqual(PURCHASE_ORDER_COMMANDS[step].from, [from], step)
-  assert.deepEqual(recordActionsNow({ type: 'purchase_request', status: 'approved', allowed: ['create_po', 'create_rfq'], path: { recommendation: 'rfq' } }), ['create_rfq', 'create_po'])
-  assert.deepEqual(recordActionsNow({ type: 'purchase_request', status: 'approved', allowed: ['create_po', 'create_rfq'], path: { recommendation: 'direct_po' } }), ['create_po'])
-  assert.deepEqual(recordActionsNow({ type: 'purchase_request', status: 'approved', allowed: ['create_po', 'create_rfq'], path: { recommendation: 'direct_po' }, poBlocked: 'lines_incomplete' }), [])
+  assert.deepEqual(recordActionsNow({ type: 'purchase_request', status: 'approved', allowed: ['create_po'] }), ['create_po'])
+  assert.deepEqual(recordActionsNow({ type: 'purchase_request', status: 'approved', allowed: ['create_po'], poBlocked: 'lines_incomplete' }), [])
+})
+
+// Design audit L1-01 (batch A7): an RFQ cannot yet become a purchase order, so
+// the card never offers or recommends one, whatever the request's amount or
+// suppliers, and an older card that still lists it does not draw it.
+test('the record card offers no RFQ', () => {
+  assert.ok(!('create_rfq' in RECORD_ACTION_RULES.purchase_request))
+  assert.deepEqual(recordActionsNow({ type: 'purchase_request', status: 'approved', allowed: ['create_rfq', 'create_po'], path: { recommendation: 'rfq' } }), ['create_po'])
+  assert.deepEqual(recordActionsNow({ type: 'purchase_request', status: 'approved', allowed: ['create_rfq'] }), [])
 })
 
 test('the record card offers the steps this user may take now, by status and role, from the record as stored', async () => {
@@ -973,9 +995,9 @@ test('the record card offers the steps this user may take now, by status and rol
   const notMine = await admin.offer('purchase_request', 'PR-0233')
   assertError(notMine, 'not_allowed')
   assert.match(notMine.error.message, /its requester/)
-  // Approved: the path the recommendation route gives; a purchase order directly.
+  // Approved: a purchase order directly; the card recommends no path.
   const approved = assertPart(await admin.offer('purchase_request', 'PR-0234'), 'record_actions')
-  assert.deepEqual([approved.actions, approved.path], [['create_po'], { recommendation: 'direct_po', reasons: ['direct_po_ok'] }])
+  assert.deepEqual([approved.actions, approved.path], [['create_po'], undefined])
   // Orders: approve one waiting for approval, mark an approved one issued.
   assert.deepEqual(assertPart(await admin.offer('purchase_order', 'PO-006'), 'record_actions').actions, ['approve'])
   const issue = assertPart(await admin.offer('purchase_order', 'PO-009'), 'record_actions')
@@ -995,7 +1017,27 @@ test('the record card offers the steps this user may take now, by status and rol
   assert.deepEqual(assertPart(await buyer.offer('purchase_order', 'PO-009'), 'record_actions').actions, ['issue'])
 })
 
-test('an approved request: quotes first when the route recommends them, no order without complete lines or once one exists', async () => {
+// Design audit C4 follow-up (2026-11-18): the card offers no Approve or
+// Reject on the user's own request or order while someone else may approve
+// it, since the approval would refuse them; the sole approver still may.
+test('the record card offers no approval on the user\'s own request or order while someone else may approve it', async () => {
+  const requests = { 'PR-0241': storedRequest('PR-0241', 'submitted', { requester: 'workspace-administrator-user' }) }
+  const orders = { 'PO-006': storedOrder('PO-006', 'pending_approval', { metadata: { orderNumber: 'PO-006', createdBy: 'workspace-administrator-user' } }) }
+  const card = await recordCard({ requests, orders })
+  const base = card.ctx.prisma
+  const otherApprovers = (count) => { card.ctx.prisma = new Proxy({}, { get: (_target, model) => (model === 'user' ? { count: async () => count } : base[model]) }) }
+  otherApprovers(2)
+  const own = await card.offer('purchase_request', 'PR-0241')
+  assertError(own, 'not_allowed')
+  assert.match(own.error.message, /^PR-0241 is submitted\. This user raised or submitted it, so someone else who may approve it has to approve it\./)
+  assertError(await card.offer('purchase_order', 'PO-006'), 'not_allowed')
+  // The only approver approves their own, as the command allows.
+  otherApprovers(0)
+  assert.deepEqual(assertPart(await card.offer('purchase_request', 'PR-0241'), 'record_actions').actions, ['approve', 'reject'])
+  assert.deepEqual(assertPart(await card.offer('purchase_order', 'PO-006'), 'record_actions').actions, ['approve'])
+})
+
+test('an approved request: an order directly whatever its amount, none without complete lines or once one exists', async () => {
   const requests = {
     'PR-0241': storedRequest('PR-0241', 'approved', { amount: '150000' }),
     'PR-0242': storedRequest('PR-0242', 'approved', { lines: [requestLine({ metadata: { supplierId: 'SUP-005', currency: 'USD', supplierSnapshot: { supplierName: 'Northstar Electronics' } } })] }),
@@ -1006,15 +1048,17 @@ test('an approved request: quotes first when the route recommends them, no order
   }
   const orders = { 'PO-7A1B': storedOrder('PO-7A1B', 'approved', { sourceRequestId: 'PR-0244' }) }
   const card = await recordCard({ requests, orders })
-  const quotes = assertPart(await card.offer('purchase_request', 'PR-0241'), 'record_actions')
-  assert.deepEqual([quotes.actions, quotes.path], [['create_rfq', 'create_po'], { recommendation: 'rfq', reasons: ['amount_over_rfq_threshold'] }])
+  // At or above the old quote threshold: still the order, and no RFQ (A7).
+  const large = assertPart(await card.offer('purchase_request', 'PR-0241'), 'record_actions')
+  assert.deepEqual([large.actions, large.path], [['create_po'], undefined])
   // No delivery warehouse on a line: the route would refuse the order.
   const incomplete = await card.offer('purchase_request', 'PR-0242')
   assertError(incomplete, 'nothing_to_offer')
   assert.match(incomplete.error.message, /supplier, a currency and a delivery warehouse/)
-  // No supplier chosen: quotes are recommended, and only they can be requested.
-  const noSupplier = assertPart(await card.offer('purchase_request', 'PR-0243'), 'record_actions')
-  assert.deepEqual([noSupplier.actions, noSupplier.path.reasons, noSupplier.poBlocked], [['create_rfq'], ['supplier_not_selected'], 'lines_incomplete'])
+  // No supplier chosen: nothing the card can do; the request is completed on its page.
+  const noSupplier = await card.offer('purchase_request', 'PR-0243')
+  assertError(noSupplier, 'nothing_to_offer')
+  assert.match(noSupplier.error.message, /supplier, a currency and a delivery warehouse/)
   assertError(await card.offer('purchase_request', 'PR-0244'), 'nothing_to_offer')
   const converted = await card.offer('purchase_request', 'PR-0245')
   assertError(converted, 'nothing_to_offer')
@@ -1023,7 +1067,7 @@ test('an approved request: quotes first when the route recommends them, no order
   const masked = await recordCard({ requests, orders, actor: (actor) => actor.permissionCodes.delete('procurement.prices.read') })
   const hidden = assertPart(await masked.offer('purchase_request', 'PR-0241'), 'record_actions')
   assert.equal(hidden.record.amount, undefined)
-  assert.deepEqual(hidden.path, { recommendation: 'rfq', reasons: [] })
+  assert.equal(hidden.path, undefined)
 })
 
 test('the record card is not offered to a viewer, and takes only a request or order ref of the named result', async () => {
@@ -1042,4 +1086,76 @@ test('the record card is not offered to a viewer, and takes only a request or or
   assertError(await admin.offer('purchase_request', 'PR-0231', 'list_purchase_requests#2'), 'source_missing')
   // Without the workspace's records nothing is shown.
   assertError(await tool('offer_record_actions').build({ source: 'list_purchase_requests#1', ref: { type: 'purchase_request', id: 'PR-0231' } }, { ...admin.ctx, prisma: null }), 'record_unavailable')
+})
+
+// 2026-11-11 on Flash: for "帮我下个单" and "What should I reorder this week?"
+// the item the model picked was ticked as if the user had named it.
+test('a question of ordering words, the time and politeness names no item', () => {
+  for (const question of ['帮我下个单', '帮我下个单吧', 'What should I reorder this week?', 'Place an order for me please', '这周需要补什么货？', 'Order something']) assert.equal(namesAnItem(question), false, question)
+  // A budget names no item either (2026-11-11).
+  for (const question of ['预算只有 300 英镑，这周该补什么货？', 'I have £500 to spend on stock this week. What should I order?', 'What can I buy with $2,000 at most?']) assert.equal(namesAnItem(question), false, question)
+  for (const question of ['Order 100 cakestands', '帮我订 60 个蛋糕架', '订一些温度传感器', 'Order more 85123A', 'I need bird ornaments', 'I want 100 cakestands but I can only spend £1,000']) assert.equal(namesAnItem(question), true, question)
+})
+
+// 2026-11-11, the owner's hard limits: "Order 30 cakestands" made a 30 pcs
+// form against a minimum of 60, and half the answers never said so.
+test('a named quantity below the supplier\'s minimum order starts at the minimum and keeps what the user asked for', async () => {
+  const second = { id: 'ITEM-001::SUP-002', payload: { itemId: 'ITEM-001', supplierId: 'SUP-002', preferred: false, active: true, approved: true, leadTimeDays: 5, referencePrice: 80, currency: 'USD' } }
+  const { call, build } = await workspace({ supplierLinks: [link(), second], userNamedSkus: ['LDM-001'] })
+  const lines = await call('toolu_lines', 'suggest_purchase_lines', { skus: ['LDM-001'] })
+  assert.equal(lines.rows[0].minimumOrderQuantity, 100)
+  const form = (line) => assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [line] }), 'pr_form').lines[0]
+  const below = form({ sku: 'LDM-001', quantity: 30 })
+  assert.deepEqual([below.suggestedQuantity, below.checked], [{ value: 100, source: 'user_named_raised_to_moq', minimum: 100, requested: 30 }, true])
+  // At or above the minimum the user's quantity stands.
+  assert.deepEqual(form({ sku: 'LDM-001', quantity: 100 }).suggestedQuantity, { value: 100, source: 'user_named' })
+  assert.deepEqual(form({ sku: 'LDM-001', quantity: 150 }).suggestedQuantity, { value: 150, source: 'user_named' })
+  // Another supplier the user picked is not held to the preferred one's minimum.
+  assert.deepEqual(form({ sku: 'LDM-001', quantity: 30, supplier: 'Summit Packaging' }).suggestedQuantity, { value: 30, source: 'user_named' })
+})
+
+// 2026-11-11: "I want 100 cakestands but I can only spend £1,000" got the
+// reorder list's 60 on the form while the solver and the text said 78; "预算只有
+// 300 英镑，这周该补什么货？" ticked the solver's pick as the user's.
+test('the item the user described keeps the order plan\'s quantity, and a budget question ticks nothing', async () => {
+  const shipping = (data) => {
+    data.shipmentLines = Array.from({ length: 18 }, (_, index) => ({ itemId: 'ITEM-001', unit: 'pcs', postedQuantity: 50, shipment: { postedAt: new Date(`2026-09-${String(index + 1).padStart(2, '0')}T16:00:00Z`) } }))
+  }
+  const { ctx, call, build } = await workspace({ change: shipping, actor: (actor) => { actor.allWarehouses = true } })
+  const plan = await call('toolu_plan', 'optimize_order_plan')
+  const quantity = plan.decision.lines[0].quantity
+  await call('toolu_lines', 'suggest_purchase_lines', { skus: ['LDM-001'] })
+  ctx.orderPlan = latestOrderPlan(ctx.results)
+  ctx.question = 'I want 900 temperature sensors but can only spend 20,000'
+  const described = assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity }] }), 'pr_form')
+  assert.deepEqual([described.lines[0].suggestedQuantity, described.lines[0].checked], [{ value: quantity, source: 'order_plan' }, true])
+  // A quantity the model worked out itself for a budget question sends it to
+  // the solver first (2026-11-12 on Flash: 78 from calculate, the form at 60);
+  // the typed 900 and the line's own suggestion are kept as before.
+  const suggestion = described.lines[0].suggestedQuantity.value
+  assertError(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity: quantity + 1 }] }), 'quantity_not_planned')
+  assert.equal(assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity: 900 }] }), 'pr_form').lines[0].suggestedQuantity.value, 900)
+  ctx.orderPlan = new Map()
+  assert.ok(assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001' }] }), 'pr_form').lines.length)
+  ctx.question = 'I want 900 temperature sensors'
+  assert.ok(assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity: suggestion + 1 }] }), 'pr_form'))
+  ctx.orderPlan = latestOrderPlan(ctx.results)
+  ctx.question = '预算只有 300 英镑，这周该补什么货？'
+  const budget = assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity }] }), 'pr_form')
+  assert.deepEqual([budget.lines.length, budget.suggested[0].suggestedQuantity, budget.suggested[0].checked], [0, { value: quantity, source: 'order_plan' }, false])
+})
+
+// 2026-11-11 on Flash: "add 150 of 84879 too" after "Order 100 cakestands"
+// showed the cakestand at the suggested quantity, unticked, while the text said 100.
+test('adding to a form keeps a line of the latest form at the quantity the user typed earlier', async () => {
+  const { ctx, call, build } = await workspace({ userNamedSkus: ['LDM-002'], userText: 'add 30 of LDM-002 too\nOrder 100 of LDM-001', lastFormSkus: ['ldm-001'] })
+  ctx.question = 'add 30 of LDM-002 too'
+  await call('toolu_lines', 'suggest_purchase_lines', { skus: ['LDM-001', 'LDM-002'] })
+  const form = assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity: 100 }, { sku: 'LDM-002', quantity: 30 }] }), 'pr_form')
+  const line = (sku) => [...form.lines, ...form.suggested].find((row) => row.item.sku === sku)
+  assert.deepEqual([line('LDM-001').suggestedQuantity, form.lines.some((row) => row.item.sku === 'LDM-001')], [{ value: 100, source: 'user_named' }, true])
+  assert.equal(line('LDM-002').suggestedQuantity.value, 30)
+  // A quantity nobody typed for an item of the latest form stays the server's suggestion.
+  const other = assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity: 77 }, { sku: 'LDM-002', quantity: 30 }] }), 'pr_form')
+  assert.notEqual([...other.lines, ...other.suggested].find((row) => row.item.sku === 'LDM-001').suggestedQuantity.value, 77)
 })

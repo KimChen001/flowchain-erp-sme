@@ -99,12 +99,28 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await expect(page).toHaveURL(/\/app\/procurement\/orders\/LOCAL-DEMO-PO-001/);
   await expect(page.getByTestId("po-fulfillment-focus")).toHaveAttribute("data-focus-highlight", "true");
 
+  // The open price variance on LOCAL-DEMO-INV-001 (no exception approved yet) is
+  // what the order waits on; the receipt line is valued at its accepted 20 pcs.
+  await expect(page.getByTestId("po-next-action")).toHaveText("复核采购发票的差异");
+  await expect(page.getByTestId("po-receipt-amount").first()).toHaveText("$2,000.00");
+  await expect(page.getByTestId("po-receipt-invoice").first()).toContainText("LOCAL-DEMO-INV-001 · 第 1 行");
+
   await page.goto("/app/procurement/orders/LOCAL-DEMO-PO-002");
   await expect(page.getByTestId("po-line-name").first()).toHaveAttribute("title", "LOCAL-DEMO-PO-002-LINE-001");
-  await expect(page.getByText("当前 PO 暂无收货记录。")).toBeVisible();
+  await expect(page.getByText("该采购订单暂无收货记录。")).toBeVisible();
   await expect(page.getByText("当前采购订单暂无发票行。")).toBeVisible();
-  await expect(page.getByText("等待收货", { exact: true }).first()).toBeVisible();
+  // Issued and nothing received: one name for the state, and the next action is to receive.
+  await expect(page.getByTestId("po-next-action")).toHaveText("到货后收货 40 件");
+  await expect(page.getByTestId("po-line-cards")).toContainText("未收货");
+  await expect(page.getByTestId("po-line-cards")).not.toContainText("待收货");
+  await expect(page.getByTestId("po-payment-status")).toHaveText("暂无应付");
   await capture(page, "03-po-002-detail");
+
+  // An approved invoice with no payment recorded: the order waits on payment.
+  await page.goto("/app/procurement/orders/LOCAL-DEMO-PO-003");
+  await expect(page.getByTestId("po-next-action")).toHaveText("等待付款");
+  await expect(page.getByTestId("po-payment-status")).toHaveText("待付款");
+  await expect(page.getByTestId("po-progress")).toContainText("全部收货");
 
   await page.goto("/app/procurement/orders/LOCAL-DEMO-PO-002?focus=receiving-invoice-variance");
   await expect(page.getByTestId("po-fulfillment-focus")).toHaveAttribute("data-focus-highlight", "true");
@@ -188,28 +204,42 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await expect(page.getByTestId("inventory-item-TST-002")).toContainText("150");
   await capture(page, "08-inventory-stock");
 
-  // TST-002's 150 available are at or under its reorder point of 270 too;
-  // the other items are above theirs.
+  // Need replenishment is the reorder list's stock position (on hand -
+  // reserved + open purchase order lines). TST-002 is 150 on hand plus 115 on
+  // order against a reorder point of 270: order now. TST-001's 28 on hand are
+  // below its safety stock of 30, but 70 on order (PO-001's 30 left and
+  // PO-015's 40) keep it above its reorder point of 40: below safety stock on
+  // hand, covered by open orders. The other items are above theirs.
   await page.goto("/app/inventory/warnings");
-  await expect(page.getByTestId("inventory-item-TST-001")).toContainText("需补货");
+  await expect(page.getByTestId("inventory-item-TST-001")).toContainText("低于安全库存（现有）");
+  await expect(page.getByTestId("inventory-item-TST-001")).toContainText("已有在途采购覆盖");
   await expect(page.getByTestId("inventory-item-TST-001")).toContainText("30 / 40");
+  await expect(page.getByTestId("inventory-item-TST-002")).toContainText("需补货");
   await expect(page.getByTestId("inventory-item-TST-002")).toContainText("100 / 270");
   await expect(page.getByTestId("inventory-item-TST-003")).toHaveCount(0);
   await capture(page, "09-inventory-warnings");
 
   await page.goto("/app/procurement/workbench");
-  // The walkthrough scenario has one submitted purchase request and 21 purchase
-  // orders that still need work: 32 orders less 8 fully received and 3 cancelled.
-  await expect(page.getByRole("link", { name: /^全部待办: 22,/ })).toBeVisible();
+  // The walkthrough scenario has one submitted purchase request, 21 purchase
+  // orders that still need work (35 orders less 11 fully received and 3
+  // cancelled) and one supplier invoice held by a match exception,
+  // LOCAL-DEMO-INV-001 on PO-001. Since design audit A6 (L1-18 = L7-02) the
+  // held invoice is a row of its own, the "Invoice or match issues" queue,
+  // as the supplier invoice list's Match exceptions counts it: 22 became 23.
+  // PO-001 stays a row once, as open work, without the invoice's chips.
+  await expect(page.getByRole("link", { name: /^全部待办: 23,/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /^发票或匹配问题: 1,/ })).toBeVisible();
   const workbenchRow = (id: string) => page.getByRole("row").filter({ has: page.getByText(id, { exact: true }) });
   // Statuses read as labels in the interface language, not stored codes.
   await expect(workbenchRow("LOCAL-DEMO-PO-001")).toContainText("部分收货");
   await expect(workbenchRow("LOCAL-DEMO-PO-001")).not.toContainText("partially_received");
   await expect(workbenchRow("LOCAL-DEMO-PO-002")).toContainText("已下达");
   await expect(workbenchRow("LOCAL-DEMO-PO-002")).not.toContainText("issued");
-  await expect(workbenchRow("LOCAL-DEMO-PO-001").getByText("发票差异", { exact: true })).toBeVisible();
-  await expect(workbenchRow("LOCAL-DEMO-PO-001").getByText("三单匹配异常", { exact: true })).toBeVisible();
-  await expect(workbenchRow("LOCAL-DEMO-PO-002").getByText("发票差异", { exact: true })).toHaveCount(0);
+  // The match exception is on the held invoice's row, which names its order.
+  await expect(workbenchRow("LOCAL-DEMO-INV-001").getByText("三单匹配异常", { exact: true })).toBeVisible();
+  await expect(workbenchRow("LOCAL-DEMO-INV-001")).toContainText("对应 LOCAL-DEMO-PO-001");
+  await expect(workbenchRow("LOCAL-DEMO-PO-001").getByText("三单匹配异常", { exact: true })).toHaveCount(0);
+  await expect(workbenchRow("LOCAL-DEMO-PO-002").getByText("三单匹配异常", { exact: true })).toHaveCount(0);
   await expect(page.getByText("LOCAL-DEMO-PO-003", { exact: true })).toHaveCount(0);
   await expect(page.getByText("LOCAL-DEMO-PO-030", { exact: true })).toHaveCount(0);
   await capture(page, "10-procurement-workbench");
@@ -219,10 +249,12 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   // recent receipts are checked: TST-001's and the two TST-004 receipts of the
   // last two days.
   await page.goto("/app/inventory/movements");
-  // The movement names its receipt and shows the quantity without the stored scale.
+  // The movement names its receipt and shows the quantity without the stored
+  // scale, with the unit it was recorded in (design audit L3-28): pcs is 件
+  // on this Chinese page.
   const receipt = page.getByRole("row").filter({ hasText: "LOCAL-DEMO-GRN-001" });
   await expect(receipt).toContainText("TST-001");
-  await expect(receipt.getByRole("cell", { name: "20", exact: true })).toBeVisible();
+  await expect(receipt.getByRole("cell", { name: "20 件", exact: true })).toBeVisible();
   for (const recent of ["LOCAL-DEMO-GRN-012", "LOCAL-DEMO-GRN-013"]) await expect(page.getByRole("row").filter({ hasText: recent })).toContainText("TST-004");
   await expect(page.getByRole("row").filter({ hasText: "TST-004" }).first()).toBeVisible();
   await expect(page.getByText(/STATIC-|SKU-01100/)).toHaveCount(0);

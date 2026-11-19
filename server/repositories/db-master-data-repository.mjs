@@ -2,8 +2,8 @@ import { escapeLikePattern } from '../persistence/like-pattern.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { validateDatabasePersistenceConfig } from '../persistence/persistence-config.mjs'
 import { saveSupplierMaster } from '../domain/supplier-master-command.mjs'
-import { changeSupplierOwner, changeSupplierTier } from '../domain/supplier-tier-command.mjs'
-import { CUSTOMER_NAMESPACE, listItemSupplierRecords, mapItemSupplierRecord, saveCustomerMaster, saveItemMaster, saveItemSupplier } from '../domain/master-data-commands.mjs'
+import { changeSupplierOwner, changeSupplierTier, reviewSupplierTier } from '../domain/supplier-tier-command.mjs'
+import { CUSTOMER_NAMESPACE, listItemSupplierRecords, mapItemSupplierRecord, saveCustomerMaster, saveItemMaster, saveItemSupplier, customerCreditStatus } from '../domain/master-data-commands.mjs'
 import { ITEM_SUPPLIER_LINK_READ_CAP, itemSupplierLinkOptions, itemSupplierLinkPage, joinItemSupplierLinks, preferredSupplierLink } from '../domain/item-supplier-links.mjs'
 import { saveWarehouse, saveWarehouseBin, setWarehouseBinStatus, setWarehouseStatus, warehouseVersion } from '../domain/warehouse-master-commands.mjs'
 import { findManyWithinLimit, requireTenantId } from './repository-read-scope.mjs'
@@ -56,13 +56,31 @@ function safeLimit(value, fallback = 200) {
 // or code, then its name, each ignoring case. A database query, so a record
 // is found however many the workspace has (it was the first 500 read). The
 // key is escaped: Prisma sends a case-insensitive equals as ILIKE.
+// A name is not unique, so a name that two records share finds neither: the
+// lookup answers 409 NAME_AMBIGUOUS with the candidates (their id and code)
+// instead of quietly taking the first by id (design audit L4-18).
 async function findByKey(delegate, where, key, fields, args = {}) {
   const equals = { equals: escapeLikePattern(key), mode: 'insensitive' }
   for (const field of fields) {
-    const record = await delegate.findFirst({ ...args, where: { ...where, [field]: equals }, orderBy: [{ id: 'asc' }] })
-    if (record) return record
+    if (field !== 'name') {
+      const record = await delegate.findFirst({ ...args, where: { ...where, [field]: equals }, orderBy: [{ id: 'asc' }] })
+      if (record) return record
+      continue
+    }
+    const named = await delegate.findMany({ ...args, where: { ...where, name: equals }, orderBy: [{ id: 'asc' }], take: 5 })
+    if (named.length > 1) throw Object.assign(new Error(`More than one record is named "${key}". Use its code.`), { status: 409, code: 'NAME_AMBIGUOUS', details: named.map((record) => ({ id: record.id, code: record.sku || record.code || record.recordKey || record.id, name: record.name })) })
+    if (named.length) return named[0]
   }
   return null
+}
+
+// Other records of the workspace with this name, for a warning when one is
+// created: a name is no key, but two items or suppliers with one name are
+// usually a duplicate (design audit L4-18).
+export async function sameNameRecords(delegate, where, name, excludeId, codeOf) {
+  if (!text(name)) return []
+  const rows = await delegate.findMany({ where: { ...where, name: { equals: escapeLikePattern(text(name)), mode: 'insensitive' }, ...(excludeId ? { id: { not: excludeId } } : {}) }, orderBy: [{ id: 'asc' }], take: 5 })
+  return rows.map((row) => ({ id: row.id, code: codeOf(row) }))
 }
 const ITEM_KEY_FIELDS = ['id', 'sku', 'name']
 const SUPPLIER_KEY_FIELDS = ['id', 'code', 'name']
@@ -74,7 +92,9 @@ export function recordedItemUnit(record = {}) {
   return text(record.unit || meta.baseUom || meta.uom)
 }
 
-function mapItem(record = {}) {
+const recordedNumberOf = (value) => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value))
+
+export function mapItem(record = {}) {
   const meta = metadata(record)
   const itemId = text(record.id || record.sku)
   const itemName = text(record.name || record.sku)
@@ -93,6 +113,21 @@ function mapItem(record = {}) {
     baseUom: baseUnit,
     baseUnit,
     recordedUnit: recordedItemUnit(record),
+    // What someone recorded, null when nothing was: the fields above fill
+    // gaps for display (pcs, Uncategorized, MOQ 1, zeros), and an edit form
+    // that saved them back made them look recorded (design audit L4-02).
+    recorded: {
+      unit: recordedItemUnit(record) || null,
+      category: text(record.category || meta.category) || null,
+      safetyStock: recordedNumberOf(record.safetyStock ?? meta.safetyStock),
+      reorderPoint: recordedNumberOf(record.reorderPoint ?? meta.reorderPoint),
+      orderUpToLevel: recordedNumberOf(record.orderUpToLevel),
+      lotSize: recordedNumberOf(record.lotSize),
+      minimumOrderQuantity: recordedNumberOf(meta.minimumOrderQuantity ?? meta.moq),
+      purchaseLeadTimeDays: recordedNumberOf(meta.purchaseLeadTimeDays ?? meta.leadTimeDays ?? meta.leadTime),
+      purchaseUnit: text(meta.purchaseUnit) || null,
+      itemType: text(meta.itemType) || null,
+    },
     purchaseUnit: text(meta.purchaseUnit, baseUnit),
     // Only a warehouse someone set: drafts and data-quality checks rely on it.
     defaultWarehouseId: meta.defaultWarehouseId || meta.warehouseId || '',
@@ -107,6 +142,10 @@ function mapItem(record = {}) {
     // Item.safetyStock and Item.reorderPoint are columns; metadata is the legacy fallback.
     safetyStock: numberFrom(record.safetyStock ?? meta.safetyStock, 0),
     reorderPoint: numberFrom(record.reorderPoint ?? meta.reorderPoint, 0),
+    // The (s, S) level and lot size (design audit C3): null when none is
+    // recorded, never a made-up figure.
+    orderUpToLevel: recordedNumberOf(record.orderUpToLevel),
+    lotSize: recordedNumberOf(record.lotSize),
     taxCodeId: text(meta.taxCodeId),
     barcode: text(meta.barcode),
     manufacturerPartNumber: text(meta.manufacturerPartNumber),
@@ -166,6 +205,10 @@ function mapSupplier(record = {}) {
     tierReason: text(record.tierReason) || null,
     tierSetAt: record.tierSetAt || null,
     tierSetBy: record.tierSetBy ? { id: record.tierSetBy.id, name: record.tierSetBy.name } : null,
+    // When the tier was last set or reviewed, and the next review day the
+    // person chose (design audit L9-12).
+    tierReviewedAt: text(meta.tierReview?.reviewedAt) || null,
+    tierNextReviewOn: text(meta.tierReview?.nextReviewOn) || null,
     businessOwner: record.businessOwner ? { id: record.businessOwner.id, name: record.businessOwner.name } : null,
   }
 }
@@ -265,7 +308,9 @@ function mapCustomer(record = {}) {
     email: text(payload.email),
     address: text(payload.address),
     paymentTerms: text(payload.paymentTerms),
-    creditStatus: text(payload.creditStatus),
+    country: text(payload.country),
+    // A code, normal or restricted (older records' Chinese words read as them).
+    creditStatus: customerCreditStatus(payload.creditStatus),
     version: Number(payload.version || 1),
     sourceType: 'database',
   }
@@ -280,9 +325,14 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
   return {
     mode: 'database',
     adapter: 'db-master-data-v1',
-    createSupplier: async (input, actorId, scope) => mapSupplier(await withPeople(await saveSupplierMaster(await resolvePrisma({ env, prisma }), null, input, actorId, scope))),
+    createSupplier: async (input, actorId, scope) => {
+      const client = await resolvePrisma({ env, prisma })
+      const saved = await saveSupplierMaster(client, null, input, actorId, scope)
+      return { ...mapSupplier(await withPeople(saved)), nameAlsoUsedBy: await sameNameRecords(client.supplier, tenantWhere(scope), saved.name, saved.id, (row) => row.code || row.id) }
+    },
     updateSupplier: async (id, input, actorId, scope) => mapSupplier(await withPeople(await saveSupplierMaster(await resolvePrisma({ env, prisma }), id, input, actorId, scope))),
-    setSupplierTier: async (id, input, actorId, scope) => mapSupplier(await withPeople(await changeSupplierTier(await resolvePrisma({ env, prisma }), decodeURIComponent(String(id || '')), input, actorId, scope))),
+    setSupplierTier: async (id, input, actorId, scope, options = {}) => mapSupplier(await withPeople(await changeSupplierTier(await resolvePrisma({ env, prisma }), decodeURIComponent(String(id || '')), input, actorId, scope, options))),
+    reviewSupplierTier: async (id, input, actorId, scope, options = {}) => mapSupplier(await withPeople(await reviewSupplierTier(await resolvePrisma({ env, prisma }), decodeURIComponent(String(id || '')), input, actorId, scope, options))),
     setSupplierOwner: async (id, input, actorId, scope) => mapSupplier(await withPeople(await changeSupplierOwner(await resolvePrisma({ env, prisma }), decodeURIComponent(String(id || '')), input, actorId, scope))),
     // The people a supplier can be assigned to: active users of the workspace.
     listSupplierOwners: async (options = {}) => {
@@ -303,11 +353,13 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
       const count = (tier) => groups.find((row) => (row.tier ?? null) === tier)?._count._all || 0
       return { all: groups.reduce((sum, row) => sum + row._count._all, 0), mine, tier1: count(1), tier2: count(2), tier3: count(3), untiered: count(null) }
     },
-    // The supplier's tier and owner changes, newest first, from the audit log.
+    // The supplier's tier changes and reviews and its owner changes, newest
+    // first, from the audit log. A row's indicators stay in the audit log:
+    // the history is read by people who may not see them.
     supplierTierHistory: async (id = '', options = {}) => {
       const client = await resolvePrisma({ env, prisma })
       const rows = await client.auditLog.findMany({
-        where: { ...tenantWhere(options), entityType: 'supplier', entityId: text(decodeURIComponent(String(id || ''))), action: { in: ['tier_change', 'owner_change'] } },
+        where: { ...tenantWhere(options), entityType: 'supplier', entityId: text(decodeURIComponent(String(id || ''))), action: { in: ['tier_change', 'tier_reviewed', 'owner_change'] } },
         orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
         take: 20,
         include: { actor: { select: { id: true, name: true } } },
@@ -316,17 +368,33 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
       const owners = ownerIds.length ? await client.user.findMany({ where: { ...tenantWhere(options), id: { in: ownerIds } }, select: { id: true, name: true } }) : []
       const person = (userId) => (userId ? owners.find((user) => user.id === userId) || { id: userId, name: null } : null)
       return rows.map((row) => ({
-        kind: row.action === 'tier_change' ? 'tier' : 'owner',
+        kind: row.action === 'tier_change' ? 'tier' : row.action === 'tier_reviewed' ? 'review' : 'owner',
         at: row.createdAt,
         by: row.actor ? { id: row.actor.id, name: row.actor.name } : null,
         ...(row.action === 'tier_change'
-          ? { fromTier: row.metadata?.fromTier ?? null, toTier: row.metadata?.toTier ?? null, reason: row.metadata?.reason || null, acceptedSuggestion: Boolean(row.metadata?.acceptedSuggestion) }
-          : { fromOwner: person(row.metadata?.fromOwnerId), toOwner: person(row.metadata?.toOwnerId) }),
+          ? { fromTier: row.metadata?.fromTier ?? null, toTier: row.metadata?.toTier ?? null, reason: row.metadata?.reason || null, acceptedSuggestion: Boolean(row.metadata?.acceptedSuggestion), nextReviewOn: row.metadata?.nextReviewOn || null }
+          : row.action === 'tier_reviewed'
+            ? { tier: row.metadata?.tier ?? null, reason: row.metadata?.reason || null, nextReviewOn: row.metadata?.nextReviewOn || null }
+            : { fromOwner: person(row.metadata?.fromOwnerId), toOwner: person(row.metadata?.toOwnerId) }),
       }))
     },
-    createItem: async (input, actorId, scope) => mapItem(await saveItemMaster(await resolvePrisma({ env, prisma }), null, input, actorId, scope)),
+    // A new item names the items that already had its name (nameAlsoUsedBy),
+    // for a warning; the item is created either way.
+    createItem: async (input, actorId, scope) => {
+      const client = await resolvePrisma({ env, prisma })
+      const saved = await saveItemMaster(client, null, input, actorId, scope)
+      return { ...mapItem(saved), nameAlsoUsedBy: await sameNameRecords(client.item, tenantWhere(scope), saved.name, saved.id, (row) => row.sku) }
+    },
     updateItem: async (id, input, actorId, scope) => mapItem(await saveItemMaster(await resolvePrisma({ env, prisma }), decodeURIComponent(String(id || '')), input, actorId, scope)),
-    createCustomer: async (input, actorId, scope) => mapCustomer(await saveCustomerMaster(await resolvePrisma({ env, prisma }), null, input, actorId, scope)),
+    // A customer's name is inside its record, so the same name is matched as
+    // written (case and all).
+    createCustomer: async (input, actorId, scope) => {
+      const client = await resolvePrisma({ env, prisma })
+      const saved = await saveCustomerMaster(client, null, input, actorId, scope)
+      const customer = mapCustomer(saved)
+      const named = customer.name ? await client.runtimeRecord.findMany({ where: { ...tenantWhere(scope), namespace: CUSTOMER_NAMESPACE, id: { not: saved.id }, payload: { path: ['name'], equals: customer.name } }, orderBy: [{ recordKey: 'asc' }], take: 5 }) : []
+      return { ...customer, nameAlsoUsedBy: named.map((row) => ({ id: row.id, code: row.recordKey })) }
+    },
     updateCustomer: async (id, input, actorId, scope) => mapCustomer(await saveCustomerMaster(await resolvePrisma({ env, prisma }), decodeURIComponent(String(id || '')), input, actorId, scope)),
     createItemSupplier: async (itemId, input, actorId, scope) => saveItemSupplier(await resolvePrisma({ env, prisma }), itemId, null, input, actorId, scope),
     updateItemSupplier: async (itemId, relationshipId, input, actorId, scope) => saveItemSupplier(await resolvePrisma({ env, prisma }), itemId, relationshipId, input, actorId, scope),

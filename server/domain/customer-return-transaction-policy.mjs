@@ -3,6 +3,9 @@ import {
   outboundDecimalUnits as decimalUnits,
 } from "./outbound-transaction-policy.mjs";
 import { activeTrackedConsumption } from "./quarantine-disposition-lineage.mjs";
+import { executableAuthorizedUnits } from "./return-authorization-closure-policy.mjs";
+import { returnPostingCreditIssues } from "./return-credit-rules.mjs";
+import { returnSourceStillPostedIssues } from "./return-source-holds.mjs";
 
 const text = (value) => String(value ?? "").trim();
 const fixed = (value) =>
@@ -72,11 +75,57 @@ function postedByLine(authorization, excludedPostingId = "") {
   return map;
 }
 
+// A closed remainder is no longer executable, so it does not keep the
+// authorization open (and a reversal reopens only what was really posted).
 const totalAuthorized = (authorization) =>
   authorization.lines.reduce(
-    (sum, line) => sum + decimalUnits(line.authorizedQuantity),
+    (sum, line) => sum + executableAuthorizedUnits(line),
     0n,
   );
+
+const locationKeyOf = (value) => text(value).toLowerCase();
+
+// The receipt goes into the quarantine stock record for the item at the
+// chosen warehouse and location. When none exists yet, the draft command
+// creates it (V-C-01); nothing else in the product creates one.
+async function quarantineTarget(prisma, tenantId, requestLine, submitted) {
+  const warehouseId = text(submitted.warehouseId);
+  const location = text(submitted.location);
+  const locationKey = locationKeyOf(location);
+  const existing = await prisma.quarantineInventoryBalance.findFirst({
+    where: {
+      tenantId,
+      sku: requestLine.sku,
+      warehouseKey: warehouseId,
+      locationKey,
+    },
+  });
+  if (existing) return { balance: existing };
+  const [warehouse, item] = await Promise.all([
+    prisma.warehouse.findFirst({
+      where: { tenantId, id: warehouseId },
+      select: { id: true, status: true },
+    }),
+    prisma.item.findFirst({
+      where: { tenantId, id: requestLine.itemId },
+      select: { id: true, status: true },
+    }),
+  ]);
+  return {
+    balance: null,
+    create: {
+      itemId: requestLine.itemId,
+      sku: requestLine.sku,
+      itemName: requestLine.itemName,
+      unit: requestLine.unit || null,
+      warehouseId,
+      location: location || null,
+      locationKey,
+    },
+    blocked:
+      warehouse?.status !== "active" || item?.status !== "active",
+  };
+}
 const totalPosted = (authorization, excluded = "") =>
   [...postedByLine(authorization, excluded).values()].reduce(
     (sum, value) => sum + value,
@@ -205,8 +254,7 @@ export async function buildCustomerReturnDraftPlan({
         ),
       );
     const remaining =
-      decimalUnits(authLine.authorizedQuantity) -
-      (used.get(authLine.id) || 0n);
+      executableAuthorizedUnits(authLine) - (used.get(authLine.id) || 0n);
     if (quantityUnits > remaining)
       issues.push(
         issue(
@@ -219,18 +267,37 @@ export async function buildCustomerReturnDraftPlan({
           },
         ),
       );
-    const quarantineBalanceId = text(submitted.quarantineBalanceId);
-    if (!quarantineBalanceId || text(submitted.inventoryBalanceId))
+    // Either an existing quarantine balance, or the warehouse (and optional
+    // location) to receive into, never both.
+    const selectedBalanceId = text(submitted.quarantineBalanceId);
+    const selectedWarehouseId = text(submitted.warehouseId);
+    if (
+      Boolean(selectedBalanceId) === Boolean(selectedWarehouseId) ||
+      text(submitted.inventoryBalanceId)
+    )
       issues.push(
         issue(
           "RETURN_POSTING_BALANCE_SELECTION_INVALID",
-          "Customer return receipt requires exactly one quarantine balance.",
+          "Choose one quarantine balance, or the warehouse to receive into, for each customer return line.",
           422,
         ),
       );
-    const balance = byBalance.get(quarantineBalanceId);
     const requestLine = authLine.returnRequestLine;
-    if (!balance)
+    const target =
+      selectedWarehouseId && !selectedBalanceId
+        ? await quarantineTarget(prisma, tenantId, requestLine, submitted)
+        : { balance: byBalance.get(selectedBalanceId) || null };
+    const balance = target.balance;
+    const quarantineBalanceId = balance?.id || "";
+    if (target.create && target.blocked)
+      issues.push(
+        issue(
+          "RETURN_POSTING_BALANCE_CREATE_BLOCKED",
+          "A new quarantine stock record needs an active item and an active warehouse.",
+          409,
+        ),
+      );
+    if (!balance && !target.create && selectedBalanceId)
       issues.push(
         issue(
           "RETURN_POSTING_BALANCE_NOT_FOUND",
@@ -239,10 +306,11 @@ export async function buildCustomerReturnDraftPlan({
         ),
       );
     else if (
-      balance.status !== "active" ||
-      balance.itemId !== requestLine.itemId ||
-      balance.sku !== requestLine.sku ||
-      !same(balance.unit, requestLine.unit)
+      balance &&
+      (balance.status !== "active" ||
+        balance.itemId !== requestLine.itemId ||
+        balance.sku !== requestLine.sku ||
+        !same(balance.unit, requestLine.unit))
     )
       issues.push(
         issue(
@@ -265,10 +333,12 @@ export async function buildCustomerReturnDraftPlan({
       balanceId: quarantineBalanceId,
       inventoryBalanceId: null,
       quarantineBalanceId,
-      warehouseId: balance?.warehouseId || "",
-      location: balance?.location || null,
-      locationKey: balance?.locationKey || "",
+      warehouseId: balance?.warehouseId || target.create?.warehouseId || "",
+      location: balance ? balance.location || null : target.create?.location || null,
+      locationKey: balance?.locationKey || target.create?.locationKey || "",
       balance,
+      // Set when the draft command has to create the quarantine stock record.
+      createsQuarantineBalance: !balance && target.create ? target.create : null,
       remainingAuthorizedBefore: fixed(remaining),
       remainingAuthorizedAfter: fixed(remaining - quantityUnits),
     });
@@ -338,6 +408,16 @@ export async function buildCustomerReturnPostingPlan({
     now,
   });
   const issues = [...draft.blockingIssues];
+  // The shipment the return names must still be posted (L8-07).
+  issues.push(
+    ...(await returnSourceStillPostedIssues({
+      prisma,
+      tenantId,
+      requestLines: posting.returnAuthorization.lines.map(
+        (line) => line.returnRequestLine,
+      ),
+    })),
+  );
   if (
     posting.postingType !== "customer_return_receipt" ||
     !allowedWorkflowStatuses.includes(posting.workflowStatus) ||
@@ -496,6 +576,10 @@ export async function buildCustomerReturnReversalPlan({
         409,
       ),
     );
+  // A draft or approved credit note based on this return receipt holds it.
+  issues.push(
+    ...(await returnPostingCreditIssues({ prisma, tenantId, postingId: posting.id, postingType: "customer_return_receipt" })),
+  );
   const movements = await prisma.inventoryMovement.findMany({
     where: {
       tenantId,
@@ -610,6 +694,33 @@ export async function buildCustomerReturnReversalPlan({
   });
   const auth = posting.returnAuthorization;
   const state = statuses(totalAuthorized(auth), totalPosted(auth, posting.id));
+  // Reversing reopens this receipt authorization. A request holds one active
+  // authorization at a time, so an open release authorization has to be
+  // cancelled first; say so instead of failing on the unique index (L8-27).
+  if (["approved", "partially_executed"].includes(state.authorization)) {
+    const otherActive = await prisma.returnAuthorization.findMany({
+      where: {
+        tenantId,
+        returnRequestId: auth.returnRequestId,
+        id: { not: auth.id },
+        workflowStatus: { in: ["draft", "approved", "partially_executed"] },
+      },
+      select: { id: true, authorizationNumber: true },
+    });
+    if (otherActive.length)
+      issues.push(
+        issue(
+          "RETURN_REVERSAL_BLOCKED_BY_ACTIVE_AUTHORIZATION",
+          "Cancel the open release authorization of this return before reversing the receipt.",
+          409,
+          {
+            authorizationNumbers: otherActive.map(
+              (row) => row.authorizationNumber,
+            ),
+          },
+        ),
+      );
+  }
   return result(
     {
       postingId: posting.id,

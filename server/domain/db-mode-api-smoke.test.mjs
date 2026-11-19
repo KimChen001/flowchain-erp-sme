@@ -5,7 +5,6 @@ import {
   createRepositoryRegistry,
   JSON_PERSISTENCE_REMOVED_ERROR,
 } from '../repositories/adapter-registry.mjs'
-import { handleActionDraftsRoute } from '../routes/action-drafts.routes.mjs'
 import { handleAuditLogRoute } from '../routes/audit-log.routes.mjs'
 import { handleInventoryRoute } from '../routes/inventory.routes.mjs'
 import { handleMasterDataRoute } from '../routes/master-data.routes.mjs'
@@ -59,9 +58,6 @@ function createPrisma() {
     supplierInvoice: model([{ id: 'INV-SMOKE-1', supplierName: 'ABC Components', relatedPoId: 'PO-SMOKE-1', relatedGrnId: 'GRN-SMOKE-1', amount: 1200, currency: 'CNY', status: 'pending', varianceAmount: 0, lines: [{ sku: 'A100', amount: 1200 }] }]),
     documentLink: model([]),
     procurementFollowup: model([]),
-    actionDraft: {
-      create: async ({ data }) => ({ ...data, createdAt: new Date('2026-06-30T00:00:00.000Z'), updatedAt: new Date('2026-06-30T00:00:00.000Z'), validations: [], auditTrail: [] }),
-    },
     auditLog: {
       create: async ({ data }) => ({ ...data, createdAt: data.createdAt || new Date('2026-06-30T00:00:00.000Z') }),
       findMany: async () => [{ id: 'AUD-SMOKE-1', tenantId: 'tenant-flowchain-sme', source: 'system', module: 'smoke', action: 'smoke_checked', entityType: 'system', entityId: 'R39', summary: 'Smoke checked', metadata: {}, createdAt: new Date('2026-06-30T00:00:00.000Z') }],
@@ -145,15 +141,10 @@ test('DB mode smoke routes use DB adapters through repository context', async ()
   assert.deepEqual(db, before)
 })
 
-test('DB mode action draft preview is non-mutating and legacy mutations stay blocked', async () => {
+test('DB mode legacy mutations stay blocked and capability routes are not', () => {
   const db = createDb()
   const before = clone(db)
-  const repositories = createDatabaseRepositoryRegistry({ db, env, prisma: createPrisma() })
 
-  const preview = await call(handleActionDraftsRoute, { method: 'POST', path: '/api/action-drafts/preview', db, repositories, body: { type: 'purchase_request_draft', payload: { itemIdOrSku: 'A100', quantity: 2 } } })
-
-  assert.equal(preview.response.status, 200)
-  assert.equal(preview.response.payload.previewOnly, true)
   assert.equal(isDatabaseModeWriteBlocked({ persistenceMode: 'database', method: 'GET', pathname: '/api/mrp-plan' }), false)
   assert.equal(isDatabaseModeWriteBlocked({ persistenceMode: 'database', method: 'POST', pathname: '/api/forecast-plans' }), false)
   assert.equal(isDatabaseModeWriteBlocked({ persistenceMode: 'database', method: 'POST', pathname: '/api/sop-cycle' }), false)

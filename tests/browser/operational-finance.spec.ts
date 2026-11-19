@@ -404,9 +404,13 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
       : route.fallback(),
   );
   await page.getByTestId("customer-invoice-submit").click();
-  await expect(page.getByTestId("customer-invoice-submit-panel")).toContainText("Someone else changed this invoice first.");
-  // The earlier preview no longer holds, so Confirm waits for a new preview.
-  await expect(page.getByTestId("customer-invoice-submit-confirm")).toBeDisabled();
+  // In the interface language: the server's own sentence in English, the
+  // conflict said in Chinese (design audit L16).
+  await expect(page.getByTestId("customer-invoice-submit-panel")).toContainText(/Someone else changed this invoice first\.|已有其他人先做了更改/);
+  // The earlier preview no longer holds: Confirm stays available and previews
+  // again before it runs (the form standard never disables it to wait).
+  await expect(page.getByTestId("customer-invoice-submit-confirm")).toBeEnabled();
+  await expect(page.getByTestId("customer-invoice-submit-panel")).not.toContainText(/Preview passed|预览通过/);
   await page.unroute("**/api/finance/customer-invoices/*/submit");
   await page.getByTestId("customer-invoice-submit-panel").getByRole("button", { name: /^(Close|关闭)$/ }).click();
   for (const action of ["submit", "approve", "issue"]) {
@@ -415,7 +419,13 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
     await expect(page.getByTestId(`customer-invoice-${action}`)).toHaveCount(0);
     await expect(page.getByTestId(`customer-invoice-${action}-panel`)).toHaveCount(0);
   }
-  await expect(page.getByTestId("customer-invoice-actions")).toContainText(/当前状态下没有可执行的操作|No action is available/);
+  // With no step of its own left, the invoice points to recording the
+  // payment, and never says "No action is available" next to an action.
+  await expect(page.getByTestId("customer-invoice-next")).toContainText(/Next: record the payment received|下一步：登记收款/);
+  await expect(page.getByTestId("customer-invoice-actions")).not.toContainText(/当前状态下没有可执行的操作|No action is available/);
+  // Issued and nothing received: the header reads To be paid, and Overdue past its due date.
+  await expect(page.getByTestId("customer-invoice-status")).toContainText(/To be paid|待收款/);
+  await expect(page.getByTestId("customer-invoice-status")).toContainText(/Overdue|已逾期/);
   const uiIssued = await api(
     request,
     manager.token,
@@ -424,21 +434,83 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
   );
   expect(uiIssued.status).toBe("issued");
   expect(uiIssued.receivable.obligationNumber).toBe(`AR-${uiNumber}`);
+  // Due 2026-07-10 and still owed: the receivable reads overdue, as it does
+  // in the receivables list, and its due date is red.
+  await expect(page.getByTestId("customer-invoice-receivable-status")).toHaveText(/^(已逾期|Overdue)$/);
+  await expect(page.getByTestId("customer-invoice-receivable-due")).toHaveCSS("color", "rgb(185, 28, 28)");
+  await expect(page.getByTestId("customer-invoice-due-date")).toHaveCSS("color", "rgb(185, 28, 28)");
 
   await page.goto("/app/finance/overview");
   await expect(page.getByTestId("operational-finance-landing")).toBeVisible();
+  // The overview shows the money first, one amount per currency and never
+  // added together: CNY 52 less the 25 credit plus the 12.50 invoice, and
+  // USD 25, all owed and all overdue.
+  const overviewCards = page.getByTestId("finance-overview-cards");
+  const owedTile = overviewCards.getByRole("link", { name: /^(应收未收|Owed to us):/ });
+  await expect(owedTile).toContainText("39.50");
+  await expect(owedTile).toContainText("25.00");
+  await expect(owedTile).toContainText(/3 张发票已开具|3 invoices issued/);
+  const overdueTile = overviewCards.getByRole("link", { name: /^(逾期应收款|Overdue receivables):/ });
+  await expect(overdueTile).toContainText("39.50");
+  await expect(overdueTile).toContainText("25.00");
+  // The aging strip: due 2026-07-10, so every receivable is over 90 days
+  // past due, and each bucket opens the aging page for its currency.
+  const agingStrip = page.getByTestId("finance-aging-receivables");
+  await expect(agingStrip.getByTestId("finance-aging-receivables-CNY-90_plus")).toContainText("39.50");
+  await expect(agingStrip.getByTestId("finance-aging-receivables-USD-90_plus")).toContainText("25.00");
+  await expect(agingStrip.getByTestId("finance-aging-receivables-USD-90_plus")).toHaveAttribute("href", "/app/finance/aging?currency=USD");
+  await expect(page.getByTestId("finance-aging-payables")).toContainText("CNY");
   // Every receivable here is past its 2026-07-10 due date, so the overdue
   // card's link must list them although none has the stored status overdue.
-  await page.getByRole("link", { name: /逾期应收义务|Overdue receivables/ }).click();
+  await overdueTile.click();
   await expect(page).toHaveURL(/\/app\/finance\/receivables\?status=overdue$/);
+  const receivables = page.getByTestId("receivables-workbench");
   for (const number of [cnyNumber, usdNumber, uiNumber])
-    await expect(page.getByTestId("receivables-workbench")).toContainText(number);
+    await expect(receivables).toContainText(number);
+  await expect(receivables.getByTestId("receivable-row")).toHaveCount(3);
+  // The search box filters on the server by invoice number; the list says
+  // how many match and the cards still count every receivable.
+  const search = receivables.getByRole("searchbox", { name: /^(Search|搜索)$/ });
+  await search.fill(usdNumber);
+  await search.press("Enter");
+  await expect(page).toHaveURL(new RegExp(`search=${usdNumber}`));
+  await expect(receivables.getByTestId("receivable-row")).toHaveCount(1);
+  await expect(receivables.getByTestId("receivable-row")).toContainText(usdNumber);
+  await expect(receivables.getByTestId("receivable-list")).toContainText(/共 1 条|1 total/);
+  await expect(receivables.getByTestId("receivable-metrics").getByRole("link", { name: /已逾期|Overdue/ })).toContainText("3");
+  await expect(receivables.getByTestId("receivable-metrics").getByRole("link", { name: /未结应收|Open receivables/ })).toContainText("3");
+  // ...and by customer.
+  await search.fill("Finance Browser Customer USD");
+  await search.press("Enter");
+  await expect(receivables.getByTestId("receivable-row")).toHaveCount(1);
+  await expect(receivables.getByTestId("receivable-row")).toContainText(usdNumber);
+  // An overdue receivable's chip reads overdue.
+  await expect(receivables.getByTestId("receivable-row")).toContainText(/已逾期|Overdue/);
+  // One notice on the page.
+  await expect(receivables.getByTestId("receivables-notice")).toHaveCount(1);
   await page.goto("/app/finance/overview");
   await expect(page.getByTestId("operational-finance-landing")).toBeVisible();
-  await expect(page.getByText("应付款不代表已付款。")).toBeVisible();
-  await expect(page.getByText("应收款不代表已收款。")).toBeVisible();
+  // One notice, and the cards are router links to the lists they count.
+  await expect(page.getByTestId("finance-overview-notice")).toContainText(/应付款和应收款记录的是欠款|Payables and receivables record what is owed/);
+  // Four money and decision tiles, and four quieter ones shown even at 0.
+  // Supplier credit notes have no card while supplier returns are off
+  // (design audit W-07).
+  await expect(page.getByTestId("finance-overview-cards").getByRole("link")).toHaveCount(4);
+  const quietTiles = page.getByTestId("finance-overview-secondary");
+  await expect(quietTiles.getByRole("link")).toHaveCount(4);
+  for (const name of [/^(待匹配采购发票|Supplier invoices awaiting match): /, /^(待开具销售发票|Customer invoices awaiting issue): /, /^(有争议的应收款|Disputed receivables): /, /^(客户贷项通知单|Customer credit notes): /]) {
+    await expect(quietTiles.getByRole("link", { name })).toBeVisible();
+  }
+  await expect(quietTiles.getByRole("link", { name: /^(供应商贷项通知单|Supplier credit notes): / })).toHaveCount(0);
+  await expect(page.getByTestId("finance-overview-secondary").getByRole("link", { name: /^(有争议的应收款|Disputed receivables): 0,/ })).toBeVisible();
+  await expect(page.getByText("应付款不代表已付款。")).toHaveCount(0);
+  await page.getByTestId("finance-overview-cards").getByRole("link", { name: /^(待付款|To pay):/ }).click();
+  await expect(page).toHaveURL(/\/app\/finance\/payables\?status=outstanding$/);
+  await expect(page.getByTestId("operational-finance-payable-list")).toContainText("AP-BROWSER-EXACT");
+  await page.goto("/app/finance/overview");
+  // The currency card is one line now.
   await expect(page.getByTestId("finance-currency-limitation")).toContainText(
-    "多币种，未折算",
+    /金额按币种分别列示|Amounts per currency/,
   );
   await expect(page.getByTestId("finance-currency-limitation")).toContainText(
     "CNY",
@@ -456,12 +528,24 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
   // Match exceptions are reviewed on the bill they belong to.
   await page.goto("/app/procurement/bills");
   await page.getByRole("link", { name: "SUP-INV-BROWSER-VARIANCE", exact: true }).click();
-  await expect(page.getByTestId("supplier-invoice-match")).toContainText("price");
+  // The difference reads by its kind, never as the stored code; every one
+  // reviewed (above, through the API), the match no longer reads as an exception.
+  await expect(page.getByTestId("supplier-invoice-match")).toContainText(/Price difference|价格差异/);
+  await expect(page.getByTestId("supplier-invoice-match")).toContainText(/Variance approved|差异已批准/);
+  await expect(page.getByTestId("supplier-invoice-match")).not.toContainText(/line-level match exception/);
   await page.goto("/app/finance/payables");
-  await expect(page.getByTestId("operational-finance-payable-list")).toContainText(
-    "AP-BROWSER-EXACT",
-  );
+  const payables = page.getByTestId("operational-finance-payable-list");
+  await expect(payables).toContainText("AP-BROWSER-EXACT");
   await expect(page.getByText("应付款不代表已付款。")).toBeVisible();
+  // Payables have the receivables page's cards and Actions column.
+  await expect(payables.getByTestId("payable-metrics").getByRole("link")).toHaveCount(4);
+  await expect(payables.getByRole("columnheader", { name: /^(Actions|操作)$/ })).toBeVisible();
+  await expect(payables.getByTestId("payable-row").filter({ hasText: "AP-BROWSER-EXACT" }).getByRole("link", { name: /^(View|查看)$/ })).toBeVisible();
+  const payableSearch = payables.getByRole("searchbox", { name: /^(Search|搜索)$/ });
+  await payableSearch.fill("AP-BROWSER-VARIANCE");
+  await payableSearch.press("Enter");
+  await expect(payables.getByTestId("payable-row")).toHaveCount(1);
+  await expect(payables.getByTestId("payable-row")).toContainText("AP-BROWSER-VARIANCE");
   await page.goto("/app/finance/credits");
   await expect(page.getByTestId("operational-finance-credit-list")).toContainText(
     "SUP-CREDIT-BROWSER-001",
@@ -498,6 +582,17 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
     viewerPage.getByRole("link", { name: "New customer invoice" }),
   ).toHaveAttribute("aria-disabled", "true");
   await viewerPage.goto("/app/finance/overview");
+  // The viewer reads receivables and payables but not their amounts: the
+  // counts stay, each tile says its amount is hidden, and the aging bar
+  // counts invoices. No amount reaches the page.
+  const viewerLanding = viewerPage.getByTestId("operational-finance-landing");
+  const viewerOwed = viewerLanding.getByTestId("finance-overview-cards").getByRole("link", { name: /^(应收未收|Owed to us):/ });
+  await expect(viewerOwed).toContainText("3");
+  await expect(viewerOwed).toContainText(/当前角色无权查看金额|amount hidden for your role/);
+  await expect(viewerLanding.getByTestId("finance-aging-receivables")).toContainText(/当前角色无权查看金额|Amounts hidden for your role/);
+  await expect(viewerLanding.getByTestId("finance-aging-receivables-CNY-90_plus")).toContainText("2");
+  await expect(viewerLanding).not.toContainText("39.50");
+  await expect(viewerLanding).not.toContainText("25.00");
   const financeTabs = viewerPage.getByTestId("module-subnav");
   await expect(
     financeTabs.getByRole("link", { name: "Overview", exact: true }),
@@ -527,4 +622,57 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
   });
   expect(viewerWrite.status()).toBe(403);
   await viewerContext.close();
+});
+
+// A list longer than one page: the list card shows the server's total, the
+// cards show the server's counts over every record, and the pager asks the
+// server for the next page. Served by a stub, so 120 receivables need no seed.
+test("the receivables list shows the true total and pages 50 at a time", async ({ page, request }) => {
+  const manager = await login(request, "manager@example.com");
+  await session(page, manager);
+  const receivable = (index: number) => ({
+    id: `AR-STUB-${index}`,
+    obligationNumber: `AR-CI-STUB-${String(index).padStart(3, "0")}`,
+    customerInvoiceId: `CI-ID-STUB-${index}`,
+    customerInvoiceNumber: `CI-STUB-${String(index).padStart(3, "0")}`,
+    customerName: `Stub Customer ${index}`,
+    outstandingAmount: index < 10 ? "10.0000" : "0.0000",
+    currency: "GBP",
+    dueDate: index < 10 ? "2026-01-10T00:00:00.000Z" : "2025-12-01T00:00:00.000Z",
+    status: index < 10 ? "open" : "settled",
+    disputeStatus: "none",
+    settlementVerified: false,
+    availableActions: [],
+  });
+  const requested: URL[] = [];
+  await page.route((url) => url.pathname === "/api/finance/receivables", (route) => {
+    const url = new URL(route.request().url());
+    requested.push(url);
+    const pageNumber = Number(url.searchParams.get("page") || 1);
+    const items = Array.from({ length: pageNumber < 3 ? 50 : 20 }, (_, index) => receivable((pageNumber - 1) * 50 + index));
+    return route.fulfill({ json: { dataSource: "stub", page: pageNumber, pageSize: 50, total: 120, counts: { outstanding: 87, overdue: 52, disputed: 4, settled: 33 }, currencies: ["GBP"], items, capabilities: {} } });
+  });
+  await page.goto("/app/finance/receivables");
+  const receivables = page.getByTestId("receivables-workbench");
+  await expect(receivables.getByTestId("receivable-row")).toHaveCount(50);
+  await expect(receivables.getByTestId("receivable-list")).toContainText(/共 120 条，当前显示 50 条|120 total, 50 shown/);
+  const metrics = receivables.getByTestId("receivable-metrics");
+  await expect(metrics.getByRole("link", { name: /未结应收|Open receivables/ })).toContainText("87");
+  await expect(metrics.getByRole("link", { name: /已逾期|Overdue/ })).toContainText("52");
+  await expect(metrics.getByRole("link", { name: /已结清|Paid/ })).toContainText("33");
+  // The list asks for 50, overdue and open first.
+  expect(requested[0].searchParams.get("pageSize")).toBe("50");
+  expect(requested[0].searchParams.get("sort")).toBe("attention");
+  const pager = receivables.getByTestId("receivable-pager");
+  await expect(pager).toContainText(/第 1 \/ 3 页 · 共 120 条|Page 1 of 3 · 120 results/);
+  await pager.getByRole("button", { name: /^(下一页|Next)$/ }).click();
+  await expect(page).toHaveURL(/\/app\/finance\/receivables\?page=2$/);
+  await expect(receivables.getByTestId("receivable-row").first()).toContainText("CI-STUB-050");
+  await expect(pager).toContainText(/第 2 \/ 3 页|Page 2 of 3/);
+  expect(requested.at(-1)?.searchParams.get("page")).toBe("2");
+  // A filter starts again at page 1.
+  await receivables.getByRole("combobox", { name: /^(状态|Status)$/ }).selectOption("settled");
+  await expect(page).toHaveURL(/\/app\/finance\/receivables\?status=settled$/);
+  await expect.poll(() => requested.at(-1)?.searchParams.get("status")).toBe("settled");
+  expect(requested.at(-1)?.searchParams.get("page")).toBeNull();
 });

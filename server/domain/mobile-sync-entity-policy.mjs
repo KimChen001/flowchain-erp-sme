@@ -12,11 +12,20 @@ const decimal = (value) => {
   return `${signed < 0n ? "-" : ""}${absolute / 10_000n}.${String(absolute % 10_000n).padStart(4, "0")}`;
 };
 
+// A receipt, its lines and its evidence are visible on a device only to a
+// reader of every warehouse the receipt touches: the header's and each
+// line's, the rule the web receiving list uses (receiving-draft-command-
+// service.mjs listReceivingDocuments). A line and an attachment are read with
+// their receipt for this; a receipt recorded without any warehouse names none
+// and stays visible to receiving readers, as on the web.
+const RECEIPT_WITH_WAREHOUSES = { receivingDocument: { include: { lines: { select: { warehouseId: true } } } } };
+const receiptWarehouseIds = (receipt) => receipt ? [receipt.warehouseId, ...(receipt.lines || []).map((line) => line.warehouseId)] : null;
+
 const registry = {
   PurchaseOrder: { moduleKey: "procurement", capabilityId: "procurement", requiredReadPermission: "procurement.purchase_order.read", amountSensitive: true, partnerSensitive: true, priceSensitive: true, model: "purchaseOrder", include: { lines: true } },
   PurchaseOrderLine: { moduleKey: "procurement", capabilityId: "procurement", requiredReadPermission: "procurement.purchase_order.read", amountSensitive: true, partnerSensitive: true, priceSensitive: true, model: "purchaseOrderLine", parent: "purchaseOrder" },
-  ReceivingDocument: { moduleKey: "receiving", capabilityId: "receiving-posting", requiredReadPermission: "receiving.read", warehouseScoped: true, model: "receivingDocument", include: { lines: true } },
-  ReceivingLine: { moduleKey: "receiving", capabilityId: "receiving-posting", requiredReadPermission: "receiving.read", warehouseScoped: true, model: "receivingLine", parent: "receivingDocument" },
+  ReceivingDocument: { moduleKey: "receiving", capabilityId: "receiving-posting", requiredReadPermission: "receiving.read", warehouseScoped: true, model: "receivingDocument", include: { lines: true }, warehouseIds: (row) => receiptWarehouseIds(row) },
+  ReceivingLine: { moduleKey: "receiving", capabilityId: "receiving-posting", requiredReadPermission: "receiving.read", warehouseScoped: true, model: "receivingLine", parent: "receivingDocument", include: RECEIPT_WITH_WAREHOUSES, warehouseIds: (row) => receiptWarehouseIds(row.receivingDocument) },
   InventoryMovement: { moduleKey: "inventory", capabilityId: "inventory", requiredReadPermission: "inventory.balance.read", warehouseScoped: true, model: "inventoryMovement" },
   InventoryBalance: { moduleKey: "inventory", capabilityId: "inventory", requiredReadPermission: "inventory.balance.read", warehouseScoped: true, model: "inventoryBalance" },
   ReturnRequest: { moduleKey: "returns", capabilityId: "return-request", requiredReadPermission: "returns.request.read", model: "returnRequest" },
@@ -34,7 +43,7 @@ const registry = {
   AdvanceApplicationDocument: { moduleKey: "finance", capabilityId: "settlement-workflow", requiredReadPermission: "finance.advance.read", amountSensitive: true, model: "advanceApplicationDocument" },
   InternalTransferDocument: { moduleKey: "finance", capabilityId: "settlement-workflow", requiredReadPermission: "finance.internal_transfer.read", amountSensitive: true, model: "internalTransferDocument" },
   SettlementAttachment: { moduleKey: "finance", capabilityId: "settlement-workflow", requiredReadPermission: "finance.settlement_attachment.read", partnerSensitive: true, model: "settlementAttachment" },
-  ReceivingAttachment: { moduleKey: "receiving", capabilityId: "receiving-posting", requiredReadPermission: "receiving.read", warehouseScoped: true, model: "receivingAttachment" },
+  ReceivingAttachment: { moduleKey: "receiving", capabilityId: "receiving-posting", requiredReadPermission: "receiving.read", warehouseScoped: true, model: "receivingAttachment", include: RECEIPT_WITH_WAREHOUSES, warehouseIds: (row) => receiptWarehouseIds(row.receivingDocument) },
   BankStatementImportBatch: { moduleKey: "finance", capabilityId: "bank-statement-reconciliation", requiredReadPermission: "finance.bank_statement.read", amountSensitive: true, partnerSensitive: true, model: "bankStatementImportBatch", tombstonePolicy: "fail_closed_metadata" },
   BankStatementLine: { moduleKey: "finance", capabilityId: "bank-statement-reconciliation", requiredReadPermission: "finance.bank_statement.read", amountSensitive: true, partnerSensitive: true, model: "bankStatementLine", tombstonePolicy: "fail_closed_metadata" },
   BankReconciliationGroup: { moduleKey: "finance", capabilityId: "bank-statement-reconciliation", requiredReadPermission: "finance.bank_reconciliation.read", amountSensitive: true, partnerSensitive: true, model: "bankReconciliationGroup", tombstonePolicy: "fail_closed_metadata" },
@@ -51,6 +60,13 @@ const moduleEnabled = (tenant, moduleKey) => {
 };
 
 const visibleWarehouse = (actor, warehouseId) => !warehouseId || actor.allWarehouses || Boolean(actor.readWarehouseIds?.has?.(warehouseId));
+// An entity that names its warehouses through its receipt is hidden when the
+// receipt could not be read with it, never shown by default.
+const visibleWarehouses = (actor, row, policy) => {
+  if (!policy.warehouseIds) return visibleWarehouse(actor, entityWarehouse(row, policy));
+  const ids = policy.warehouseIds(row);
+  return Array.isArray(ids) && ids.map(text).every((warehouseId) => visibleWarehouse(actor, warehouseId));
+};
 const entityWarehouse = (row, policy) => text(row?.warehouseId || row?.warehouseKey || row?.locationWarehouseId || row?.receivingDocument?.warehouseId || row?.purchaseOrder?.warehouseId || row?.metadata?.warehouseId);
 const hasPermission = (actor, permission) => Boolean(actor?.permissionCodes?.has?.(permission));
 
@@ -140,6 +156,6 @@ export async function loadAuthorizedSyncProjection({ prisma, tenant, actor, enti
     const exceptionCount = (counts.get("exception") || 0) + await prisma.bankReconciliationException.count({ where: { tenantId: actor.tenantId, status: { in: ["open", "acknowledged"] }, severity: "blocking", group: { bankAllocations: { some: { bankStatementLine: { batchId: row.id } } } } } });
     row.mobileReconciliationCounts = { activeLineCount: grouped.reduce((total, item) => total + item._count._all, 0), unmatchedCount: counts.get("unmatched") || 0, partiallyMatchedCount: counts.get("partially_matched") || 0, matchedCount: counts.get("matched") || 0, exceptionCount };
   }
-  if (policy.warehouseScoped && !visibleWarehouse(actor, entityWarehouse(row, policy))) return null;
+  if (policy.warehouseScoped && !visibleWarehouses(actor, row, policy)) return null;
   return project(row, entityType, policy, actor);
 }
