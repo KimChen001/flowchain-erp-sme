@@ -5,6 +5,9 @@ import { expect, test, type APIRequestContext, type Page } from "@playwright/tes
 // step 1b): paste the supplier's answer, read the card, record the new date.
 // The reading is scripted on the server (FLOWCHAIN_SUPPLIER_REPLY_SCRIPTED,
 // set by scripts/run-product-recovery-playwright.mjs): no model is called.
+// The phase also requires the workspace's AI switch
+// (FLOWCHAIN_AI_WORKSPACE_OPT_IN=required), so switching it off in Settings
+// leaves the reply unread.
 // Runs on the product-recovery walkthrough data.
 
 const SCRIPTED = process.env.FLOWCHAIN_SUPPLIER_REPLY_SCRIPTED || "";
@@ -19,6 +22,16 @@ async function signIn(page: Page, request: APIRequestContext) {
     localStorage.setItem("flowchain:current-user", JSON.stringify(user));
   }, session);
   return { headers: { Authorization: `Bearer ${session.token}` } };
+}
+
+// The interface language, whatever the walkthrough admin chose: the page
+// reads it from /api/me/localization; locale and timezone stay the workspace's.
+async function useLanguage(page: Page, language: "en-US" | "zh-CN") {
+  await page.unroute("**/api/me/localization");
+  await page.route("**/api/me/localization", async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...(await response.json()), languagePreference: language, effectiveLanguage: language } });
+  });
 }
 
 async function setAi(request: APIRequestContext, auth: { headers: Record<string, string> }, on: boolean) {
@@ -56,6 +69,7 @@ test.describe("supplier replies on an issued order", () => {
   test("a pasted reply proposes the date it states, flags the price, hides the quoted chase, and records as proposed", async ({ page, request }) => {
     test.skip(!SCRIPTED, "needs FLOWCHAIN_SUPPLIER_REPLY_SCRIPTED (run-product-recovery-playwright.mjs)");
     const auth = await signIn(page, request);
+    await useLanguage(page, "en-US");
     await setAi(request, auth, true);
     try {
       const order = await issuedOrderWithOpenLine(request, auth);
@@ -97,6 +111,7 @@ test.describe("supplier replies on an issued order", () => {
 
   test("with AI off the reply is kept and the person enters the date beside it, in English and in Chinese", async ({ page, request }) => {
     const auth = await signIn(page, request);
+    await useLanguage(page, "en-US");
     await setAi(request, auth, false);
     const order = await issuedOrderWithOpenLine(request, auth);
     const { next } = await workspaceDays(request, auth, order.line.promisedDate);
@@ -121,10 +136,7 @@ test.describe("supplier replies on an issued order", () => {
     expect(after.lines.find((entry: OrderLine) => entry.id === order.line.id).promisedDate).toBe(next);
 
     // The same card in Chinese: its words translate, the supplier's stay as written.
-    await page.route("**/api/me/localization", async (route) => {
-      const response = await route.fetch();
-      await route.fulfill({ response, json: { ...(await response.json()), languagePreference: "zh-CN", effectiveLanguage: "zh-CN" } });
-    });
+    await useLanguage(page, "zh-CN");
     await page.reload();
     const chinese = page.getByTestId("supplier-replies");
     await expect(chinese).toContainText("供应商回复");

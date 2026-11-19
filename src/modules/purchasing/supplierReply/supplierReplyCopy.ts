@@ -6,6 +6,7 @@ export const SUPPLIER_REPLY_COPY = {
   // Where a reply is pasted.
   openFromToday: ["Got a reply? Paste it here", "收到回复了？粘贴到这里"],
   openFromOrder: ["Record supplier reply", "记录供应商回复"],
+  pasteAnother: ["Paste a newer reply", "粘贴更新的回复"],
   sectionTitle: ["Supplier replies", "供应商回复"],
   sectionNote: ["Paste the supplier's answer: FlowChain reads the new delivery dates for you to check and record. Nothing is sent to the supplier.", "粘贴供应商的回复：FlowChain 会读出新的交期，由你核对后记录。不会向供应商发送任何内容。"],
   pasteLabel: ["Supplier's reply", "供应商回复"],
@@ -44,7 +45,7 @@ export const SUPPLIER_REPLY_COPY = {
   alsoMentioned: ["Also mentioned, not recorded here:", "回复还提到以下内容，此处不记录："],
   openOrder: ["Open {po}", "打开 {po}"],
   instructionsIgnored: ["This reply contains text addressed to the system. It was not followed.", "这封回复包含针对系统的指令文字，系统没有执行。"],
-  supplierSaid: ["The supplier wrote", "供应商原话"],
+  reasonGiven: ["Reason given: ", "供应商说明的原因："],
   reasonNote: ["The reason recorded with each date is the supplier's sentence.", "每个交期记录的原因为供应商原话。"],
 
   // Needs you, nothing to record, outages (#363 §4.5, §4.9).
@@ -106,7 +107,7 @@ export const SUPPLIER_REPLY_COPY = {
 
   // After a decision.
   recorded: ["Recorded on {date}.", "已于 {date} 记录。"],
-  recordedEdited: ["Recorded on {date}, {n} edited.", "已于 {date} 记录，修改了 {n} 行。"],
+  recordedEdited: ["Recorded on {date}. Dates entered or changed by hand: {n}.", "已于 {date} 记录，其中手动填写或修改 {n} 行。"],
   notRecorded: ["Not recorded on {date}: {reason}.", "{date} 选择不记录：{reason}。"],
   superseded: ["A later reply replaced this one.", "已被之后的回复取代。"],
   setAside: ["Set aside until {date}.", "暂不处理，至 {date}。"],

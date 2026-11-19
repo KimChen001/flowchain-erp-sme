@@ -21,6 +21,8 @@ import type { SupplierReplyCardData, SupplierReplyDismissReason, SupplierReplyLi
 
 const BUTTON = { primary: `${listButtonClass.primary} !text-[12px]`, secondary: `${listButtonClass.secondary} !text-[12px]` };
 const DISMISS_REASONS: SupplierReplyDismissReason[] = ["wrong_reading", "supplier_will_confirm", "other"];
+// A reading of an ambiguous date, on the grey form line: white, and blue once picked.
+const readingClass = (picked: boolean) => `inline-flex h-7 items-center rounded-lg border px-2 text-[12px] font-medium disabled:opacity-60 ${picked ? "border-blue-500 bg-blue-50 text-blue-700" : "border-slate-200 bg-white text-slate-800 hover:bg-slate-100"}`;
 
 export const supplierReplyRoute = (route: string, orderId: string, replyId = "") =>
   route.replace(":id", encodeURIComponent(orderId)).replace(":replyId", encodeURIComponent(replyId));
@@ -103,10 +105,8 @@ export function SupplierReplyCard({ card, onChanged, refresh }: {
 
   return (
     <section className="rounded-lg border bg-white p-3 text-xs" data-testid="supplier-reply-card" data-state={card.state} data-reading={card.readingStatus}>
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="text-sm font-semibold" style={{ color: A.label }}>{t("title")}</span>
-        <span style={{ color: A.sub }}>· {card.purchaseOrderNumber}{card.supplierName ? ` · ${card.supplierName}` : ""} · {t("received", { date: day(card.receivedOn) })} · {t(card.source === "email" ? "emailed" : "pasted")}</span>
-      </div>
+      <div className="text-sm font-semibold" style={{ color: A.label }}>{t("title")}</div>
+      <div className="mt-0.5" style={{ color: A.sub }} data-testid="supplier-reply-meta">{[card.purchaseOrderNumber, card.supplierName, t("received", { date: day(card.receivedOn) }), t(card.source === "email" ? "emailed" : "pasted")].filter(Boolean).join(" · ")}</div>
 
       {card.instructionsIgnored ? <p className="mt-2 rounded-md bg-amber-50 px-2 py-1 text-amber-800" role="note" data-testid="supplier-reply-instructions-ignored">{t("instructionsIgnored")}</p> : null}
 
@@ -121,8 +121,8 @@ export function SupplierReplyCard({ card, onChanged, refresh }: {
 
       {/* The proposal: each line now and proposed, with the sentence it came from (#363 §4.6). */}
       {card.state === "proposed" && !editing && proposedLines.length ? (
-        <div className="mt-2 overflow-x-auto">
-          <table className="w-full min-w-[480px] text-xs" data-testid="supplier-reply-proposal">
+        <div className="mt-2">
+          <table className="w-full text-xs" data-testid="supplier-reply-proposal">
             <thead><tr style={{ color: A.sub }}><th className="py-1 pr-3 text-left font-medium">{t("line")}</th><th className="py-1 pr-3 text-left font-medium">{t("now")}</th><th className="py-1 text-left font-medium">{t("proposed")}</th></tr></thead>
             <tbody>
               {proposedLines.map((line, index) => (
@@ -138,6 +138,7 @@ export function SupplierReplyCard({ card, onChanged, refresh }: {
               ))}
             </tbody>
           </table>
+          {card.reason ? <p className="mt-1" data-testid="supplier-reply-reason"><span style={{ color: A.sub }}>{t("reasonGiven")}</span><span className="italic">“{card.reason}”</span></p> : null}
           <p className="mt-1 text-[11px]" style={{ color: A.sub }}>{t("reasonNote")}</p>
         </div>
       ) : null}
@@ -153,19 +154,19 @@ export function SupplierReplyCard({ card, onChanged, refresh }: {
                 <div key={lineId} className="rounded-md bg-slate-50 p-2" data-testid="supplier-reply-form-line" data-line={lineId}>
                   <div className="font-medium">{lineName(formLine)} <span className="font-normal" style={{ color: A.sub }}>· {t("left", { qty: qty(formLine.remaining, formLine.unit) })}</span></div>
                   <div style={{ color: A.sub }}>{t("now")}: {day(formLine.currentDate)}{late(formLine.overdueDays) ? <span className="text-red-700"> · {late(formLine.overdueDays)}</span> : null}</div>
-                  {line?.issue && line.outcome === "needs_you" ? <div className="text-amber-800">{t(`issue_${line.issue}` as SupplierReplyCopyKey)}</div> : null}
-                  {line?.quote && (line.dateKind === "vague" || line.outcome === "needs_you") ? <div className="italic" style={{ color: A.gray1 }}>{t("vagueSaid", { quote: line.quote })}</div> : null}
+                  {line?.issue && line.outcome === "needs_you" && !(line.readings?.length === 2) ? <div className="text-amber-800">{t(`issue_${line.issue}` as SupplierReplyCopyKey)}</div> : null}
+                  {line?.quote ? <div className="italic" style={{ color: A.gray1 }} data-testid="supplier-reply-form-quote">{t("vagueSaid", { quote: line.quote })}</div> : null}
                   {line?.readings?.length === 2 ? (
                     <div className="mt-1 flex flex-wrap items-center gap-1.5" data-testid="supplier-reply-readings">
-                      <span>{t("ambiguous")}</span>
-                      {line.readings.map((reading) => <button key={reading} type="button" disabled={!card.canDecide} className={BUTTON.secondary} aria-pressed={values[lineId] === reading} onClick={() => setValues({ ...values, [lineId]: reading })}>{t("useReading", { date: day(reading) })}</button>)}
+                      <span className="w-full">{t("ambiguous")}</span>
+                      {line.readings.map((reading) => <button key={reading} type="button" disabled={!card.canDecide} className={readingClass(values[lineId] === reading)} aria-pressed={values[lineId] === reading} onClick={() => setValues({ ...values, [lineId]: reading })}>{t("useReading", { date: day(reading) })}</button>)}
                     </div>
                   ) : null}
                   {lineExtras(line)}
                   {card.canDecide ? (
-                    <label className="mt-1 flex items-center gap-2">
+                    <label className="mt-1 flex items-center gap-2 text-xs font-normal">
                       <span>{t("promisedDate")}</span>
-                      <input type="date" aria-label={`${t("promisedDate")} · ${lineName(formLine)}`} className="rounded border px-1 py-0.5" value={values[lineId] || ""} onChange={(event) => setValues({ ...values, [lineId]: event.target.value })} />
+                      <input type="date" aria-label={`${t("promisedDate")} · ${lineName(formLine)}`} className="rounded border bg-white px-1 py-0.5 text-xs" value={values[lineId] || ""} onChange={(event) => setValues({ ...values, [lineId]: event.target.value })} />
                     </label>
                   ) : null}
                 </div>

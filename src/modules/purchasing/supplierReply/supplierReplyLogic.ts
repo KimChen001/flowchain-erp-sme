@@ -15,13 +15,19 @@ export const isOutage = (card: SupplierReplyCardData) => card.readingStatus !== 
 export const needsManualForm = (card: SupplierReplyCardData) => isOpenReply(card) && (isOutage(card) || card.state === "needs_you");
 
 // The supplier's sentences on the reply, marked where they occur. A quote is
-// found again after whitespace normalisation, as the server's check does.
+// found again after whitespace normalisation and regardless of case, as the
+// server's check finds it.
 export type ReplySegment = { text: string; marked: boolean };
 export function markQuotes(text: string, quotes: Array<string | null | undefined>): ReplySegment[] {
   const ranges: Array<[number, number]> = [];
   for (const quote of new Set(quotes.map((value) => String(value || "").trim()).filter(Boolean))) {
-    const pattern = quote.split(/\s+/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
-    for (const match of text.matchAll(new RegExp(pattern, "g"))) ranges.push([match.index!, match.index! + match[0].length]);
+    // Straight and curly quotes, and the dashes, count as one another.
+    const pattern = quote.split(/\s+/).map((part) => part
+      .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+      .replace(/['‘’‚′]/g, "['‘’‚′]")
+      .replace(/["“”„″]/g, "[\"“”„″]")
+      .replace(/[-–—]/g, "[-–—]")).join("\\s+");
+    for (const match of text.matchAll(new RegExp(pattern, "gi"))) ranges.push([match.index!, match.index! + match[0].length]);
   }
   ranges.sort((a, b) => a[0] - b[0]);
   const merged: Array<[number, number]> = [];

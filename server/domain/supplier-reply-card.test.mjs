@@ -50,6 +50,9 @@ test('the supplier\'s sentences are marked on the reply, across line breaks', ()
   // Nothing to mark: the reply as one plain segment; overlaps merge.
   assert.deepEqual(markQuotes('No date yet.', []), [{ text: 'No date yet.', marked: false }])
   assert.deepEqual(markQuotes('ship 28 Nov please', ['ship 28', '28 Nov']).filter((segment) => segment.marked).map((segment) => segment.text), ['ship 28 Nov'])
+  // As the server finds a quote: regardless of case, curly quotes or dashes.
+  assert.deepEqual(markQuotes('Small change: we now expect to ship on 03/12 — sorry.', ['We now expect to ship on 03/12 - sorry.']).filter((segment) => segment.marked).map((segment) => segment.text), ['we now expect to ship on 03/12 — sorry.'])
+  assert.deepEqual(markQuotes('It’s ready “Friday”.', ["It's ready \"Friday\"."]).filter((segment) => segment.marked).length, 1)
 })
 
 test('the manual form and Edit start from the proposal and send only real changes', () => {

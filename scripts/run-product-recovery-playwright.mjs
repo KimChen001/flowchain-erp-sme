@@ -59,9 +59,11 @@ await phase("english trial empty", "tests/browser/english-trial.spec.ts", {
 await phase("supplier performance", ["tests/browser/supplier-performance-english.spec.ts", "tests/browser/supplier-activity.spec.ts"]);
 // Supplier replies on an issued order (step 1b of the supplier reply design):
 // paste, the card, record. The reading is scripted on the server from a file
-// the spec writes, so no model is called.
+// the spec writes, so no model is called; the workspace's AI switch decides
+// whether a reply is read.
 await phase("supplier replies", "tests/browser/supplier-replies.spec.ts", {
   FLOWCHAIN_SUPPLIER_REPLY_SCRIPTED: join(tmpdir(), `flowchain-supplier-reply-${process.pid}.json`),
+  FLOWCHAIN_AI_WORKSPACE_OPT_IN: "required",
 });
 // The PO document: printed alone, labels in the document language, figures unchanged.
 await phase("po document", "tests/browser/purchase-order-document.spec.ts");

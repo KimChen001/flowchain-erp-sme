@@ -53,6 +53,8 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
   const [receivedOn, setReceivedOn] = useState("");
   const [busy, setBusy] = useState(false);
   const [showEarlier, setShowEarlier] = useState(false);
+  // Today: the box opens again over an open card only on request.
+  const [pasteAgain, setPasteAgain] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -77,6 +79,7 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
       setText("");
       setReceivedOn("");
       if (entry === "order") setOpen(false);
+      setPasteAgain(false);
       // A new reply replaces an open one; the list says so on reload.
       await load();
       if (!supplierReplyCardSchema.safeParse(result.reply).success) return;
@@ -94,7 +97,8 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
 
   const list = replies || [];
   const length = text.length;
-  const pasteForm = canPaste && open ? (
+  const formShown = (current: SupplierReplyCardData | null) => canPaste && open && (entry === "order" || !current || pasteAgain);
+  const pasteForm = (current: SupplierReplyCardData | null) => formShown(current) ? (
     <div className="mt-2 space-y-2 rounded-md bg-slate-50 p-2 text-xs" data-testid="supplier-reply-paste">
       <label className="block">
         <span className="font-medium">{t("pasteLabel")}</span>
@@ -108,7 +112,7 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
         <span style={{ color: length > SUPPLIER_REPLY_TEXT_LIMIT ? A.red : A.sub }} data-testid="supplier-reply-count">{t("characters", { n: length.toLocaleString() })}</span>
         <div className="ml-auto flex gap-2">
           <button type="button" disabled={busy || !text.trim() || length > SUPPLIER_REPLY_TEXT_LIMIT} className={BUTTON.primary} data-testid="supplier-reply-read" onClick={() => void paste()}>{busy ? t("reading") : t("read")}</button>
-          <button type="button" className={BUTTON.secondary} onClick={() => setOpen(false)}>{t("cancel")}</button>
+          <button type="button" className={BUTTON.secondary} onClick={() => (entry === "today" && current ? setPasteAgain(false) : setOpen(false))}>{t("cancel")}</button>
         </div>
       </div>
       {length > SUPPLIER_REPLY_TEXT_LIMIT ? <p style={{ color: A.red }} role="alert">{t("tooLong")}</p> : null}
@@ -123,9 +127,10 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
         <button type="button" className="flex items-center gap-1 text-xs font-medium text-blue-600" aria-expanded={open} data-testid="supplier-reply-open" onClick={() => setOpen(!open)}>
           {open ? <ChevronDown size={13} aria-hidden /> : <ChevronRight size={13} aria-hidden />}{t("openFromToday")}
         </button>
-        {pasteForm}
+        {pasteForm(current)}
         {open && loadFailed ? <p className="mt-1 text-xs" style={{ color: A.sub }}>{t("loadFailed")}</p> : null}
         {open && current ? <div className="mt-2"><SupplierReplyCard key={`${current.id}:${current.orderVersion}:${current.state}`} card={current} onChanged={changed} refresh={load} /></div> : null}
+        {open && current && !pasteAgain ? <button type="button" className="mt-1 text-xs font-medium text-blue-600" data-testid="supplier-reply-paste-again" onClick={() => setPasteAgain(true)}>{t("pasteAnother")}</button> : null}
       </div>
     );
   }
@@ -143,7 +148,7 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
         </div>
         {canPaste && !open ? <button type="button" className={BUTTON.secondary} data-testid="supplier-reply-open" onClick={() => setOpen(true)}>{t("openFromOrder")}</button> : null}
       </div>
-      {pasteForm}
+      {pasteForm(latest || null)}
       {loadFailed ? <p className="mt-2 text-xs" style={{ color: A.sub }}>{t("loadFailed")}</p> : null}
       {replies && !list.length && !open ? <p className="mt-2 text-xs" style={{ color: A.sub }}>{t("none")}</p> : null}
       {latest ? <div className="mt-3"><SupplierReplyCard key={`${latest.id}:${latest.orderVersion}:${latest.state}`} card={latest} onChanged={changed} refresh={load} /></div> : null}
