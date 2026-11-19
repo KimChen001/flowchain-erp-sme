@@ -144,7 +144,7 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
     const tenant = await client.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } })
     return tenantCalendarDay(now(), tenant?.timezone || undefined)
   }
-  const readOrder = (orderId, context, access) => procurement.readPurchaseOrder(orderId, context, { includePrices: false, includePartner: access.partner })
+  const readOrder = (orderId, context, access) => procurement.readPurchaseOrder(orderId, context, { includePrices: false, includePartner: true })
 
   // The card for one reader: the stored check joined with the order as this
   // reader reads it now.
@@ -166,7 +166,9 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
       purchaseOrderId: order.id,
       purchaseOrderNumber: text(order.number) || order.id,
       orderVersion: Number(order.version) || 0,
-      supplierName: access.partner ? text(order.supplierSnapshot?.supplierName) || null : null,
+      // As the order shows it: a purchase order's supplier is not hidden by
+      // role (procurement-read-access.mjs hides invoice suppliers only).
+      supplierName: text(order.supplierSnapshot?.supplierName) || null,
       source: row.source,
       receivedOn: row.receivedOn,
       createdAt: new Date(row.createdAt).toISOString(),

@@ -242,3 +242,26 @@ test('the check reads the cleaned reply: a quote from our own quoted chase is no
   assert.ok(quoteFound(zh.text, '12月3日发货'))
   assert.equal(check(zh.text, reading([{ line: 'L1', date: '2026-12-03', quote: '１２月３日发货', dateKind: 'stated' }])).lines[0].proposedDate, '2026-12-03')
 })
+
+test('a refused date, with any verb after the refusal, is not proposed; the new date is', () => {
+  const pick = (quote, date) => check(quote, reading([{ line: 'L1', date, quote, dateKind: 'stated' }])).lines[0]
+  for (const quote of [
+    'We cannot ship on 28 Nov; earliest is 5 Dec.',
+    "We can't deliver by 28 Nov, earliest 5 Dec.",
+    'We can\u2019t deliver by 28 Nov, earliest 5 Dec.',
+    "We won't be able to deliver on 28 Nov but can on 5 Dec.",
+    'We will not ship 28 Nov; 5 Dec instead.',
+    'Unable to ship 28 Nov, so 5 Dec.',
+    'We are not able to ship 28 Nov; 5 Dec is the date.',
+    'We can not make 28 Nov. 5 Dec works.',
+  ]) {
+    assert.deepEqual([pick(quote, '2026-11-28').outcome, pick(quote, '2026-11-28').issue], ['needs_you', 'several_dates'], quote)
+    assert.deepEqual([pick(quote, '2026-12-05').outcome, pick(quote, '2026-12-05').proposedDate], ['proposed', '2026-12-05'], quote)
+  }
+  // A deadline is not a refusal: "not later than" keeps its date.
+  assert.equal(pick('We missed 28 Nov but will ship not later than 5 Dec.', '2026-12-05').outcome, 'proposed')
+  // Chinese: 不能 / 无法 before the date.
+  assert.equal(pick('11月28日不能发货，最早12月5日。', '2026-11-28').issue, 'several_dates')
+  assert.equal(pick('无法在11月28日发货，12月5日可以。', '2026-11-28').issue, 'several_dates')
+  assert.equal(pick('无法在11月28日发货，12月5日可以。', '2026-12-05').outcome, 'proposed')
+})
