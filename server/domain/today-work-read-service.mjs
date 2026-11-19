@@ -2,9 +2,17 @@ import { contractsEnabled } from './contract-policy.mjs'
 import { readContractWork } from './contract-read-service.mjs'
 import { firstRunSetupOptions, readFirstRunSetupCounts } from './first-run-setup.mjs'
 import { overdueReceivableWhere } from './operational-finance-o2c-read-service.mjs'
-import { createReorderListReadService, stockTruncatedSubjects } from './reorder-list-read-service.mjs'
+import { overduePayableWhere } from './operational-finance-read-service.mjs'
+import { allocationTruncatedSubjects, createReorderListReadService } from './reorder-list-read-service.mjs'
 import { buildRuntimeInventoryAllocation } from './runtime-inventory-allocation-read-model.mjs'
+import { billNextStep } from './today-work.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
+import { procurementDocumentNumber } from '../../shared/document-numbering.mjs'
+import { PURCHASE_ORDER_STATUS } from './procurement-status-authority.mjs'
+
+// Orders whose price is evidence of the supplier's current price: ones the
+// business committed to, not drafts, rejected or cancelled ones.
+const PRICE_EVIDENCE_ORDER_STATUSES = [PURCHASE_ORDER_STATUS.APPROVED, PURCHASE_ORDER_STATUS.ISSUED, PURCHASE_ORDER_STATUS.PARTIALLY_RECEIVED, PURCHASE_ORDER_STATUS.FULLY_RECEIVED, PURCHASE_ORDER_STATUS.CLOSED, 'received']
 
 // The records Today needs beyond the business read context, each read as its
 // own page reads it and only for a reader who may open that page:
@@ -23,6 +31,9 @@ import { getPrismaClient } from '../persistence/prisma-client.mjs'
 //                     (overdueReceivableWhere) at the start of the workspace
 //                     day, so a receivable due today is not overdue;
 //                     finance.receivable.read.
+//   payables          overdue by the payables list's rule
+//                     (overduePayableWhere), the same way; finance.payable.read
+//                     (design audit L7-12 / L7-18).
 //   contracts         with the contracts capability on and
 //                     contracts.contract.read: active contracts whose notice
 //                     deadline or end date is inside their reminder window,
@@ -32,6 +43,11 @@ import { getPrismaClient } from '../persistence/prisma-client.mjs'
 //   setup counts      items, suppliers, customers, items with stock on hand,
 //                     active users and pending invitations, for the first-day
 //                     checklist.
+//   bill payments     the payable status of each approved supplier invoice in
+//                     the business read context, so Recent documents shows a
+//                     paid invoice as Paid, as the supplier invoice list does
+//                     (billPaymentStatus); with finance.supplier_invoice.read,
+//                     the permission that lists the invoice at all.
 //
 // Amounts need finance.amounts.read and customer names
 // finance.partner_snapshot.read, as on the finance pages; a hidden value is
@@ -42,7 +58,7 @@ const FINANCE_LIMIT = 100
 const decimal = (value) => (value === null || value === undefined ? null : String(value))
 const iso = (value) => (value instanceof Date ? value.toISOString() : value ? String(value) : null)
 
-async function databaseClient(ctx) {
+export async function databaseClient(ctx) {
   if (ctx.homeOverviewPrisma) return ctx.homeOverviewPrisma
   if (ctx.inventoryPrisma) return ctx.inventoryPrisma
   const env = ctx.env || process.env
@@ -58,12 +74,16 @@ function customerInvoiceRow(row, access) {
     totalAmount: access.amounts ? decimal(row.totalAmount) : null,
     currency: row.currency,
     status: row.status,
+    // The receivable's status, so Recent documents shows an issued invoice
+    // as To be paid, Partly paid or Paid (customerInvoicePaymentStatus in
+    // business-read-context-service.mjs reads row.receivableStatus).
+    receivableStatus: row.receivableObligation?.status ?? null,
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
   }
 }
 
-const CUSTOMER_INVOICE_SELECT = { id: true, invoiceNumber: true, customerNameSnapshot: true, invoiceDate: true, totalAmount: true, currency: true, status: true, createdAt: true, updatedAt: true }
+const CUSTOMER_INVOICE_SELECT = { id: true, invoiceNumber: true, customerNameSnapshot: true, invoiceDate: true, totalAmount: true, currency: true, status: true, createdAt: true, updatedAt: true, receivableObligation: { select: { status: true } } }
 
 export async function readTodayWorkSources(ctx, { access, rawContext, now, today, timeZone }) {
   const tenantId = ctx.identity?.tenantId
@@ -105,7 +125,8 @@ export async function readTodayWorkSources(ctx, { access, rawContext, now, today
       timeZone,
       allocationRows: allocation.availability,
       showPurchaseOrders: Boolean(access.collections.purchaseOrders),
-      truncatedSubjects: stockTruncatedSubjects(rawContext.truncatedSubjects),
+      showPurchaseRequests: Boolean(access.collections.purchaseRequests),
+      truncatedSubjects: allocationTruncatedSubjects(rawContext),
     })).then((reorder) => { sources.reorder = reorder }))
   }
   if (home.customerInvoices) {
@@ -120,8 +141,12 @@ export async function readTodayWorkSources(ctx, { access, rawContext, now, today
   }
   if (home.receivables) {
     reads.push(attempt('receivables', async () => {
+      // The finance landing's own call: the instant and the workspace
+      // timezone. A workspace day turned into 00:00 UTC and read in the
+      // default New York timezone fell a day early, so Today left out what
+      // fell due yesterday (design audit L6-01).
       const rows = await prisma.receivableObligation.findMany({
-        where: { tenantId, ...overdueReceivableWhere(new Date(`${today}T00:00:00.000Z`)) },
+        where: { tenantId, ...overdueReceivableWhere(now, timeZone) },
         include: { customerInvoice: { select: { id: true, invoiceNumber: true, customerNameSnapshot: true } } },
         orderBy: [{ dueDate: 'asc' }, { id: 'asc' }],
         take: FINANCE_LIMIT + 1,
@@ -143,12 +168,107 @@ export async function readTodayWorkSources(ctx, { access, rawContext, now, today
       }))
     }))
   }
+  if (home.payables) {
+    reads.push(attempt('payables', async () => {
+      // The payables list's own overdue rule, on the instant and the
+      // workspace timezone, as the receivables above.
+      const rows = await prisma.payableObligation.findMany({
+        where: { tenantId, ...overduePayableWhere(now, timeZone) },
+        include: { supplierInvoice: { select: { id: true, invoiceNumber: true, supplierName: true } } },
+        orderBy: [{ dueDate: 'asc' }, { id: 'asc' }],
+        take: FINANCE_LIMIT + 1,
+      })
+      sources.payables = truncated(rows, 'payables').map((row) => ({
+        id: row.id,
+        obligationNumber: row.obligationNumber,
+        supplierInvoiceId: row.supplierInvoiceId,
+        supplierInvoiceNumber: row.supplierInvoice?.invoiceNumber ?? null,
+        supplierName: access.partner ? row.supplierInvoice?.supplierName ?? null : null,
+        dueDate: iso(row.dueDate),
+        outstandingAmount: access.amounts ? decimal(row.outstandingAmount) : null,
+        amountHidden: !access.amounts,
+        currency: row.currency,
+        status: row.status,
+      }))
+    }))
+  }
   const contracts = home.contracts || {}
   if (contractsEnabled(ctx.env || process.env) && contracts.read && (contracts.manage || contracts.userId)) {
     reads.push(attempt('contracts', async () => {
       const work = await readContractWork(prisma, { tenantId, today, ownerId: contracts.manage ? null : contracts.userId })
       sources.contracts = work.contracts
       if (work.truncated) limitations.push('truncated:contracts')
+    }))
+  }
+  // Only for display: when it cannot be read, an approved invoice reads
+  // "Approved" as before, and nothing is said about it.
+  const approvedBills = access.collections.supplierInvoices
+    ? [...new Set((rawContext?.supplierInvoices || []).filter((row) => row?.status === 'approved' && row.id).map((row) => String(row.id)))]
+    : []
+  if (approvedBills.length) {
+    reads.push((async () => {
+      try {
+        const rows = await prisma.payableObligation.findMany({ where: { tenantId, supplierInvoiceId: { in: approvedBills } }, select: { supplierInvoiceId: true, status: true } })
+        sources.billPayableStatuses = Object.fromEntries(rows.map((row) => [row.supplierInvoiceId, row.status]))
+      } catch { /* shown as approved */ }
+    })())
+  }
+  // Invoices the three-way match held: their blocking differences, the match
+  // lines, the order each bills and this supplier's order prices for the same
+  // SKUs, for the step Today drafts for each (invoice-exception-draft.mjs).
+  // Prices only for a reader who may see amounts.
+  // An exception invoice whose every difference was approved waits for its
+  // own approval instead (billNextStep), and needs no draft.
+  // The oldest first, as Today shows them, and at most FINANCE_LIMIT: past
+  // it the rest get no prepared step, and Today says so (design audit
+  // 2026-11-15, V-C-03: the newest 100 were read, so the oldest cards Today
+  // showed first had none, and nothing said why).
+  const heldRows = access.collections.supplierInvoices
+    ? [...new Map((rawContext?.supplierInvoices || []).filter((row) => row?.id && billNextStep(row) === 'bill_exception').map((row) => [String(row.id), row])).values()]
+      .sort((a, b) => String(a.invoiceDate || a.createdAt || '').localeCompare(String(b.invoiceDate || b.createdAt || '')) || String(a.id).localeCompare(String(b.id)))
+    : []
+  if (heldRows.length > FINANCE_LIMIT) limitations.push('truncated:invoice_exceptions')
+  const heldBills = heldRows.slice(0, FINANCE_LIMIT).map((row) => String(row.id))
+  if (heldBills.length) {
+    reads.push(attempt('invoice_exceptions', async () => {
+      const [invoices, exceptions] = await Promise.all([
+        prisma.supplierInvoice.findMany({ where: { tenantId, id: { in: heldBills } }, select: { id: true, invoiceNumber: true, supplierId: true, supplierName: true, relatedPoId: true, currency: true } }),
+        prisma.financeMatchException.findMany({
+          where: { tenantId, supplierInvoiceId: { in: heldBills }, status: { in: ['open', 'rejected'] } },
+          select: { id: true, matchLineId: true, supplierInvoiceId: true, exceptionType: true, status: true, expectedValue: true, actualValue: true, varianceValue: true },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        }),
+      ])
+      const lineIds = [...new Set(exceptions.map((row) => row.matchLineId).filter(Boolean))]
+      const orderIds = [...new Set(invoices.map((row) => row.relatedPoId).filter(Boolean))]
+      const supplierIds = [...new Set(invoices.map((row) => row.supplierId).filter(Boolean))]
+      const [lines, orders] = await Promise.all([
+        lineIds.length ? prisma.threeWayMatchLine.findMany({ where: { id: { in: lineIds } }, select: { id: true, sku: true, unit: true, orderedQuantity: true, receivedQuantity: true, previouslyInvoicedQuantity: true, invoiceQuantity: true, poUnitPrice: true, invoiceUnitPrice: true } }) : [],
+        orderIds.length ? prisma.purchaseOrder.findMany({ where: { tenantId, id: { in: orderIds } }, select: { id: true, number: true, metadata: true, status: true, createdAt: true } }) : [],
+      ])
+      const skus = [...new Set(lines.map((row) => row.sku).filter(Boolean))]
+      // Evidence that the supplier's price moved: lines of orders the
+      // business committed to (approved, issued or received), the newest
+      // first; the draft takes only those dated after the invoice's order
+      // (design audit L11-08).
+      const orderLines = access.amounts && skus.length && supplierIds.length
+        ? await prisma.purchaseOrderLine.findMany({
+          where: { sku: { in: skus }, purchaseOrder: { is: { tenantId, supplierId: { in: supplierIds }, status: { in: PRICE_EVIDENCE_ORDER_STATUSES } } } },
+          select: { sku: true, unitPrice: true, purchaseOrder: { select: { id: true, number: true, metadata: true, supplierId: true, createdAt: true } } },
+          orderBy: [{ purchaseOrder: { createdAt: 'desc' } }, { id: 'asc' }],
+          take: 2000,
+        })
+        : []
+      const numberOf = (order) => (order ? procurementDocumentNumber(order) : null)
+      const ordersById = new Map(orders.map((order) => [order.id, order]))
+      const hidden = (value) => (access.amounts ? decimal(value) : null)
+      sources.invoiceExceptions = {
+        amountsVisible: Boolean(access.amounts),
+        invoices: invoices.map((row) => ({ id: row.id, invoiceNumber: row.invoiceNumber || row.id, supplierId: row.supplierId, supplierName: row.supplierName, orderId: row.relatedPoId, orderNumber: numberOf(ordersById.get(row.relatedPoId)) || row.relatedPoId || null, orderStatus: ordersById.get(row.relatedPoId)?.status || null, orderDate: iso(ordersById.get(row.relatedPoId)?.createdAt), currency: row.currency })),
+        exceptions: exceptions.map((row) => ({ ...row, expectedValue: row.exceptionType === 'quantity' ? decimal(row.expectedValue) : hidden(row.expectedValue), actualValue: row.exceptionType === 'quantity' ? decimal(row.actualValue) : hidden(row.actualValue), varianceValue: row.exceptionType === 'quantity' ? decimal(row.varianceValue) : hidden(row.varianceValue) })),
+        lines: Object.fromEntries(lines.map((row) => [row.id, { sku: row.sku, unit: row.unit, orderedQuantity: decimal(row.orderedQuantity), receivedQuantity: decimal(row.receivedQuantity), previouslyInvoicedQuantity: decimal(row.previouslyInvoicedQuantity), invoiceQuantity: decimal(row.invoiceQuantity), poUnitPrice: hidden(row.poUnitPrice), invoiceUnitPrice: hidden(row.invoiceUnitPrice) }])),
+        orderPrices: orderLines.map((row) => ({ sku: row.sku, unitPrice: decimal(row.unitPrice), orderId: row.purchaseOrder?.id || null, orderNumber: numberOf(row.purchaseOrder), supplierId: row.purchaseOrder?.supplierId || null, orderDate: iso(row.purchaseOrder?.createdAt) })),
+      }
     }))
   }
   // The same counts and options the assistant's setup_status reads (first-run-setup.mjs).
@@ -173,6 +293,7 @@ export function todayHiddenWork(access, env = process.env) {
     ...(access.collections.salesOrders ? [] : ['sales_orders']),
     ...(home.customerInvoices ? [] : ['customer_invoices']),
     ...(home.receivables ? [] : ['receivables']),
+    ...(home.payables ? [] : ['payables']),
     ...(contractsEnabled(env) && !home.contracts?.read ? ['contracts'] : []),
   ]
 }

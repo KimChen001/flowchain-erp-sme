@@ -87,7 +87,9 @@ test('reports API and KPI UI preserve null and present data insufficiency withou
   const metricDisplay = await readFile(join(root, 'src/modules/reports/metricDisplay.ts'), 'utf8')
   assert.match(metricDisplay, /import \{ formatMetric \} from '\.\/currencyFormatting\.mjs'/)
   assert.match(metricDisplay, /if \(item\.dataStatus === 'incomplete'\) return '数据不足'/)
-  assert.match(dashboard, /import \{ metricCurrency, metricDisplayValue \} from "\.\/metricDisplay"/)
+  assert.match(dashboard, /import \{ metricCurrency, metricDisplayValue, metricStateLabel \} from "\.\/metricDisplay"/)
+  // A KPI without a figure shows a dash in the figure's place, not its words.
+  assert.match(dashboard, /noFigure \? "—" : shown/)
   assert.match(dashboard, /item\.dataStatus === "incomplete" \? copy\([^;]*"库存数据不完整"\)/)
   // A chart value that is not recorded stays empty in the visual and its data table; it never becomes 0.
   const { chartTable } = await import('../../src/modules/reports/charts/chartTable.ts')

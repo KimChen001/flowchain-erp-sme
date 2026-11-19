@@ -1,6 +1,7 @@
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { resolveProvisionedActor } from '../domain/pilot-identity.mjs'
-import { createKnowledgeService, answerKnowledgeQuery, knowledgeResponse, KnowledgeError } from '../domain/ai-knowledge-service.mjs'
+import { createKnowledgeService, answerKnowledgeQuery, canManageKnowledge, knowledgeResponse, KnowledgeError } from '../domain/ai-knowledge-service.mjs'
+import { createAssistantV2RateLimiter } from '../domain/ai-assistant-v2-controls.mjs'
 import { KNOWLEDGE_FILE_LIMITS, parseKnowledgeFile } from '../domain/ai-knowledge-file-parser.mjs'
 import { classifyQueryScope } from '../domain/ai-query-scope.mjs'
 import { knowledgeProviderEnv } from '../domain/ai-knowledge-config.mjs'
@@ -12,6 +13,11 @@ async function context(ctx) {
   const env = knowledgeProviderEnv(ctx.env || process.env)
   return { actor, env, service: createKnowledgeService(prisma, { env }) }
 }
+
+// File imports per user in a sliding window, in this process's memory, with
+// the same limiter the assistant uses for questions.
+export const KNOWLEDGE_IMPORT_RATE_LIMIT = Object.freeze({ questions: 20, windowMs: 10 * 60 * 1000 })
+const knowledgeImportLimiter = createAssistantV2RateLimiter({ limits: KNOWLEDGE_IMPORT_RATE_LIMIT })
 
 export async function handleKnowledgeRoute(ctx) {
   const prefix = '/api/ai-runtime/knowledge'
@@ -26,6 +32,10 @@ export async function handleKnowledgeRoute(ctx) {
     if (ctx.req.method === 'GET' && !importing) result = id ? await service.get(actor, id) : await service.list(actor)
     else if (ctx.req.method === 'POST' && reindex && id) result = await service.reindex(actor, id)
     else if (ctx.req.method === 'POST' && importing) {
+      // Who may import, and how often, is checked before the upload is read
+      // or parsed (design audit L10-04).
+      if (!canManageKnowledge(actor)) throw new KnowledgeError('KNOWLEDGE_MANAGE_DENIED', 'Workspace administrator access is required.', 403)
+      if (!(ctx.knowledgeImportLimiter || knowledgeImportLimiter).allow(`${actor.tenantId}:${actor.user?.id || actor.userId}`)) throw new KnowledgeError('KNOWLEDGE_IMPORT_RATE_LIMITED', 'Too many files were imported in the last 10 minutes. Try again later.', 429)
       const body = await ctx.readBody(ctx.req, { maxBytes: bodyLimitForFile(KNOWLEDGE_FILE_LIMITS.maximumBytes) })
       const extracted = await parseKnowledgeFile(body)
       result = await service.add(actor, { ...body, title: extracted.title, content: extracted.content })

@@ -1,15 +1,16 @@
-import { CHART_KINDS, CHOICE_PROMPTS, NEW_SUPPLIER_LINK, RECORD_ACTION_TYPES, RECORD_EMPHASES, SETUP_FORM_ROWS, SETUP_STEP_IDS, refSchema, safeParsePartProps } from '../../shared/assistant-protocol.mjs'
+import { CHART_KINDS, CHOICE_PROMPTS, DECISION_CARDS_MAX, NEW_SUPPLIER_LINK, RECORD_ACTION_TYPES, RECORD_EMPHASES, SETUP_FORM_ROWS, SETUP_STEP_IDS, refSchema, safeParsePartProps } from '../../shared/assistant-protocol.mjs'
 import { RECORD_ACTION_RULES, recordActionsNow } from '../../shared/assistant-record-actions.mjs'
 import { PURCHASE_SUGGESTION_SOURCES, suggestNeedByDate } from '../../shared/purchase-suggestion.mjs'
 import { can } from '../auth/authorization-service.mjs'
-import { mapPurchaseRequest } from '../repositories/db-procurement-read-repository.mjs'
 import { PURCHASE_REQUEST_PERMISSIONS } from '../services/procurement-request-command-service.mjs'
 import { PURCHASE_ORDER_COMMANDS } from './procurement-db-command-service.mjs'
-import { PROCUREMENT_PATH_POLICY, PURCHASE_ORDER_STATUS, PURCHASE_REQUEST_STATUS, RFQ_STATUS, recommendProcurementPath } from './procurement-workflow.mjs'
+import { PURCHASE_ORDER_STATUS, PURCHASE_REQUEST_STATUS, RFQ_STATUS } from './procurement-workflow.mjs'
 import { AI_READ_TOOL_COLUMNS } from './ai-read-tool-runner.mjs'
 import { aiSkillVisibility } from './ai-skill-registry.mjs'
+import { checkAiModelFirstGrounding } from './ai-model-first-grounding.mjs'
 import { aiSkillUnitLabel } from './ai-skill-copy.mjs'
 import { findPaymentTerm } from './standard-payment-terms.mjs'
+import { approvalAuthorIds, approverStanding, mayApprove } from './self-approval.mjs'
 
 // The UI tools of assistant v2 (docs/ai-assistant-v2-design.md §3.6, §4, §4.1,
 // §5.2). The model never writes a figure: it names a data tool result of this
@@ -152,6 +153,7 @@ function sourceOf(ctx, reference) {
 // otherwise the result key in snake case ("inFull.percent" -> in_full_percent).
 const CODE_ALIASES = Object.freeze({
   orderNumber: 'order', overdueDays: 'days_overdue', remaining: 'remaining_quantity', itemName: 'item', request: 'purchase_request',
+  accepted: 'received', shipment: 'document_number', shipped: 'date',
   incomingOnPurchaseOrders: 'incoming', availableToPromise: 'atp', withoutTheseLines: 'atp_without_late', sharePercent: 'share', spendClass: 'abc_class',
   'onTime.percent': 'on_time_rate', 'item.sku': 'sku', 'item.name': 'item', 'item.unit': 'unit', 'suggestedQuantity.value': 'suggested_quantity',
   'suggestedQuantity.source': 'suggested_quantity_source', 'supplier.name': 'supplier', 'needByDate.value': 'need_by_date', 'estimatedUnitPrice.value': 'unit_price',
@@ -182,6 +184,9 @@ const MONEY_COLUMNS = Object.freeze({
   optimize_order_plan: ['spend', 'holdingCost', 'shortageCost', 'expectedCost', 'costAboveOptimal', 'orderValue', 'minimumOrderValue', 'overBudgetAmount'],
   attention_list: ['details.variance'],
   item_suppliers: ['referencePrice'],
+  supplier_payables: ['outstanding', 'owed', 'overdue', 'dueIn7Days', 'value'],
+  cash_movements: ['receivedFromCustomers', 'paidToSuppliers', 'net'],
+  gross_profit: ['revenue', 'cost', 'grossProfit'],
 })
 const QUANTITY_COLUMNS = new Set([
   'ordered', 'received', 'remaining', 'onHand', 'reserved', 'available', 'openSalesDemand', 'incomingOnPurchaseOrders', 'availableToPromise', 'shortage',
@@ -809,12 +814,25 @@ function formRow(row, output, { named, line, scope }) {
   // the server's, like any suggestion. That plan already counted the open
   // orders and requests, so they do not mark its line as covered.
   const fromPlan = isNumber(line?.quantity) && line.quantity > 0 && scope.orderPlan?.get(fold(row.item.sku)) === line.quantity
+  // The supplier's minimum order is a limit the code keeps, not the model
+  // (owner, 2026-11-11: "Order 30 cakestands" made a 30 pcs form against a
+  // minimum of 60, and half the answers never said so). A quantity the user
+  // named below it starts at the minimum, and the form shows what they asked
+  // for; they can change it back. Another supplier the user picked has its
+  // own terms, which this row does not hold.
+  const otherSupplier = supplier?.source === 'user_named' && (!chosen || supplier.id !== chosen.id)
+  const minimum = isNumber(row.minimumOrderQuantity) && row.minimumOrderQuantity > 0 && !otherSupplier ? row.minimumOrderQuantity : null
+  const asked = named && isNumber(line?.quantity) ? line.quantity : null
+  const quantity = fromPlan ? { value: line.quantity, source: 'order_plan' }
+    : asked !== null && minimum !== null && asked < minimum ? { value: minimum, source: 'user_named_raised_to_moq', minimum, requested: asked }
+      : asked !== null ? { value: asked, source: 'user_named' }
+        : suggestedQuantity(row)
   return {
     item: { id: text(row.item.id) || row.ref.id, sku: row.item.sku, name: text(row.item.name), unit: row.item.unit ?? null },
     onHand: row.onHand ?? null,
     safetyStock: row.safetyStock ?? null,
     reorderPoint: row.reorderPoint ?? null,
-    suggestedQuantity: fromPlan ? { value: line.quantity, source: 'order_plan' } : named && isNumber(line?.quantity) ? { value: line.quantity, source: 'user_named' } : suggestedQuantity(row),
+    suggestedQuantity: quantity,
     supplier,
     suppliers,
     needByDate,
@@ -826,9 +844,24 @@ function formRow(row, output, { named, line, scope }) {
   }
 }
 
+// Whether a question names an item at all: words other than asking for an
+// order, the time and politeness. "帮我下个单" and "What should I reorder
+// this week?" name none, so the item the model picks for them is its
+// suggestion, not ticked as the user's (2026-11-11 on Flash: 22423 was ticked
+// for both).
+// A budget names no item either ("预算只有 300 英镑，这周该补什么货？" ticked
+// the solver's pick as the user's, 2026-11-11).
+// A spending limit in the question: a budget word, or an amount of money.
+const BUDGET_QUESTION = /\bbudget\b|\b(?:can|could)\s+(?:only\s+)?spend\b|预算|[£$€¥￥]\s?\d|\d\s?(?:pounds?|quid|dollars?|euros?|英镑|镑|美元|欧元|元|块)/i
+const ORDER_WORDS_EN = /\b(?:please|pls|can|could|would|will|you|help|me|i|we|us|our|my|should|shall|what|which|do|does|did|need|needs|want|wants|to|a|an|the|some|more|any|anything|something|for|this|that|these|now|today|tomorrow|week|month|order|orders|reorder|re-order|buy|purchase|place|make|create|draft|raise|request|requests|restock|replenish|stock|up|new|get|is|are|it|and|of|in|on|have|has|got|budget|spend|spending|only|limit|max|maximum|most|under|within|at|but|so|with|left|pounds?|quid|dollars?|euros?|gbp|usd|eur|money|cash)\b/gi
+const ORDER_WORDS_ZH = /帮我|帮忙|给我|我们|我|请|一下|下个?单|下单|订单|订购|采购|补货|进货|补|买|订|要|需要|应该|什么|哪些|哪个|这周|本周|今天|现在|一些|一点|点|些|个|吧|呢|吗|的|了|货|单|再|还|预算|只有|只能|英镑|镑|美元|欧元|元|块钱|钱|花|最多|以内|之内|上限|不超过|该|有/g
+export function namesAnItem(question) {
+  return String(question || '').replace(ORDER_WORDS_EN, ' ').replace(ORDER_WORDS_ZH, ' ').replace(/[\s\p{P}\p{S}\d]+/gu, '').length > 0
+}
+
 const suggestPurchaseRequest = defineUiTool({
   name: 'suggest_purchase_request',
-  description: 'Show the in-chat purchase request form from a suggest_purchase_lines result (source). from user_named: the items the user named in this question, listed in lines. from agreed: the items the user agreed to, named or proposed earlier in this conversation, listed in lines, or no lines for every item of the latest form. from suggestions: the suggested items (all, or those listed in lines), for the user to choose. Quantity, supplier and need-by date in a line are used only for an item the user named or agreed to, and only when the user gave or changed them; otherwise the server fills every value. A line may also carry an item\'s quantity from the latest optimize_order_plan decision, which the form shows as the best plan\'s. Named and agreed items are ticked (unless open orders already cover them); the user ticks the rest and creates the draft with their own click. A supplier the user named that is not yet an approved supplier of the item, but is an active supplier of the workspace, goes on the line when the user may add approved suppliers: when the user clicks Create, the form adds it as an approved supplier of the item, then creates the request. Pass unitPrice, currency and leadTimeDays only for such a supplier and only as the user typed them; the user can also enter them in the form.',
+  description: 'Show the in-chat purchase request form from a suggest_purchase_lines result (source). from user_named: the items the user named in this question, listed in lines. from agreed: the items the user agreed to, named or proposed earlier in this conversation, listed in lines, or no lines for every item of the latest form. from suggestions: the suggested items (all, or those listed in lines), for the user to choose. Quantity, supplier and need-by date in a line are used only for an item the user named or agreed to, and only when the user gave or changed them; otherwise the server fills every value. A line may also carry an item\'s quantity from the latest optimize_order_plan decision, which the form shows as the best plan\'s: after that tool, pass each item\'s decided quantity. A quantity the user named below the item\'s minimum order (minimumOrderQuantity of its suggest_purchase_lines row, the preferred supplier\'s) starts at the minimum, and the form shows what they asked for: say so in one sentence. With another supplier the user named, their quantity stays. The result lists each line as the form shows it; describe those quantities. Named and agreed items are ticked (unless open orders already cover them); the user ticks the rest and creates the draft with their own click. A supplier the user named that is not yet an approved supplier of the item, but is an active supplier of the workspace, goes on the line when the user may add approved suppliers: when the user clicks Create, the form adds it as an approved supplier of the item, then creates the request. Pass unitPrice, currency and leadTimeDays only for such a supplier and only as the user typed them; the user can also enter them in the form.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -899,17 +932,42 @@ const suggestPurchaseRequest = defineUiTool({
     // did not type is the server's suggestion, not "you asked for this".
     const question = String(ctx.question ?? '').normalize('NFKC')
     const typedNumbers = new Set([...question.matchAll(/\d[\d,]*(?:\.\d+)?/g)].map((match) => Number(match[0].replace(/,/g, ''))))
+    // The quantities typed in this conversation's questions, and the items of
+    // its latest form.
+    const typedEarlier = new Set([...String(ctx.userText ?? '').normalize('NFKC').matchAll(/\d[\d,]*(?:\.\d+)?/g)].map((match) => Number(match[0].replace(/,/g, ''))))
+    const lastForm = new Set(array(ctx.lastFormSkus).map(fold))
     const namesNoSku = !/[A-Za-z]+[A-Za-z0-9]*-\d/.test(question)
+    // The quantity of the latest optimize_order_plan decision for the item.
+    const planned = (line) => ctx.orderPlan instanceof Map && isNumber(line?.quantity) && ctx.orderPlan.get(fold(line.sku)) === line.quantity
     const resolved = (line) => {
       if (input.from !== 'user_named' || !line) return null
       const quantityTyped = isNumber(line.quantity) && typedNumbers.has(line.quantity)
       if (quantityTyped) return line
-      return lines.length === 1 && namesNoSku && question.trim() ? { ...line, quantity: undefined } : null
+      // The item the user described keeps the solver's quantity for it
+      // (2026-11-11: "I want 100 cakestands but I can only spend £1,000" got
+      // the reorder list's 60 while the solver and the text said 78).
+      if (lines.length === 1 && namesNoSku && question.trim() && namesAnItem(question)) return planned(line) ? line : { ...line, quantity: undefined }
+      return null
+    }
+    // A question with a budget gets its quantities from optimize_order_plan,
+    // not the model's own sum: a quantity that is neither typed, planned nor
+    // the line's suggestion sends the model back to the solver before any
+    // form is shown (2026-11-12 on Flash: "I want 100 cakestands but I can
+    // only spend £1,000" passed 78 from calculate; the form fell back to the
+    // reorder list's 60 and the text told the user to change it to 78).
+    if (input.from === 'user_named' && BUDGET_QUESTION.test(question)) {
+      const unbacked = lines.filter((line) => isNumber(line.quantity) && !typedNumbers.has(line.quantity) && !planned(line) && bySku.get(fold(line.sku))?.suggestedQuantity?.value !== line.quantity)
+      if (unbacked.length) return fail('quantity_not_planned', `${unbacked.map((line) => `${line.quantity} for ${line.sku}`).join(', ')} is neither a quantity the user typed nor an optimize_order_plan decision. For the user's budget, call optimize_order_plan with budget and these SKUs, then call suggest_purchase_request again with each decided quantity. No form is shown until then.`)
     }
     const entries = requestable.map((row) => {
       const line = linesBySku.get(fold(row.item.sku))
       if (agreed) return { row, isNamed: agreed.has(fold(row.item.sku)), line }
       if (userNamed.has(fold(row.item.sku))) return { row, isNamed: true, line }
+      // A line of the latest form at a quantity the user typed earlier in
+      // this conversation stays theirs when they add to the form (2026-11-11
+      // on Flash: "add 150 of 84879 too" after "Order 100 cakestands" showed
+      // the cakestand at the suggested 60, unticked, while the text said 100).
+      if (lastForm.has(fold(row.item.sku)) && isNumber(line?.quantity) && typedEarlier.has(line.quantity)) return { row, isNamed: true, line }
       const described = resolved(line)
       return { row, isNamed: Boolean(described), line: described || line }
     })
@@ -976,6 +1034,40 @@ const showSetupSteps = defineUiTool({
     })
     const gaps = isObject(output.gaps) ? { checked: output.gaps.checked, unit: output.gaps.unit, preferredSupplier: output.gaps.preferredSupplier, thresholds: output.gaps.thresholds } : null
     return part('setup_steps', { source: source.id, steps, done: output.done, total: output.total, ...(gaps ? { gaps } : {}) }, [])
+  },
+})
+
+// Today's decision cards in the chat (docs/drafted-decisions-design.md §4.8),
+// from a decision_items result: the waiting items it lists, or those of them
+// named in keys. Each card reads its own draft from Today and carries the same
+// buttons, so "go ahead" is the user's own click on the card.
+const showDecisions = defineUiTool({
+  name: 'show_decisions',
+  display: true,
+  description: `Show Today's decision cards from a decision_items result: each waiting item with the step FlowChain prepared and its buttons (open the prefilled request, copy or send the follow-up, create the orders, not now, not needed), the same cards as the Today page. Pass keys to show only some (at most ${DECISION_CARDS_MAX}, for example the one the user means by "the first one" or "go ahead"); without keys the first ${DECISION_CARDS_MAX} waiting items are shown. Use it after decision_items when the user asks what to handle first, what is waiting, or to act on one of them.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      source: { ...sourceParam, description: 'The source of a decision_items result of this answer, for example decision_items#1.' },
+      keys: { type: 'array', items: { type: 'string', minLength: 3, maxLength: 200 }, minItems: 1, maxItems: DECISION_CARDS_MAX, description: 'The key of each item to show, as the result gives it.' },
+    },
+    required: ['source'],
+    additionalProperties: false,
+  },
+  build(input, ctx) {
+    const source = sourceOf(ctx, input.source)
+    if (source.error) return source
+    if (source.tool !== 'decision_items') return fail('wrong_source', `show_decisions takes a decision_items result; ${input.source} is ${source.tool}. Call decision_items first.`)
+    const waiting = array(source.output.waiting)
+    if (!waiting.length) return fail('nothing_waiting', 'Nothing is waiting for a decision in this result, so there are no cards to show. Say so in words.')
+    const known = new Map(waiting.map((row) => [text(row.key), row]))
+    const asked = array(input.keys).map(text)
+    const unknown = asked.filter((key) => !known.has(key))
+    if (unknown.length) return fail('unknown_key', `${unknown.join(', ')} is not a waiting item of ${input.source}. Pass keys exactly as the result gives them: ${[...known.keys()].slice(0, 10).join(', ')}.`)
+    const keys = asked.length ? [...new Set(asked)] : [...known.keys()].slice(0, DECISION_CARDS_MAX)
+    const total = Number.isInteger(source.output.waitingTotal) ? source.output.waitingTotal : waiting.length
+    const refs = keys.map((key) => known.get(key)?.ref).filter(Boolean).map((ref) => refOf(ref))
+    return part('decisions', { source: source.id, keys, more: Math.max(0, total - keys.length) }, refs)
   },
 })
 
@@ -1262,7 +1354,6 @@ const RECORD_STEP_PERMISSIONS = Object.freeze({
     submit: PURCHASE_REQUEST_PERMISSIONS.submit,
     approve: PURCHASE_REQUEST_PERMISSIONS.approve,
     reject: PURCHASE_REQUEST_PERMISSIONS.reject,
-    create_rfq: PURCHASE_REQUEST_PERMISSIONS.createRfq,
     create_po: PURCHASE_REQUEST_PERMISSIONS.createPurchaseOrders,
   }),
   purchase_order: Object.freeze({
@@ -1300,45 +1391,34 @@ async function storedActionRecord({ prisma, tenantId }, ref) {
   return { row, downstream: Boolean(order || rfq) }
 }
 
-// The path the recommendation route gives the request once approved
-// (recommendProcurementPath with the route's policy), with its reasons as
-// codes. The amount threshold is left out for a role that cannot see amounts.
-function recordPath(row, amountsVisible) {
-  const { recommendation, policySnapshot: snapshot } = recommendProcurementPath({ ...mapPurchaseRequest(row), status: PURCHASE_REQUEST_STATUS.APPROVED }, PROCUREMENT_PATH_POLICY, {}, {})
-  const reasons = [
-    !snapshot.supplierSelected && 'supplier_not_selected',
-    !snapshot.validPriceAvailable && 'price_missing',
-    snapshot.rfqRequiredByPolicy && amountsVisible && 'amount_over_rfq_threshold',
-    (snapshot.newSupplier || snapshot.newItem || snapshot.highRiskSupplier) && 'new_or_high_risk',
-  ].filter(Boolean)
-  return { recommendation: recommendation === 'rfq' ? 'rfq' : 'direct_po', reasons: recommendation === 'rfq' ? reasons : ['direct_po_ok'] }
-}
+// No RFQ path on the card (design audit L1-01, batch A7): an RFQ cannot yet
+// become a purchase order, so the card neither offers one nor recommends one.
 
 // Who can take the step this user cannot, for the model to say.
 const RECORD_STEP_WHO = Object.freeze({
   submit: 'its requester, with a role that may create purchase requests (a buyer or manager)',
   approve: 'a manager or administrator whose role may approve',
   reject: 'a manager or administrator whose role may approve',
-  create_rfq: 'a buyer or manager whose role may create purchase orders',
   create_po: 'a buyer or manager whose role may create purchase orders',
   issue: 'a buyer or manager whose role may create purchase orders',
 })
 
 // Why the card offers nothing, worded for the model: the record's status and
 // who can take its next step, or that it has none.
-function nothingToOffer(type, status, label, { steps, downstream, poBlocked }) {
+function nothingToOffer(type, status, label, { steps, downstream, poBlocked, ownRecord }) {
   const waiting = Object.entries(RECORD_ACTION_RULES[type]).filter(([, from]) => from === status).map(([step]) => step)
   const kind = type === 'purchase_request' ? 'purchase request' : 'purchase order'
+  if (ownRecord && waiting.includes('approve')) return fail('not_allowed', `${label} is ${status.replace(/_/g, ' ')}. This user raised or submitted it, so someone else who may approve it has to approve it. Say so, naming ${label} so its link shows; do not show a card.`)
   if (!waiting.length) return fail('nothing_to_offer', `${label} is ${status.replace(/_/g, ' ')}; no step of this ${kind} can be taken in the chat. Give its status and link it; do not show a card.`)
   if (downstream) return fail('nothing_to_offer', `A purchase order or an open RFQ already comes from ${label}. Say so and link the request; do not show a card.`)
-  if (poBlocked && waiting.every((step) => step === 'create_po' || step === 'create_rfq') && steps.includes('create_po')) return fail('nothing_to_offer', `Every line of ${label} needs a supplier, a currency and a delivery warehouse before a purchase order can be created. Say that the user completes the request on its page first; link it.`)
-  const who = [...new Set(waiting.filter((step) => step !== 'create_rfq').map((step) => RECORD_STEP_WHO[step]))].join(', or ')
+  if (poBlocked && waiting.every((step) => step === 'create_po') && steps.includes('create_po')) return fail('nothing_to_offer', `Every line of ${label} needs a supplier, a currency and a delivery warehouse before a purchase order can be created. Say that the user completes the request on its page first; link it.`)
+  const who = [...new Set(waiting.map((step) => RECORD_STEP_WHO[step]))].join(', or ')
   return fail('not_allowed', `${label} is ${status.replace(/_/g, ' ')}. This user cannot take its next step; it is for ${who}. Say who can, naming ${label} so its link shows; do not show a card.`)
 }
 
 const offerRecordActions = defineUiTool({
   name: 'offer_record_actions',
-  description: 'Show a card for one purchase request or purchase order from a data tool result of this answer (source and its ref), with the steps this user may take on it now: submit a draft request for approval (its requester), approve or reject a submitted request, turn an approved request into a purchase order or request quotes (RFQ) for it, approve a purchase order or mark it issued. The user takes each step with their own click and a confirm in the card; nothing happens until they do. The server reads the record as stored and offers only what the user\'s role and the record\'s status allow; when there is nothing the user may do, the tool says who can.',
+  description: 'Show a card for one purchase request or purchase order from a data tool result of this answer (source and its ref), with the steps this user may take on it now: submit a draft request for approval (its requester), approve or reject a submitted request, turn an approved request into a purchase order, approve a purchase order or mark it issued. The user takes each step with their own click and a confirm in the card; nothing happens until they do. The server reads the record as stored and offers only what the user\'s role and the record\'s status allow; when there is nothing the user may do, the tool says who can.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -1373,18 +1453,22 @@ const offerRecordActions = defineUiTool({
     if (!isCode(status)) return fail('record_unavailable', `${ref.label} has no status the card can read; link it instead.`)
     const amountsVisible = Boolean(aiSkillVisibility(actor).amounts.purchase_order_amounts)
     const requester = type === 'purchase_request' && text(row.requester) === actorUserId(actor)
+    // Approve and Reject are not offered on the user's own request or order
+    // while someone else may approve it: the approval would refuse them
+    // (design audit C4; self-approval.mjs).
+    const holds = (permission) => allowedTo(actor, permission)
+    const ownRecord = holds(RECORD_STEP_PERMISSIONS[type].approve) && !mayApprove(await approverStanding(ctx.prisma, { tenantId: ctx.tenantId, userId: actorUserId(actor) }, holds, [type]), type, approvalAuthorIds(type, row))
     // Every step the user's role permits here, whatever the status: the card
     // offers again from these after each click.
     const steps = Object.entries(RECORD_STEP_PERMISSIONS[type])
-      .filter(([step, permission]) => allowedTo(actor, permission) && (step !== 'submit' || requester) && !(downstream && (step === 'create_po' || step === 'create_rfq')))
+      .filter(([step, permission]) => allowedTo(actor, permission) && (step !== 'submit' || requester) && !(downstream && step === 'create_po') && !(ownRecord && (step === 'approve' || step === 'reject')))
       .map(([step]) => step)
     const lines = array(row.lines)
-    const sourcing = type === 'purchase_request' && steps.some((step) => step === 'create_po' || step === 'create_rfq')
-    const path = sourcing ? recordPath(row, amountsVisible) : null
+    const sourcing = type === 'purchase_request' && steps.includes('create_po')
     // What createPurchaseOrdersFromPurchaseRequest refuses (DIRECT_PO_NOT_ALLOWED).
     const poBlocked = sourcing && (!lines.length || lines.some((line) => ['supplierId', 'currency', 'targetWarehouseId'].some((field) => !text(metaOf(line)[field])))) ? 'lines_incomplete' : null
-    const actions = recordActionsNow({ type, status, allowed: steps, path, poBlocked })
-    if (!actions.length) return nothingToOffer(type, status, ref.label, { steps: Object.keys(RECORD_STEP_PERMISSIONS[type]).filter((step) => allowedTo(actor, RECORD_STEP_PERMISSIONS[type][step])), downstream, poBlocked })
+    const actions = recordActionsNow({ type, status, allowed: steps, poBlocked })
+    if (!actions.length) return nothingToOffer(type, status, ref.label, { steps: Object.keys(RECORD_STEP_PERMISSIONS[type]).filter((step) => allowedTo(actor, RECORD_STEP_PERMISSIONS[type][step])), downstream, poBlocked, ownRecord })
     const suppliers = [...new Set([text(row.supplierName), ...lines.map((line) => text(metaOf(line).supplierSnapshot?.supplierName))].filter(Boolean))].slice(0, 3).map((name) => name.slice(0, 200))
     const amount = decimalOf(row.amount)
     const currency = currencyCode(text(row.currency).toUpperCase())
@@ -1410,7 +1494,6 @@ const offerRecordActions = defineUiTool({
       record,
       allowed: steps,
       actions,
-      ...(path ? { path } : {}),
       ...(poBlocked ? { poBlocked } : {}),
     }
     return part('record_actions', props, [ref])
@@ -1418,6 +1501,14 @@ const offerRecordActions = defineUiTool({
 })
 
 const FOLLOWUP_LENGTH = 90
+const CJK_CHAR = /[㐀-鿿豈-﫿]/
+// More Chinese than English by weight: a Chinese character against about two
+// Latin letters, as the question set's scorer counts.
+const mostlyChinese = (value) => {
+  const cjk = (String(value).match(/[㐀-鿿豈-﫿]/g) || []).length
+  const latin = (String(value).match(/[A-Za-z]/g) || []).length
+  return cjk > 0 && cjk * 2 >= latin
+}
 
 const suggestFollowups = defineUiTool({
   name: 'suggest_followups',
@@ -1428,16 +1519,32 @@ const suggestFollowups = defineUiTool({
     required: ['questions'],
     additionalProperties: false,
   },
-  build(input) {
+  build(input, ctx) {
     const questions = [...new Set(input.questions.map((question) => question.replace(/\s+/g, ' ').trim()))]
     if (questions.some((question) => !question)) return fail('invalid_input', 'A question is empty.')
     const long = questions.find((question) => question.length > FOLLOWUP_LENGTH)
     if (long) return fail('too_long', `Each question is at most ${FOLLOWUP_LENGTH} characters; "${long.slice(0, 40)}..." has ${long.length}.`)
+    // In the answer's language (2026-11-13: a Chinese answer offered "Give me
+    // a follow-up message for PO-202610-0024"). A Chinese chip may name
+    // records in English but has Chinese words; an English chip is not mostly
+    // Chinese.
+    const foreign = questions.find((question) => (ctx?.language === 'zh-CN' ? !CJK_CHAR.test(question) : ctx?.language === 'en-US' && mostlyChinese(question)))
+    if (foreign) return fail('wrong_language', `Write each question in ${ctx.language === 'zh-CN' ? 'Chinese' : 'English'}, the answer's language; "${foreign.slice(0, 40)}" is not.`)
+    // A chip's figures come from the records too: a chip the user clicks is
+    // sent as their own words, so a quantity in it would reach a form as one
+    // the user typed (design audit 2026-11-15, L5-21).
+    const sources = ctx?.results instanceof Map ? [...ctx.results.values()].map((entry) => entry.output) : []
+    for (const question of questions) {
+      try {
+        const unread = checkAiModelFirstGrounding({ answer: { title: '', answer: question, records: [] }, results: sources, question: ctx?.userText || '', facts: ctx?.facts || null }).problems.filter((row) => row.kind === 'number')
+        if (unread.length) return fail('ungrounded_figure', `A follow-up may use only figures the records or the user gave; "${unread[0].value}" in "${question.slice(0, 40)}" is neither. Leave the figure out.`)
+      } catch { /* a check that fails leaves the chips as they are */ }
+    }
     return part('followups', { questions }, [])
   },
 })
 
-export const AI_ASSISTANT_V2_UI_TOOLS = Object.freeze([showTable, showRecords, showChart, showKpis, offerChoices, suggestPurchaseRequest, showSetupSteps, suggestSetupRecords, offerRecordActions, suggestFollowups])
+export const AI_ASSISTANT_V2_UI_TOOLS = Object.freeze([showTable, showRecords, showChart, showKpis, offerChoices, suggestPurchaseRequest, showSetupSteps, suggestSetupRecords, offerRecordActions, suggestFollowups, showDecisions])
 
 // The UI tools the model is offered for this user (design §4.1: the request
 // form is not offered to a user who may not create requests, nor the setup

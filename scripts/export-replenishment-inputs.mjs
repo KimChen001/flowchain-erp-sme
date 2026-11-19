@@ -214,15 +214,17 @@ export async function readReplenishmentInputs(prisma, { tenantId, asOf = null, e
         },
         dailyShipped: days.map((day) => ({ day, quantity: shippedByDay.get(day) })),
         // What the deployed reorder list (buildReorderList) says today. qRule
-        // is the quantity its purchase request asks for: the shortfall below
-        // the reorder point, raised to the supplier's minimum order; 0 when
-        // the item is above its reorder point; null when it is not checked or
-        // the person enters the quantity.
+        // is the quantity its purchase request asks for when the item is to
+        // be ordered now: up to the order-up-to level (the item's, or the
+        // app's assumed default of the reorder point plus 7 days of demand),
+        // in whole lots, raised to the supplier's minimum order (design audit
+        // C3); 0 when it is not due; null when it is not checked or the
+        // person enters the quantity. orderUpTo says which level it used.
         reorderList: reorderRow
           ? {
               listed: true, orderByDate: reorderRow.orderByDate, orderNow: reorderRow.orderNow, daysUntilOrderBy: reorderRow.daysUntilOrderBy,
-              position: reorderRow.position, shortfall: reorderRow.shortfall,
-              qRule: reorderRow.shortfall > 0 ? reorderRow.purchaseRequest.quantity : 0,
+              position: reorderRow.position, shortfall: reorderRow.shortfall, orderUpTo: reorderRow.orderUpTo ?? null,
+              qRule: reorderRow.orderNow ? reorderRow.purchaseRequest.quantity : 0,
               raisedToMinimum: reorderRow.purchaseRequest.raisedToMinimum,
               flags: reorderRow.flags.map((flag) => flag.code),
             }

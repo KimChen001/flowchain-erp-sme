@@ -1,4 +1,11 @@
 import { test, expect, type Page } from "@playwright/test";
+// The item field searches on the server as it is typed (design audit A4,
+// L4-01); the first suggestion is chosen.
+async function pickFirstItem(page: Page, label: string | RegExp) {
+  await page.getByLabel(label).click();
+  await page.getByRole("listbox", { name: /^(Matching items|匹配的物料)$/ }).getByRole("option").first().click();
+}
+
 
 // The server numbers a delivery draft DN-YYYYMM-NNNN when it is saved; the
 // order page says which number it got.
@@ -6,6 +13,14 @@ async function createdShipmentNumber(page: Page) {
   const notice = page.getByTestId("shipment-created-number");
   await expect(notice).toContainText(/DN-\d{6}-\d{4,}/);
   return /DN-\d{6}-\d{4,}/.exec((await notice.textContent()) || "")?.[0] || "";
+}
+
+// The customer is typed and chosen from the matches (CustomerPicker.tsx).
+async function chooseCustomer(page: Page, label: string | RegExp, search: string, option: string) {
+  const field = page.getByRole("combobox", { name: label });
+  await field.click();
+  await field.fill(search);
+  await page.getByRole("option", { name: option }).click();
 }
 
 test.describe.configure({ retries: 0 });
@@ -33,13 +48,17 @@ test("sales fulfillment workbench closes reserve, shipment, post, and reverse th
   await page.goto("/app/sales/orders");
   await expect(page.getByTestId("outbound-order-list")).toBeVisible();
   await page.getByRole("link", { name: "新建销售订单" }).click();
-  await expect(page.getByTestId("create-sales-order")).toBeDisabled();
-  await page.getByLabel("客户").selectOption({ label: "Playwright Customer · CUST-PW" });
-  await expect(page.getByTestId("sales-order-customer-terms")).toHaveText("付款条款：Net 30");
-  await page.getByLabel("物料（第 1 行）").selectOption({ index: 1 });
+  await page.getByTestId("create-sales-order").click();
+  await expect(page.getByLabel("客户", { exact: true })).toHaveAccessibleDescription("请选择客户。");
+  await expect(page.getByTestId("sales-order-entry-errors")).toHaveText("请检查标出的字段。");
+  await chooseCustomer(page, "客户", "Playwright", "Playwright Customer · CUST-PW");
+  // "Net 30" reads as words.
+  await expect(page.getByTestId("sales-order-customer-terms")).toHaveText("付款条款：30 天账期");
+  await pickFirstItem(page, "物料（第 1 行）");
   await page.getByLabel("数量（第 1 行）").fill("4.0000");
   // Without a price the draft cannot be saved, because it could never be invoiced.
-  await expect(page.getByTestId("create-sales-order")).toBeDisabled();
+  await page.getByTestId("create-sales-order").click();
+  await expect(page.getByLabel("单价（第 1 行）")).toHaveAccessibleDescription("请输入单价，赠品填 0。");
   await page.getByLabel("单价（第 1 行）").fill("12.5000");
   await page.getByTestId("create-sales-order").click();
   await expect(page.getByTestId("outbound-order-workbench")).toBeVisible();
@@ -60,14 +79,15 @@ test("sales fulfillment workbench closes reserve, shipment, post, and reverse th
   await expect(page.getByTestId("outbound-preview-result")).toContainText(
     "将发生的变更",
   );
+  // The unit reads in Chinese: no English unit inside a Chinese sentence.
   await expect(page.getByTestId("outbound-preview-sentence").first()).toContainText(
-    "预留 OUT-BROWSER-SKU 4 EA。该库位可用量减少 4。",
+    "预留 OUT-BROWSER-SKU 4 个。该库位可用量减少 4。",
   );
   await expect(page.getByTestId("outbound-preview-result")).not.toContainText("inventoryMovements");
   await expect(page.getByTestId("confirm-outbound-action")).toHaveText("确认预留");
   await page.getByTestId("confirm-outbound-action").click();
   await expect(page.getByTestId("availability-balance")).toContainText(
-    "现有 10",
+    "在手 10",
   );
   await expect(page.getByTestId("availability-balance")).toContainText(
     "预留 4",
@@ -83,6 +103,11 @@ test("sales fulfillment workbench closes reserve, shipment, post, and reverse th
   await page.getByRole("button", { name: "释放预留" }).click();
   await page.getByLabel("预留记录").selectOption({ index: 1 });
   await page.getByLabel("交易数量").fill("1.0000");
+  // No reason is prefilled: the release asks for one before its preview.
+  await expect(page.getByLabel("释放原因")).toHaveValue("");
+  await page.getByTestId("outbound-preview").click();
+  await expect(page.getByText("请输入释放原因。")).toBeVisible();
+  await page.getByLabel("释放原因").fill("Playwright release");
   await page.getByTestId("outbound-preview").click();
   await page.getByTestId("confirm-outbound-action").click();
   await expect(page.getByTestId("availability-balance")).toContainText(
@@ -103,6 +128,7 @@ test("sales fulfillment workbench closes reserve, shipment, post, and reverse th
   await page.getByText(cancelledNumber, { exact: true }).click();
   await expect(page.getByTestId("shipment-workbench")).toBeVisible();
   await page.getByRole("button", { name: "取消草稿" }).click();
+  await page.getByLabel("操作原因").fill("Playwright draft cancelled");
   await page.getByTestId("shipment-preview").click();
   await page.getByTestId("confirm-shipment-action").click();
   await expect(page.getByText("已取消", { exact: true }).first()).toBeVisible();
@@ -144,10 +170,15 @@ test("sales fulfillment workbench closes reserve, shipment, post, and reverse th
   expect((await blockedPost.json()).code).toBe("SALES_ORDER_ON_HOLD");
   await page.getByRole("link", { name: /SO-/ }).click();
   await page.getByRole("button", { name: "恢复" }).click();
-  await expect(page.getByText("已确认", { exact: true }).first()).toBeVisible();
+  // Resumed: the order can be held again, and its one status says how far
+  // reserving got (design audit L7-42: the header shows one status).
+  await expect(page.getByTestId("hold-sales-order")).toBeVisible();
+  await expect(page.getByTestId("sales-order-statuses")).toContainText("部分预留");
   await page.getByText(postedNumber, { exact: true }).click();
+  // Posting is one confirmation: the dialog reads its preview as it opens.
   await page.getByTestId("open-post").click();
-  await page.getByTestId("shipment-preview").click();
+  await expect(page.getByTestId("shipment-preview")).toHaveCount(0);
+  await expect(page.getByTestId("confirm-shipment-action")).toBeEnabled();
   await page.getByTestId("confirm-shipment-action").dblclick();
   await expect(page.getByText("已过账", { exact: true }).first()).toBeVisible();
   await expect(page.getByTestId("shipment-movement").first()).toContainText("销售出库");
@@ -336,7 +367,8 @@ test("reserve, delivery draft and post shipment read in English with warehouse n
   const created = await request.post("/api/sales/orders", {
     headers,
     data: {
-      customerName: "US Customer",
+      // Confirming needs a customer from Customers (design audit L4-26).
+      customerId: "CUST-PW-ID",
       currency: "USD",
       idempotencyKey: "pw-english-order",
       lines: [{ itemId: "outbound-browser-item", quantity: "2", unitPrice: "5" }],
@@ -354,16 +386,28 @@ test("reserve, delivery draft and post shipment read in English with warehouse n
   await page.getByTestId("open-reserve").click();
   const reserve = page.getByRole("dialog", { name: "Reserve inventory" });
   await expect(reserve.getByRole("heading", { name: "Reserve inventory" })).toBeVisible();
+  // Each option leads with the figure that decides it, so a phone's narrow
+  // dropdown still shows it; the line under it has the rest.
   await expect(reserve.getByLabel(/Sales order line/).locator("option:checked")).toHaveText(
-    "OUT-BROWSER-SKU · 浏览器出库物料 · Ordered 2 / Reserved 0 / Shipped 0 / To reserve 2",
+    "OUT-BROWSER-SKU · To reserve 2 ea · 浏览器出库物料",
   );
-  await expect(reserve.getByLabel(/Inventory balance/).locator("option:checked")).toContainText("华东成品仓 / A-01 · On hand 10");
-  await expect(reserve.getByLabel("Quantity", { exact: true })).toHaveValue("2.0000");
+  await expect(reserve.getByTestId("dialog-line-facts")).toHaveText("Ordered 2 ea · Reserved 0 · Shipped 0 · To reserve 2");
+  // Earlier tests reserve some of the seeded 10, so only the shape is fixed.
+  await expect(reserve.getByLabel(/Inventory balance/).locator("option:checked")).toHaveText(/^Available \d+ ea · 华东成品仓 \/ A-01$/);
+  await expect(reserve.getByTestId("dialog-balance-facts")).toHaveText(/^On hand 10 · Reserved \d+ · Available \d+ ea$/);
+  // What can be reserved: the smaller of what the line needs and what is available, without trailing zeros.
+  await expect(reserve.getByLabel("Quantity", { exact: true })).toHaveValue("2");
+  // More than is available is named under the field, with the figure, before any request.
+  await reserve.getByLabel("Quantity", { exact: true }).fill("12");
+  await page.getByTestId("outbound-preview").click();
+  await expect(reserve.getByTestId("outbound-quantity-error")).toHaveText(/^Only \d+ ea available at 华东成品仓 \/ A-01\. Reserve that much or less\.$/);
+  await reserve.getByLabel("Quantity", { exact: true }).fill("2");
+  await expect(reserve.getByTestId("outbound-dialog-cancel")).toHaveText("Cancel");
   await expect(reserve).toContainText("Preview first to see what will change.");
   await page.getByTestId("outbound-preview").click();
   await expect(page.getByTestId("outbound-preview-result")).toContainText("What will happen");
   await expect(page.getByTestId("outbound-preview-sentence")).toHaveText(
-    "Reserves 2 EA of OUT-BROWSER-SKU at 华东成品仓 / A-01. Available stock there goes down by 2.",
+    "Reserves 2 ea of OUT-BROWSER-SKU at 华东成品仓 / A-01. Available stock there goes down by 2.",
   );
   await expect(reserve.locator("details summary")).toHaveText("Technical details");
   await expect(reserve).not.toContainText("inventoryMovements");
@@ -379,20 +423,23 @@ test("reserve, delivery draft and post shipment read in English with warehouse n
   await expect(page.locator("#reservations")).not.toContainText(reservationId);
   await expect(page.locator("#reservations")).not.toContainText("outbound-browser-warehouse");
   await expect(page.getByTestId("outbound-timeline")).toContainText("Stock reserved");
-  await expect(page.getByTestId("outbound-timeline")).toContainText("2 · 华东成品仓 / A-01");
+  // The quantity with its unit, the reservation by where it is.
+  await expect(page.getByTestId("outbound-timeline")).toContainText("2 ea · 华东成品仓 / A-01");
+  // Each reservation reads once: the order's own "reserved" audit row is folded into it.
+  await expect(page.getByTestId("outbound-timeline")).not.toContainText("Stock reserved for the order");
   await expect(page.getByTestId("outbound-timeline")).not.toContainText("库存预留");
 
   await page.getByTestId("open-shipment-draft").click();
   const draft = page.getByRole("dialog", { name: "Create shipment draft" });
   const reservation = draft.getByLabel("Reservations").locator("option:checked");
-  await expect(reservation).toHaveText("华东成品仓 / A-01 · Reserved 2 / Allocated 0 / Used 0 / Released 0 / Available 2");
+  await expect(reservation).toHaveText("Free 2 ea · 华东成品仓 / A-01");
   await expect(reservation).not.toContainText(reservationId);
-  await expect(draft.getByLabel("Quantity", { exact: true })).toHaveValue("2.0000");
+  await expect(draft.getByLabel("Quantity", { exact: true })).toHaveValue("2");
   await expect(draft.getByTestId("shipment-number-on-save")).toHaveText("Shipment number: assigned when you save");
   await expect(draft).not.toContainText("API");
   await page.getByTestId("outbound-preview").click();
   await expect(page.getByTestId("outbound-preview-sentence")).toHaveText(
-    "Creates a shipment for 2 EA of OUT-BROWSER-SKU from 华东成品仓 / A-01. Stock does not change until the shipment is posted.",
+    "Creates a shipment for 2 ea of OUT-BROWSER-SKU from 华东成品仓 / A-01. Stock does not change until the shipment is posted.",
   );
   await expect(page.getByTestId("confirm-outbound-action")).toHaveText("Create shipment draft");
   await page.getByTestId("confirm-outbound-action").click();
@@ -402,27 +449,145 @@ test("reserve, delivery draft and post shipment read in English with warehouse n
   await expect(page.getByTestId("shipment-created-number")).toHaveText(`Shipment ${deliveryNumber} created.`);
   await page.getByText(deliveryNumber, { exact: true }).click();
   const shipment = page.getByTestId("shipment-workbench");
-  await expect(page.getByTestId("shipment-sales-order")).toHaveText(`Sales order ${order.orderNumber}`);
+  // The header names the order, customer, warehouse and date; no "Posted —" placeholders.
+  await expect(page.getByTestId("shipment-sales-order")).toContainText(order.orderNumber);
+  await expect(page.getByTestId("shipment-customer")).toContainText("Playwright Customer");
+  await expect(page.getByTestId("shipment-warehouse")).toContainText("华东成品仓 / A-01");
+  await expect(page.getByTestId("shipment-date")).toContainText("Created");
   await expect(page.getByTestId("shipment-status")).toHaveText("Ready to post");
-  await expect(page.getByTestId("shipment-posting-dates")).toHaveText("Posted — · Reversed —");
+  await expect(shipment).not.toContainText("Posted —");
   await expect(shipment).not.toContainText("Posted record");
   await expect(shipment).not.toContainText(reservationId);
+  // One confirmation: the dialog reads what posting moves as it opens.
   await page.getByTestId("open-post").click();
   const post = page.getByRole("dialog", { name: "Post shipment" });
-  await page.getByTestId("shipment-preview").click();
+  await expect(post.getByTestId("shipment-preview")).toHaveCount(0);
   await expect(page.getByTestId("outbound-preview-sentence")).toHaveText(
-    "Ships 2 EA of OUT-BROWSER-SKU from 华东成品仓 / A-01. On hand and reserved both go down by 2.",
+    "Ships 2 ea of OUT-BROWSER-SKU from 华东成品仓 / A-01. On hand and reserved both go down by 2.",
   );
   await expect(post).not.toContainText("确认执行");
   await expect(post).not.toContainText("inventoryMovements");
   await expect(page.getByTestId("confirm-shipment-action")).toHaveText("Post shipment");
   await page.getByTestId("confirm-shipment-action").click();
   await expect(post).toHaveCount(0);
-  await expect(page.getByTestId("shipment-status")).toHaveText("Posted");
-  await expect(page.getByTestId("shipment-posting-dates")).toContainText("Reversed —");
-  await expect(page.getByTestId("shipment-posting-dates")).not.toContainText("Posted —");
+  await expect(page.getByTestId("shipment-status")).toContainText("Posted");
+  await expect(page.getByTestId("shipment-date")).toContainText("Posted");
+  await expect(page.getByTestId("shipment-workbench")).not.toContainText("Reversed —");
+  // Reversing is an undo beside the invoice, never the solid red main action.
+  await expect(page.getByTestId("open-reverse")).toHaveClass(/border-red-200/);
+  await expect(page.getByTestId("open-reverse")).not.toHaveClass(/bg-red-600/);
+  const reverseBox = await page.getByTestId("open-reverse").boundingBox();
+  expect(reverseBox?.height || 0).toBeLessThanOrEqual(40);
   await expect(page.getByTestId("shipment-movement")).toContainText("Shipment");
-  await expect(page.getByTestId("shipment-movement")).toContainText("华东成品仓 / A-01 · In 0 / Out 2");
+  await expect(page.getByTestId("shipment-movement")).toContainText("华东成品仓 / A-01 · 2 ea shipped out");
+  await expect(page.getByTestId("shipment-movement")).not.toContainText("In 0");
   await expect(page.getByTestId("outbound-timeline")).toContainText("Stock shipped out");
   await expect(page.getByTestId("outbound-timeline")).not.toContainText("发货出库流水已创建");
+
+  // The order's timeline reads in the order things happened, on one clock.
+  await page.goto(`/app/sales/orders/${encodeURIComponent(order.id)}`);
+  const timeline = await page.getByTestId("outbound-timeline").innerText();
+  const at = (title: string) => timeline.indexOf(title);
+  expect(at("Stock reserved")).toBeGreaterThanOrEqual(0);
+  expect(at("Stock reserved")).toBeLessThan(at("Shipment created"));
+  expect(at("Shipment created")).toBeLessThan(at("Stock shipped out"));
+  expect(at("Stock shipped out")).toBeLessThan(at("Shipment posted"));
+  // Shipped in full: no "Not reserved" chip beside "Fulfilled".
+  await expect(page.getByTestId("sales-order-statuses")).toContainText("Fulfilled");
+  await expect(page.getByTestId("sales-order-statuses")).not.toContainText("Not reserved");
+
+  // The list shows the order's one status, its amount and its promised date.
+  await page.goto("/app/sales/orders");
+  const status = page.getByTestId(`sales-order-status-${order.id}`);
+  await expect(status).toHaveText("Fulfilled");
+  const row = page.getByRole("row").filter({ has: status });
+  await expect(row).toContainText("$10.00");
+  await expect(row).not.toContainText("Not reserved");
+  // On a phone each order is a card whose status is that one status, and the
+  // order's lines, reservations and movements are cards too.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(status).toHaveAttribute("data-card-role", "status");
+  await expect(status).toBeVisible();
+  await page.goto(`/app/sales/orders/${encodeURIComponent(order.id)}`);
+  const lines = page.getByTestId("sales-order-lines-table");
+  await expect(lines.locator("table")).toHaveAttribute("data-list-cards", "");
+  await expect(lines.locator('td[data-card-role="title"]')).toContainText("OUT-BROWSER-SKU");
+  await expect(lines.locator('td[data-label="Ordered"]')).toHaveText("2");
+  await expect(lines.locator('td[data-label="Fulfilled"]')).toBeVisible();
+  await expect(page.locator('#reservations td[data-card-role="status"]')).toBeVisible();
+  await expect(page.locator('#movements td[data-card-role="title"]').first()).toHaveText(deliveryNumber);
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(2);
+});
+
+// Design audit L4-08, L4-28, L7-25, L7-42: for a two-line order "Reserve
+// all" and "Ship all" make one reservation request and one shipment, not one
+// per line; the Shipments tab under Sales lists it with both lines; the
+// order's steps show where it stands.
+test("reserve all and ship all make one shipment for a two-line order, listed under Sales", async ({ page, request }) => {
+  const login = await request.post("/api/auth/login", { data: { email: "kim@example.com", name: "Kim", company: "Browser Company" } });
+  expect(login.ok()).toBeTruthy();
+  const session = await login.json();
+  await page.addInitScript(({ token, user }) => {
+    localStorage.setItem("flowchain:auth-token", token);
+    localStorage.setItem("flowchain:current-user", JSON.stringify(user));
+  }, session);
+  const headers = { Authorization: `Bearer ${session.token}` };
+  const created = await request.post("/api/sales/orders", {
+    headers,
+    data: {
+      customerId: "CUST-PW-ID",
+      currency: "USD",
+      idempotencyKey: "browser-ship-all-create",
+      lines: [
+        { itemId: "outbound-browser-item", quantity: "1", unitPrice: "5" },
+        { itemId: "outbound-browser-item", quantity: "1", unitPrice: "6" },
+      ],
+    },
+  });
+  expect(created.status()).toBe(201);
+  const { order } = await created.json();
+  const confirmed = await request.post(`/api/sales/orders/${encodeURIComponent(order.id)}/confirm`, {
+    headers,
+    data: { expectedOrderVersion: order.version, idempotencyKey: "browser-ship-all-confirm" },
+  });
+  expect(confirmed.ok()).toBeTruthy();
+
+  await page.goto(`/app/sales/orders/${encodeURIComponent(order.id)}`);
+  await expect(page.getByTestId("sales-order-progress")).toBeVisible();
+  await expect(page.getByTestId("sales-order-step-ordered")).toHaveAttribute("data-status", "done");
+  await expect(page.getByTestId("sales-order-step-reserved")).toHaveAttribute("data-status", "current");
+  await page.getByTestId("open-reserve-all").click();
+  await expect(page.getByTestId("bulk-plan").getByRole("listitem")).toHaveCount(2);
+  await expect(page.getByTestId("confirm-reserve-all")).toBeEnabled();
+  await page.getByTestId("confirm-reserve-all").click();
+  await expect(page.getByTestId("sales-order-step-reserved")).toHaveAttribute("data-status", "done");
+
+  await page.getByTestId("open-ship-all").click();
+  await expect(page.getByTestId("bulk-plan").getByRole("listitem")).toHaveCount(2);
+  await expect(page.getByTestId("confirm-ship-all")).toBeEnabled();
+  await page.getByTestId("confirm-ship-all").click();
+  const number = await createdShipmentNumber(page);
+  // One shipment for the order, not one for each line.
+  await expect(page.locator('#shipments a[href*="/app/sales/shipments/"]')).toHaveCount(1);
+  await expect(page.getByTestId("open-ship-all")).toHaveCount(0);
+
+  // The Shipments tab under Sales lists it, with both lines.
+  await page.getByTestId("module-subnav").getByRole("link", { name: "发货单" }).click();
+  await expect(page).toHaveURL(/\/app\/sales\/shipments$/);
+  await expect(page.getByTestId("shipment-list")).toBeVisible();
+  const row = page.getByRole("row").filter({ hasText: number });
+  await expect(row).toContainText(order.orderNumber);
+  await expect(row).toContainText("2 行");
+  await expect(row).toContainText("待过账");
+  await row.getByRole("link", { name: "查看" }).click();
+  await expect(page.getByTestId("shipment-workbench")).toBeVisible();
+
+  // The stock goes back for the specs after this one.
+  const current = await (await request.get(`/api/sales/orders/${encodeURIComponent(order.id)}/workbench`, { headers })).json();
+  const cancelled = await request.post(`/api/sales/orders/${encodeURIComponent(order.id)}/cancel`, {
+    headers,
+    data: { expectedOrderVersion: current.order.version, reason: "Browser test done", idempotencyKey: "browser-ship-all-cancel" },
+  });
+  expect(cancelled.ok()).toBeTruthy();
 });

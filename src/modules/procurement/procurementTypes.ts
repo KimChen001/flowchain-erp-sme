@@ -81,6 +81,8 @@ export type ProcurementRfqParticipant = {
 };
 export type ProcurementRfqDocument = ProcurementDocument & {
   status: string | null;
+  // The RFQ's version, which opening or cancelling it checks.
+  version?: number;
   statusRaw?: string | null;
   description?: string | null;
   lines: ProcurementRfqLine[];
@@ -295,7 +297,7 @@ export type PurchaseRequestSummary = {
   lines?: Array<{ itemNameSnapshot?: string; sku?: string | null; needByDate?: string; supplierSnapshot?: { supplierName?: string } | null }>;
 };
 export type PurchaseOrderLine = { sourcePurchaseRequestLineId: string; itemNameSnapshot: string; estimatedAmount: number };
-export type PurchaseOrder = { id: string; number?: string; status: string; transmissionStatus: string; totalAmount: number | null; currency?: string; supplier?: string; eta?: string; sourceName?: string; supplierId: string; supplierSnapshot?: { supplierName?: string }; targetWarehouseId?: string; sourcePrId?: string; sourcePurchaseRequestId?: string; lines: PurchaseOrderLine[] };
+export type PurchaseOrder = { id: string; number?: string; status: string; transmissionStatus: string; totalAmount: number | null; currency?: string; supplier?: string; eta?: string; dueDay?: string | null; sourceName?: string; supplierId: string; supplierSnapshot?: { supplierName?: string }; targetWarehouseId?: string; sourcePrId?: string; sourcePurchaseRequestId?: string; lines: PurchaseOrderLine[] };
 // number: the document number people read (requests, RFQs and orders; the id for
 // documents made before numbering). poNumber/prNumber/rfqNumber: the numbers of
 // the documents this one refers to, when the server sends them.
@@ -339,6 +341,8 @@ export type ProcurementDocument = {
   invoiceId?: string;
   invoiceDate?: string;
   invoiceStatus?: string;
+  // A supplier invoice's stored status code (exception, approved...).
+  workflowStatus?: string;
   amount?: number;
   currency?: string;
   poAmount?: number;
@@ -348,20 +352,22 @@ export type ProcurementDocument = {
   relatedDocuments?: ProcurementDocumentReference[];
   evidence?: Array<Record<string, unknown>>;
 };
-// signals are codes ("invoice_variance", "match_exception"), labelled when shown.
+// signals are codes ("overdue", "match_exception", "invoice_to_approve"),
+// labelled when shown. A supplier invoice held by a match exception is in the
+// "issues" bucket (workQueue.ts).
 export type ProcurementWorkItem = {
   id: string;
   number?: string;
   kind: EntityKind;
   status: string;
   transmissionStatus?: string;
-  bucket: "approval" | "tracking";
+  bucket: "approval" | "tracking" | "issues";
   amount: number | null;
   currency?: string;
   item?: string;
   moreLines?: number;
   supplier?: string;
-  // A request's need-by date or an order's expected arrival.
+  // A request's need-by date, an order's expected arrival or an invoice's due date.
   dueDate?: string;
   signals?: string[];
 };

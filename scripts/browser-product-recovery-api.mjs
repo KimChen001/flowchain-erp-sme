@@ -358,24 +358,37 @@ async function seedCanonicalRfqBrowserScenario(client) {
 
 // US trial only, on the walkthrough data: two more sales orders for the
 // English trial spec's delivery risk checks. One has three lines, so the read
-// API names it after its first item; the other is on hold without a recorded
-// customer name, so it is blocked and shows the unnamed-customer label. No
+// API names it after its first item; the other is on hold, so it is blocked.
+// Both were confirmed, so each is what confirming now requires (design audit
+// C5): a customer from Customers, active, and a price on every line. No
 // stock is reserved for either, and no other phase sees them.
+const US_TRIAL_CUSTOMERS = Object.freeze({
+  harbor: { id: "TRIAL-HARBOR-ID", code: "TRIAL-HARBOR", name: "Harbor Supply Co" },
+  lakeside: { id: "TRIAL-LAKESIDE-ID", code: "TRIAL-LAKESIDE", name: "Lakeside Outfitters" },
+});
 async function seedUsTrialSalesOrders(client) {
   const items = Object.fromEntries((await client.item.findMany({ where: { tenantId, sku: { in: ["TST-001", "TST-002", "TST-003"] } } })).map((item) => [item.sku, item]));
   const metadata = { browserAcceptance: true, usTrial: true };
   const promisedDate = new Date(Date.now() + 7 * 86_400_000);
-  const line = (id, sku, orderedQuantity) => ({ id, itemId: items[sku].id, sku, itemName: items[sku].name, orderedQuantity, unit: items[sku].unit || "pcs", metadata });
+  await client.runtimeRecord.createMany({
+    data: Object.values(US_TRIAL_CUSTOMERS).map((customer) => ({
+      id: randomUUID(), tenantId, namespace: "master-data.customers", recordKey: customer.code,
+      payload: { ...customer, status: "active", currency: "USD", version: 1, ...metadata },
+    })),
+  });
+  // The sales price of each item (USD); quantity times price is the line amount.
+  const PRICES = { "TST-001": 58, "TST-002": 26.5, "TST-003": 12 };
+  const line = (id, sku, orderedQuantity) => ({ id, itemId: items[sku].id, sku, itemName: items[sku].name, orderedQuantity, unit: items[sku].unit || "pcs", unitPrice: PRICES[sku], amount: orderedQuantity * PRICES[sku], metadata });
   await client.salesOrder.create({
     data: {
-      id: "LOCAL-TRIAL-SO-101", tenantId, orderNumber: "LOCAL-TRIAL-SO-101", customerName: "Harbor Supply Co", workflowStatus: "confirmed",
+      id: "LOCAL-TRIAL-SO-101", tenantId, orderNumber: "LOCAL-TRIAL-SO-101", customerId: US_TRIAL_CUSTOMERS.harbor.id, customerName: US_TRIAL_CUSTOMERS.harbor.name, workflowStatus: "confirmed",
       promisedDate, currency: "USD", metadata,
       lines: { create: [line("LOCAL-TRIAL-SOL-101-1", "TST-001", 12), line("LOCAL-TRIAL-SOL-101-2", "TST-002", 8), line("LOCAL-TRIAL-SOL-101-3", "TST-003", 20)] },
     },
   });
   await client.salesOrder.create({
     data: {
-      id: "LOCAL-TRIAL-SO-102", tenantId, orderNumber: "LOCAL-TRIAL-SO-102", customerName: "", workflowStatus: "on_hold",
+      id: "LOCAL-TRIAL-SO-102", tenantId, orderNumber: "LOCAL-TRIAL-SO-102", customerId: US_TRIAL_CUSTOMERS.lakeside.id, customerName: US_TRIAL_CUSTOMERS.lakeside.name, workflowStatus: "on_hold",
       promisedDate, currency: "USD", metadata,
       lines: { create: [line("LOCAL-TRIAL-SOL-102-1", "TST-002", 5)] },
     },

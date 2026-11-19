@@ -41,11 +41,13 @@ test("master data write codes go to the roles that maintain master data, and nev
   assert.deepEqual(masterData.map(({ code, action, riskLevel }) => [code, action, riskLevel]), [
     ["master_data.item.manage", "manage", "high"],
     ["master_data.supplier.manage", "manage", "critical"],
+    // A supplier's bank details apart from the rest (design audit C4, L4-10).
+    ["master_data.supplier.bank.manage", "manage", "critical"],
     ["master_data.customer.manage", "manage", "high"],
   ])
   const grants = Object.fromEntries(defaultRoleTemplates.map((role) => [role.roleKey, role.permissions.filter((code) => code.startsWith("master_data.")).sort()]))
   assert.deepEqual(grants, {
-    "workspace-administrator": ["master_data.customer.manage", "master_data.item.manage", "master_data.supplier.manage"],
+    "workspace-administrator": ["master_data.customer.manage", "master_data.item.manage", "master_data.supplier.bank.manage", "master_data.supplier.manage"],
     "intake-uploader": [],
     "intake-reviewer": [],
     "operations-manager": ["master_data.customer.manage", "master_data.item.manage", "master_data.supplier.manage"],

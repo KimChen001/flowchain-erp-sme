@@ -7,7 +7,9 @@ import {
   buildReturnAuthorizationPlan,
   buildReturnRequestPlan,
 } from "./return-governance-policy.mjs";
+import { buildReturnAuthorizationClosurePlan } from "./return-authorization-closure-policy.mjs";
 import { assertAuthorized } from "../auth/authorization-service.mjs";
+import { approvalAuthorIds, selfApprovalCheck, selfApprovalRefusal } from "./self-approval.mjs";
 
 export class ReturnGovernanceError extends Error {
   constructor(code, message, status = 400, details) {
@@ -32,6 +34,13 @@ const commandPermissions = Object.freeze({
   reject_return_request: "returns.authorization.reject",
   cancel_return_authorization: "returns.authorization.cancel",
   expire_return_authorization: "returns.authorization.expire",
+  // Closing the unexecuted remainder cancels that part of the authorization.
+  close_return_authorization_remainder: "returns.authorization.cancel",
+});
+const closeActions = Object.freeze({
+  cancel_return_authorization: "cancel",
+  expire_return_authorization: "expire",
+  close_return_authorization_remainder: "close_remainder",
 });
 const executionWhere = (tenantId, commandType, idempotencyKey) => ({
   tenantId_commandType_idempotencyKey: {
@@ -113,6 +122,7 @@ function normalize(commandType, input = {}) {
       ),
       reasonCode: text(input.reasonCode),
       reasonDetail: text(input.reasonDetail),
+      resolution: text(input.resolution) || "credit",
       lines: normalizedLines(input.lines),
     };
   else if (commandType === "revise_return_request")
@@ -129,6 +139,7 @@ function normalize(commandType, input = {}) {
       ),
       reasonCode: text(input.reasonCode),
       reasonDetail: text(input.reasonDetail),
+      resolution: text(input.resolution) || "credit",
       lines: normalizedLines(input.lines),
     };
   else if (
@@ -165,12 +176,7 @@ function normalize(commandType, input = {}) {
       ),
       reason: required(input.reason, "reason"),
     };
-  else if (
-    [
-      "cancel_return_authorization",
-      "expire_return_authorization",
-    ].includes(commandType)
-  )
+  else if (closeActions[commandType])
     payload = {
       authorizationId: required(input.authorizationId, "authorizationId"),
       expectedAuthorizationVersion: version(
@@ -181,7 +187,7 @@ function normalize(commandType, input = {}) {
         input.expectedRequestVersion,
         "expectedRequestVersion",
       ),
-      ...(commandType === "cancel_return_authorization"
+      ...(commandType !== "expire_return_authorization"
         ? { reason: required(input.reason, "reason") }
         : {}),
     };
@@ -262,6 +268,7 @@ function requestInput(request) {
     contextDocumentId: request.contextDocumentId || request.sourceDocumentId,
     reasonCode: request.reasonCode,
     reasonDetail: request.reasonDetail,
+    resolution: request.resolution || "credit",
     lines: request.lines.map((line) => ({
       sourceDocumentLineId: line.sourceDocumentLineId,
       requestedQuantity: String(line.requestedQuantity),
@@ -470,6 +477,7 @@ export function createReturnGovernanceCommandService({
             contextDocumentId: plan.request.contextDocumentId,
             reasonCode: plan.request.reasonCode,
             reasonDetail: plan.request.reasonDetail,
+            resolution: plan.request.resolution,
             workflowStatus: "draft",
             requestedById: actor.user.id,
             lines: {
@@ -567,6 +575,7 @@ export function createReturnGovernanceCommandService({
             contextDocumentId: plan.request.contextDocumentId,
             reasonCode: plan.request.reasonCode,
             reasonDetail: plan.request.reasonDetail,
+            resolution: plan.request.resolution,
             version: { increment: 1 },
             lines: {
               create: plan.lines.map((line) => ({
@@ -801,6 +810,20 @@ export function createReturnGovernanceCommandService({
         );
         const warehouseIds = sortedWarehouseIds(plan.request.lines);
         assertWarehouseAccess(actor, warehouseIds, "read");
+        // Who requested or submitted the return does not authorize it, unless
+        // no one else may (who also reads its warehouses, as this command
+        // asks); then the audit row says so (design audit L8-25).
+        const selfApproval = await selfApprovalCheck(tx, {
+          tenantId: actor.tenantId,
+          actorId: actor.user.id,
+          authorIds: approvalAuthorIds("return_authorization", current),
+          permissionCode: "returns.authorization.approve",
+          warehouseIds,
+        });
+        if (selfApproval.blocked) {
+          const refusal = selfApprovalRefusal("return request");
+          fail(refusal.code, refusal.message, refusal.status);
+        }
         if (
           plan.authorization.expiresAt &&
           (!Number.isFinite(plan.authorization.expiresAt.getTime()) ||
@@ -855,6 +878,7 @@ export function createReturnGovernanceCommandService({
           },
           metadata: {
             authorizationLineIds: authorization.lines.map((line) => line.id),
+            ...(selfApproval.auditFlag ? { selfApproval: selfApproval.auditFlag } : {}),
           },
         });
         await tx.auditLog.create({ data: event });
@@ -967,10 +991,7 @@ export function createReturnGovernanceCommandService({
           );
         const authorization = await tx.returnAuthorization.findFirst({
           where: { id: payload.authorizationId, tenantId: actor.tenantId },
-          include: {
-            returnRequest: { include: { lines: true } },
-            postings: true,
-          },
+          include: { returnRequest: { include: { lines: true } } },
         });
         await lockRequest(
           tx,
@@ -991,59 +1012,63 @@ export function createReturnGovernanceCommandService({
             "Return request version does not match.",
             409,
           );
-        if (!["draft", "approved"].includes(authorization.workflowStatus))
-          fail(
-            "RETURN_AUTHORIZATION_CANNOT_CLOSE",
-            "Only an unexecuted active authorization can be closed.",
-            409,
-          );
-        if (authorization.postings.length)
-          fail(
-            "RETURN_AUTHORIZATION_CANNOT_CLOSE",
-            "An authorization with posting history cannot be closed.",
-            409,
-          );
-        if (
-          commandType === "expire_return_authorization" &&
-          (!authorization.expiresAt || authorization.expiresAt > now())
-        )
-          fail(
-            "RETURN_AUTHORIZATION_NOT_EXPIRED",
-            "The authorization has not reached its expiration timestamp.",
-            409,
-          );
-        assertWarehouseAccess(
-          actor,
-          sortedWarehouseIds(authorization.returnRequest.lines),
-          "read",
+        const action = closeActions[commandType];
+        const plan = enforce(
+          await buildReturnAuthorizationClosurePlan({
+            prisma: tx,
+            tenantId: actor.tenantId,
+            authorizationId: authorization.id,
+            action,
+            now: now(),
+          }),
         );
-        const status =
-          commandType === "expire_return_authorization"
-            ? "expired"
-            : "cancelled";
+        assertWarehouseAccess(actor, plan.warehouseIds, "read");
+        const status = plan.authorizationStatusAfter;
         const closedAt = now();
+        const closedLines = plan.lines.filter(
+          (line) => line.closingQuantity !== "0.0000",
+        );
+        for (const line of closedLines)
+          await tx.returnAuthorizationLine.update({
+            where: { id: line.returnAuthorizationLineId },
+            data: {
+              closedQuantity: line.closedQuantityAfter,
+              version: { increment: 1 },
+            },
+          });
         const updatedAuthorization = await tx.returnAuthorization.update({
           where: { id: authorization.id },
           data:
-            status === "expired"
+            action === "expire"
               ? {
                   workflowStatus: status,
                   expiredAt: closedAt,
                   expiredById: actor.user.id,
                   version: { increment: 1 },
                 }
-              : {
-                  workflowStatus: status,
-                  cancelledAt: closedAt,
-                  cancelledById: actor.user.id,
-                  cancellationReason: payload.reason,
-                  version: { increment: 1 },
-                },
+              : action === "cancel"
+                ? {
+                    workflowStatus: status,
+                    cancelledAt: closedAt,
+                    cancelledById: actor.user.id,
+                    cancellationReason: payload.reason,
+                    version: { increment: 1 },
+                  }
+                : {
+                    workflowStatus: status,
+                    remainderClosedAt: closedAt,
+                    remainderClosedById: actor.user.id,
+                    remainderReason: payload.reason,
+                    version: { increment: 1 },
+                  },
         });
+        // The request follows what was really executed (L8-04): a cancelled
+        // release keeps an executed customer return executed, so it cannot be
+        // received a second time, cancelled or rejected.
         const updatedRequest = await tx.returnRequest.update({
           where: { id: authorization.returnRequestId },
           data: {
-            workflowStatus: "submitted",
+            workflowStatus: plan.requestStatusAfter,
             version: { increment: 1 },
           },
         });
@@ -1051,12 +1076,17 @@ export function createReturnGovernanceCommandService({
           idFactory,
           actor,
           action:
-            status === "expired"
+            action === "expire"
               ? "return_authorization_expired"
-              : "return_authorization_cancelled",
+              : action === "cancel"
+                ? "return_authorization_cancelled"
+                : "return_authorization_remainder_closed",
           entityType: "ReturnAuthorization",
           entityId: authorization.id,
-          summary: `Return authorization ${authorization.authorizationNumber} ${status}.`,
+          summary:
+            action === "close_remainder"
+              ? `Return authorization ${authorization.authorizationNumber} remainder closed.`
+              : `Return authorization ${authorization.authorizationNumber} ${status}.`,
           commandType,
           idempotencyKey: normalized.idempotencyKey,
           before: {
@@ -1068,7 +1098,21 @@ export function createReturnGovernanceCommandService({
             authorization: authorizationModel(updatedAuthorization),
           },
           metadata:
-            status === "cancelled" ? { reason: payload.reason } : undefined,
+            action === "expire"
+              ? undefined
+              : {
+                  reason: payload.reason,
+                  ...(action === "close_remainder"
+                    ? {
+                        closedLines: closedLines.map((line) => ({
+                          returnAuthorizationLineId:
+                            line.returnAuthorizationLineId,
+                          postedQuantity: line.postedQuantity,
+                          closedQuantity: line.closingQuantity,
+                        })),
+                      }
+                    : {}),
+                },
         });
         await tx.auditLog.create({ data: event });
         return {
@@ -1094,6 +1138,13 @@ export function createReturnGovernanceCommandService({
       closeAuthorization("cancel_return_authorization", id, input, context),
     expireAuthorization: (id, input, context) =>
       closeAuthorization("expire_return_authorization", id, input, context),
+    closeAuthorizationRemainder: (id, input, context) =>
+      closeAuthorization(
+        "close_return_authorization_remainder",
+        id,
+        input,
+        context,
+      ),
   };
 }
 

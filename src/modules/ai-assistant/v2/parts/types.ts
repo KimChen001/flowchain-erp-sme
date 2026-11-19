@@ -15,7 +15,8 @@ export type AppRoute = { moduleId: string; query?: Record<string, string> };
 // arrives whole.
 // replaced: why the server replaced the text (unbacked_action_claim: a
 // sentence that read as an action was left out, or the whole part when the
-// text is empty), for the note under it.
+// text is empty), for the note under it. narration: a short line shown before
+// the model read its data, taken back (empty) with no note, or put back.
 export type AnswerPart =
   | { id: string; type: "text"; text: string; flags?: FlagSpan[]; refs?: PartRef[]; replaced?: string }
   | { id: string; type: "ui"; component: string; schemaVersion?: number; props: unknown; refs?: PartRef[] };
@@ -76,7 +77,7 @@ export type PrFormRow = {
   onHand?: number | null;
   safetyStock?: number | null;
   reorderPoint?: number | null;
-  suggestedQuantity: { value: number | null; source: "user_named" | "reorder_gap" | "reorder_gap_raised_to_moq" | "cover_days" | "cover_days_raised_to_moq" | "order_plan" | "none"; minimum?: number | null; coverDays?: number };
+  suggestedQuantity: { value: number | null; source: "user_named" | "user_named_raised_to_moq" | "reorder_gap" | "reorder_gap_raised_to_moq" | "cover_days" | "cover_days_raised_to_moq" | "order_plan" | "none"; minimum?: number | null; requested?: number; coverDays?: number };
   supplier: { id: string; name: string; source: "preferred" | "only_approved" | "user_named"; link?: SupplierLink } | null;
   suppliers?: ApprovedSupplier[];
   needByDate: { value: string; source: "lead_time" | "user_named" | "today"; leadTimeDays?: number | null; shortWeekOf?: string | null };

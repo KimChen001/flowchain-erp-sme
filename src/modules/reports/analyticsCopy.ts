@@ -1,3 +1,4 @@
+import { statusCodeLabel } from "../../i18n/statusLabels.ts";
 // Presentation labels only. Do not translate record names or identifiers.
 const chinese: Record<string, string> = {
   'Mixed units': '混合计量单位', 'Units differ, so there is no total': '单位不同，无法合计',
@@ -14,7 +15,7 @@ const chinese: Record<string, string> = {
   'Multiple SKUs': '多个 SKU', 'See open demand by SKU': '请按 SKU 查看未履约需求', 'See on hand by SKU': '请按 SKU 查看在手库存',
   "Ordered less shipped quantity, in each SKU's unit. Bars in different units are not comparable.": '订购数量减去已发货数量，按各 SKU 自身单位计。不同单位的柱形不可比较。',
   'Share of confirmed sales orders whose every line has shipped its ordered quantity.': '每一行均已按订购数量全部发货的已确认销售订单占比。',
-  'Total of committed purchase orders (approved, issued, partially received or fully received). Drafts and orders pending approval, rejected or cancelled are excluded. No total is shown while a committed order has no amount.': '已承诺采购订单（已批准、已下达、部分收货或全部收货）的金额合计，不含草稿、待审批、已驳回和已取消的订单；有订单缺少金额时不显示合计。',
+  'Total of committed purchase orders (approved, issued, partially received or fully received); an order closed short counts what was received of it. Drafts and orders pending approval, rejected or cancelled are excluded. No total is shown while a committed order has no amount.': '已承诺采购订单（已批准、已下达、部分收货或全部收货）的金额合计，部分到货后关闭的订单按已收金额计；不含草稿、待审批、已驳回和已取消的订单；有订单缺少金额时不显示合计。',
   'Purchase orders that are committed (approved, issued, or partially received) and still have quantity to receive.': '已承诺（已批准、已下达或部分收货）且仍有待收数量的采购订单数。',
   'On-hand quantity recorded in inventory. Shown only while all inventory is the same SKU in the same unit.': '库存中已记录的在手数量；仅当全部库存为同一 SKU、同一单位时显示合计。',
   'SKUs with a shortage under the shared availability calculation.': '按统一 availability 口径存在 shortage 的 SKU 数。',
@@ -51,6 +52,11 @@ const chinese: Record<string, string> = {
   'Showing': '显示', 'of': '共', 'records in the loaded scope': '条已加载范围内的记录',
   'Dates must use YYYY-MM-DD.': '日期必须使用 YYYY-MM-DD。', 'Start date must not be after end date.': '开始日期不得晚于结束日期。',
   'Record date': '记录日期', 'Current workspace records': '当前工作区数据', 'Business records': '业务记录',
+  // The state words the report read model writes (REPORT_STATE_LABELS in
+  // runtime-report-read-model.mjs), with its currency names (design audit L6-20).
+  'Multiple currencies, not converted': '多币种，未折算', 'No currency data': '无币种数据', 'All currencies': '全部币种',
+  'Insufficient data': '数据不足', 'Records loaded: {n}': '已读取 {n} 条真实记录',
+  'Chinese yuan (CNY)': '人民币（CNY）', 'US dollar (USD)': '美元（USD）', 'Euro (EUR)': '欧元（EUR）',
   'Stock status': '库存状态',
   // Dashboard visuals.
   'Committed spend by month': '每月已承诺采购额', 'Purchase order lifecycle': '采购订单生命周期', 'Spend concentration by supplier': '供应商采购集中度',
@@ -94,6 +100,9 @@ const chinese: Record<string, string> = {
   'Committed amount': '已承诺金额', 'Cumulative share': '累计占比', 'Invoice amount': '发票金额', 'Invoices': '发票数', 'Order amount': '订单金额',
   'Reserved quantity': '已预留数量', 'On-time receipts': '准时收货率', 'Receipts': '收货单数', 'Lines accepted in full': '全数验收的收货行',
   'Share of spend': '采购额占比', 'Share of orders': '订单数占比',
+  'Receipt lines without rejection': '无拒收的收货行', 'OTIF': '准时足量率', 'Closed short': '短交关闭',
+  // The sources a dashboard's figures were read from (design audit L7-28).
+  '{n} purchase orders': '{n} 张采购订单', '{n} sales orders': '{n} 张销售订单', '{n} supplier invoices': '{n} 张采购发票', '{n} SKUs': '{n} 个 SKU', '{n} suppliers': '{n} 家供应商',
   'Committed': '已承诺', 'Receiving started': '已开始收货', 'Fully received': '已全部收货', 'Invoiced': '已开票', 'Invoice matched': '发票已匹配',
   'Active orders': '有效订单', 'Reserved or shipped': '已预留或已发货', 'Shipped': '已发货', 'Shipped in full': '已全部发货',
   'Ordered': '订购', 'Not yet received': '尚未收货', 'Received above order': '超订单收货', 'Received': '已收货', 'Received, not invoiced': '已收货未开票', 'Invoiced above receipts': '开票超过收货',
@@ -135,6 +144,19 @@ const chinese: Record<string, string> = {
   'Deliveries on time against the date on the PO. Bubble size is the number of deliveries measured. The guides are the median spend and the average on-time rate.': '按采购订单日期计算交付准时率。气泡大小表示计量的交付次数。参考线为采购额中位数和平均准时率。',
   'Committed purchase orders by supplier': '按供应商统计已承诺采购订单', 'Committed purchase orders in range (approved, issued or received), counted per supplier.': '当前范围内已承诺（已批准、已下达或已收货）的采购订单，按供应商计数。',
   'All purchase orders in range, every status.': '当前范围内全部状态的采购订单。',
+  // The business overview: one figure and one chart per area (round 8).
+  'Low-stock SKUs': '库存偏低 SKU',
+  'SKUs out of stock, below safety stock, or at or below the reorder point once incoming purchase orders and open demand are counted: the stock statuses other than in stock and unknown.': '缺货、低于安全库存，或计入在途采购订单和未履约需求后不高于再订货点的 SKU，即库存状态为“库存正常”和“未知”以外的 SKU。',
+  // The overview's stock figure in the inventory pages' terms (design audit L3-07, W-03).
+  'Below safety stock (on hand)': '低于安全库存（现有）',
+  'SKUs whose stock on hand is under their safety stock, whether or not orders are coming, as the inventory warnings count them. Items to reorder by stock position are counted apart, as on the reorder list.': '现有库存低于安全库存的 SKU，不论是否有在途采购，与库存预警的计数一致。按库存头寸需要补货的物料另行计数，与补货清单一致。',
+  '{n} covered by open orders': '其中 {n} 个已有在途采购覆盖',
+  'Purchases and sales by month': '每月采购与销售金额',
+  'Committed purchase orders and confirmed sales orders in range, by order date. The two are shown side by side, never added.': '当前范围内的已承诺采购订单和已确认销售订单，按订单日期统计。两者并列显示，不相加。',
+  'SKUs by stock status': '按库存状态统计 SKU',
+  'Every SKU with stock, open demand or incoming orders, by its stock status today.': '每个有库存、未履约需求或在途订单的 SKU，按其当前库存状态统计。',
+  'Your role cannot view purchase orders.': '你的角色无权查看采购订单。', 'Your role cannot view sales orders.': '你的角色无权查看销售订单。',
+  'Your role cannot view inventory.': '你的角色无权查看库存。', 'Your role cannot view these records.': '你的角色无权查看这些记录。',
   'Purchase and sales orders in range by order date, every status, drafts included.': '当前范围内的采购订单和销售订单，按订单日期统计，包含草稿在内的全部状态。',
   // Visual cards, insights and date ranges.
   'Focus mode': '聚焦模式', 'Close focus mode': '退出聚焦模式', 'Show data': '查看数据', 'Show chart': '查看图表', 'Download image': '下载图片', 'Download CSV': '下载 CSV',
@@ -150,6 +172,14 @@ const chinese: Record<string, string> = {
   'Some figures may be incomplete for this range.': '部分数据可能不完整。',
   'No business records in this range. Adjust the filters or add business data.': '当前范围暂无业务记录，可调整筛选或录入业务数据。',
   'Date range': '日期范围', 'This month': '本月', 'Last 3 months': '近 3 个月', 'Year to date': '今年至今', 'Last 12 months': '近 12 个月', 'All dates': '全部日期',
+  // The lifecycle's stages are counted on their own (2026-11-10 review).
+  'Committed purchase orders in range. Each bar counts the orders that reached that step, whatever happened at the others: an order can be invoiced before it is fully received.': '当前范围内的已承诺采购订单。每个条形统计已到达该步骤的订单，与其他步骤无关：订单可在全部收货之前开票。',
+  // A month the visual holds only part of.
+  '(to date)': '（至今）', '(part month)': '（部分月份）',
+  // One empty state for a dashboard with no records.
+  'No purchase orders in this range.': '当前范围没有采购订单。', 'No sales orders in this range.': '当前范围没有销售订单。',
+  'No supplier invoices in this range.': '当前范围没有采购发票。', 'No inventory records yet.': '暂无库存记录。', 'No suppliers yet.': '暂无供应商。',
+  'Adjust the dates or filters, or add records, and the charts will appear here.': '调整日期或筛选条件，或录入业务记录后，图表会显示在这里。',
 };
 const english = Object.fromEntries(Object.entries(chinese).map(([en, zh]) => [zh, en]));
 // The English to Chinese pairs, read by the owner-rule tests.
@@ -158,21 +188,25 @@ export function analyticsCopy(value: string, language: string) {
   return language === 'en-US' ? english[value] || value : chinese[value] || value;
 }
 
+// Whole sentences with figures in them, as [English, Chinese] templates, so a
+// sentence is never put together from translated fragments. A key ending in
+// "One" is the form for a count of 1; the caller formats the figures.
+const SENTENCES: Record<string, [string, string]> = {
+  detailCount: ['Showing {shown} of {total} records', '显示 {shown} 条，共 {total} 条记录'],
+  detailCountOne: ['Showing {shown} of 1 record', '显示 {shown} 条，共 1 条记录'],
+  partialToDate: ['{month} runs to today, so it is not a whole month.', '{month} 为本月至今的数据，不是完整月份。'],
+  partialRange: ['Only part of {months} is in the selected range.', '{months} 只有部分日期在所选范围内。'],
+};
+export function analyticsSentence(key: string, language: string, values: Record<string, string | number> = {}, count?: number) {
+  const one = `${key}One`;
+  const pair = SENTENCES[count === 1 && SENTENCES[one] ? one : key];
+  if (!pair) return key;
+  return Object.entries(values).reduce((text, [name, value]) => text.split(`{${name}}`).join(String(value)), pair[language === 'zh-CN' ? 1 : 0]);
+}
+
+// A status in a report reads as on every other page: the one status table
+// (statusLabels.ts). The report's own table said 有差异 for exception, 已暂挂
+// for held, 已履约 where Today said 已完成 (design audit L6-14).
 export function reportStatusCopy(value: string, language: string) {
-  const states: Record<string, [string, string]> = {
-    fully_received: ['Fully received', '全部收货'], pending_approval: ['Pending approval', '待审批'], rejected: ['Rejected', '已驳回'],
-    shortage_risk: ['Shortage risk', '缺货风险'], partially_fulfilled: ['Partially fulfilled', '部分履约'], fulfilled: ['Fulfilled', '已履约'],
-    ready_to_ship: ['Ready to ship', '可发货'], partially_allocated: ['Partially allocated', '部分分配'], on_hold: ['On hold', '已暂停'],
-    issued: ['Issued', '已下达'], partially_received: ['Partially received', '部分收货'], received: ['Received', '已收货'],
-    open: ['Open', '未结'], closed: ['Closed', '已关闭'], cancelled: ['Cancelled', '已取消'], completed: ['Completed', '已完成'],
-    draft: ['Draft', '草稿'], approved: ['Approved', '已批准'], active: ['Active', '启用'], inactive: ['Inactive', '停用'],
-    high: ['High', '高'], medium: ['Medium', '中'], low: ['Low', '低'], unknown: ['Unknown', '未知'],
-    partial: ['Partial', '部分履约'], delivered: ['Delivered', '已交付'], confirmed: ['Confirmed', '已确认'],
-    out_of_stock: ['Out of stock', '缺货'], below_safety_stock: ['Below safety stock', '低于安全库存'],
-    below_reorder_point: ['Below reorder point', '低于再订货点'], ok: ['In stock', '库存正常'],
-    submitted: ['Submitted', '已提交'], matching: ['Matching', '匹配中'], exception: ['Exception', '有差异'], matched: ['Matched', '已匹配'],
-    reserved: ['Reserved', '已预留'], held: ['Held', '已暂挂'], pending: ['Pending', '待处理'], variance: ['Variance', '有差异'], canceled: ['Cancelled', '已取消'],
-  };
-  const pair = states[value];
-  return pair ? pair[language === 'en-US' ? 0 : 1] : analyticsCopy(value, language);
+  return statusCodeLabel(value, language) ?? analyticsCopy(value, language);
 }

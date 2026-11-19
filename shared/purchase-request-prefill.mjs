@@ -199,3 +199,38 @@ export function planPurchaseRequestPrefill({ query = {}, item = {}, suppliers = 
     supplierChoices,
   }
 }
+
+// Several reorder list rows in one request (design audit L3-24): one `line`
+// query value per row, item~quantity~supplier~shortfall. The shortfall is
+// given only when the quantity was raised to the supplier's minimum, so the
+// form labels it as that minimum (quantityFrom=supplier_minimum). At most
+// PREFILL_LINES_MAX lines; the form plans each one as it plans a single line.
+export const PREFILL_LINES_MAX = 50
+const clean = (value) => text(value).replace(/~/g, '')
+export function prefillLineValue({ itemId, quantity, supplierId, shortfall } = {}) {
+  return [itemId, quantity, supplierId, shortfall].map((value) => (value === null || value === undefined ? '' : clean(value))).join('~')
+}
+export function parsePrefillLines(values = []) {
+  const seen = new Set()
+  const lines = []
+  for (const value of values) {
+    if (lines.length >= PREFILL_LINES_MAX) break
+    const [itemId = '', quantity = '', supplierId = '', shortfall = ''] = text(value).split('~').map(text)
+    if (!itemId || seen.has(itemId)) continue
+    seen.add(itemId)
+    lines.push({ itemId, quantity: positive(quantity) === null ? '' : quantity, supplierId, shortfall: positive(shortfall) === null ? '' : shortfall })
+  }
+  return lines
+}
+// The query one of those lines is planned from: what the lines share (origin,
+// reason) and its own item, quantity, supplier and shortfall.
+export function prefillLineQuery(shared = {}, line = {}) {
+  const { line: _lines, itemId: _item, sku: _sku, quantity: _quantity, suppliers: _suppliers, quantityFrom: _from, shortfall: _shortfall, ...rest } = shared
+  return {
+    ...rest,
+    itemId: line.itemId,
+    ...(line.quantity ? { quantity: line.quantity } : {}),
+    ...(line.supplierId ? { suppliers: line.supplierId } : {}),
+    ...(line.shortfall ? { quantityFrom: 'supplier_minimum', shortfall: line.shortfall } : {}),
+  }
+}

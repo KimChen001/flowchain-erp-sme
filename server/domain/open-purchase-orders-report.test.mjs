@@ -157,3 +157,33 @@ test('the open purchase orders route counts overdue to the tenant timezone', asy
   assert.equal(response.payload.asOf, '2026-09-30')
   assert.equal(response.payload.timezone, 'Asia/Shanghai')
 })
+
+// A supplier renamed after its orders were placed: the orders recorded the old
+// name, so filtering by name missed them and the supplier was listed twice.
+// The report reads each order's supplier by its current name and filters by
+// supplier id (from the #352 review).
+test('a renamed supplier is one filter choice by id, shown by its current name, with its older orders', async () => {
+  const rows = [
+    po('OLD', { supplierId: 'SUP-1', supplierName: 'Acme Ltd', currentSupplierName: 'Acme Components' }),
+    po('NEW', { supplierId: 'SUP-1', supplierName: 'Acme Components', currentSupplierName: 'Acme Components' }),
+    po('OTHER', { supplierId: 'SUP-2', supplierName: 'Bolt Co', currentSupplierName: 'Bolt Co' }),
+    // No supplier id: chosen by its name.
+    po('LOOSE', { supplierName: 'Walk-in Vendor' }),
+  ]
+  const all = report(rows)
+  assert.deepEqual(all.supplierOptions, [{ id: 'SUP-1', name: 'Acme Components' }, { id: 'SUP-2', name: 'Bolt Co' }, { id: 'Walk-in Vendor', name: 'Walk-in Vendor' }])
+  assert.deepEqual(all.overdueSuppliers[0], { supplierId: 'SUP-1', supplier: 'Acme Components', count: 2 })
+  const acme = report(rows, { supplierId: 'SUP-1', export: 'true' })
+  assert.deepEqual(acme.exportRows.map((row) => [row.id, row.supplier]).sort(), [['NEW', 'Acme Components'], ['OLD', 'Acme Components']])
+  assert.deepEqual(report(rows, { supplierId: 'Walk-in Vendor', export: 'true' }).exportRows.map((row) => row.id), ['LOOSE'])
+  // An older link that names the supplier by its old name still finds the order.
+  assert.deepEqual(report(rows, { supplier: 'Acme Ltd', export: 'true' }).exportRows.map((row) => row.id), ['OLD'])
+
+  // listForReport gives each order its supplier's current name, by id or code.
+  const repository = createDbProcurementRuntimeRepository({ prisma: {
+    purchaseOrder: { findMany: async () => [{ id: 'P1', supplierId: 'SUP-1', supplierName: 'Acme Ltd', lines: [] }, { id: 'P2', supplierId: 'ACME-CODE', supplierName: 'Acme Ltd', lines: [] }, { id: 'P3', supplierId: 'GONE', supplierName: 'Gone Co', lines: [] }] },
+    supplier: { findMany: async ({ where }) => { assert.equal(where.tenantId, 'tenant-a'); return [{ id: 'SUP-1', code: 'ACME-CODE', name: 'Acme Components' }] } },
+  } })
+  const read = await repository.listForReport({ tenantId: 'tenant-a' })
+  assert.deepEqual(read.map((row) => [row.id, row.currentSupplierName, row.supplierSnapshot.supplierName]), [['P1', 'Acme Components', 'Acme Ltd'], ['P2', 'Acme Components', 'Acme Ltd'], ['P3', null, 'Gone Co']])
+})

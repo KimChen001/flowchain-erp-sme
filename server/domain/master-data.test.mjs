@@ -164,6 +164,37 @@ test('GET /api/master-data/items returns item collection', async () => {
   assert.equal(route.response.payload.items[0].preferredSupplierSource, 'matched_supplier_master')
 })
 
+// Design audit A5 follow-up: the purchasable list (the purchase request
+// forms' item list) gives each item's recorded purchase unit, and its stock
+// unit as stockUnit, '' when none is recorded. Request lines are built in the
+// stock unit (item-stock-unit.mjs).
+test('GET /api/master-data/items?purchasable=true gives the recorded purchase unit and the stock unit', async () => {
+  const env = { FLOWCHAIN_PERSISTENCE_MODE: 'database', DATABASE_URL: 'postgresql://user:pass@localhost:5432/flowchain' }
+  const records = [
+    { id: 'ITEM-BOX', tenantId: 'tenant-a', sku: 'BOX-1', name: 'Carton', unit: 'box', status: 'active', metadata: { purchaseUnit: 'pcs' } },
+    { id: 'ITEM-EA', tenantId: 'tenant-a', sku: 'EA-1', name: 'Valve', unit: 'EA', status: 'active', metadata: {} },
+    { id: 'ITEM-NONE', tenantId: 'tenant-a', sku: 'NONE-1', name: 'Wrap', unit: null, status: 'active', metadata: { purchaseUnit: 'roll' } },
+  ]
+  const masterData = createDbMasterDataRepository({ env, prisma: { item: { findMany: async () => structuredClone(records) } } })
+  const read = async (query) => {
+    const route = createRouteContext('GET', `/api/master-data/items?${query}`, createDb(), { masterData })
+    route.ctx.identity = { authenticated: true, tenantId: 'tenant-a', userId: 'user-a', role: 'manager' }
+    await handleMasterDataRoute(route.ctx)
+    assert.equal(route.response.status, 200)
+    return route.response.payload.items
+  }
+  const purchasable = await read('purchasable=true')
+  assert.deepEqual(purchasable.map((item) => [item.sku, item.purchaseUnit, item.stockUnit, item.baseUnit]), [
+    ['BOX-1', 'pcs', 'box', 'box'],
+    ['EA-1', 'EA', 'EA', 'EA'],
+    ['NONE-1', 'roll', '', 'pcs'],
+  ])
+  assert.ok(purchasable.every((item) => !('recordedPurchaseUnit' in item)))
+  // The item master's list is unchanged.
+  const managed = await read('managed=true')
+  assert.deepEqual(managed.map((item) => [item.sku, item.purchaseUnit, 'stockUnit' in item]), [['BOX-1', 'pcs', false], ['EA-1', 'EA', false], ['NONE-1', 'roll', false]])
+})
+
 test('GET /api/master-data/items/:id returns one item', async () => {
   const db = createDb()
   const route = createRouteContext('GET', '/api/master-data/items/ITEM-A100', db, {

@@ -9,6 +9,7 @@ export function createRouteContext({
   identity,
   sessionStore,
   approvalNotifier = null,
+  mailer = null,
   dataMode,
   runtime,
   domain,
@@ -32,6 +33,9 @@ export function createRouteContext({
     reportError: (error) => errorReporter?.report(error, { req, status: 500, phase: "route" }),
     // Tells approvers a document is waiting (server/notifications).
     approvalNotifier,
+    // The server's one mailer (server/mail/mailer.mjs), for the supplier
+    // follow-up email (server/routes/decision-items.routes.mjs).
+    mailer,
     ...domain,
     ...runtime,
   };

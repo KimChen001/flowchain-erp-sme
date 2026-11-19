@@ -218,7 +218,7 @@ export default function UniversalIntakePage() {
     </Card>
 
     <div className="grid grid-cols-5 overflow-hidden rounded-xl border border-slate-200 bg-white">
-      {steps.map((label, index) => <div key={label} className={`px-2 py-3 text-center text-xs font-medium ${index === step ? "bg-blue-600 text-white" : index < step ? "bg-blue-50 text-blue-700" : "text-slate-400"}`}><span className="mr-1">{index < step ? "✓" : index + 1}.</span>{label}</div>)}
+      {steps.map((label, index) => <div key={label} className={`px-2 py-3 text-center text-xs font-medium ${index === step ? "bg-blue-600 text-white" : index < step ? "bg-blue-50 text-blue-700" : "text-slate-500"}`}><span className="mr-1">{index < step ? "✓" : index + 1}.</span>{label}</div>)}
     </div>
 
     {error && <Card className="p-4"><div className="flex gap-2 text-sm text-red-700"><AlertCircle size={18} />{error}</div></Card>}

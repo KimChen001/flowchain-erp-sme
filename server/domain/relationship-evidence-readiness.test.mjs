@@ -3,38 +3,11 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { buildTodayCockpit } from './today-cockpit-read-model.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 function source(...parts) {
   return fs.readFileSync(path.join(root, ...parts), 'utf8')
-}
-
-const fixture = {
-  purchaseRequests: [
-    { pr: 'PR-2026-2400', sourceSku: 'SKU-00412', sourceName: '伺服电机 750W', supplier: '深圳新元电气', status: '已批准', quantity: 8, linkedPo: 'PO-2026-1287' },
-  ],
-  rfqs: [
-    { id: 'RFQ-26-0046', title: 'SKU-00412 伺服电机询价', status: '进行中', suppliers: 3, quoted: 2, sourceRequest: 'PR-2026-2400', linkedPo: 'PO-2026-1287', bestSupplier: '深圳新元电气' },
-  ],
-  purchaseOrders: [
-    { po: 'PO-2026-1282', supplier: '广州化工耗材', status: '部分到货', eta: '2026-05-25', items: 9, received: 5, sourceSku: 'SKU-00744', sourceName: '聚氨酯密封胶' },
-    { po: 'PO-2026-1287', supplier: '深圳新元电气', status: '待审批', eta: '2026-06-02', items: 8, received: 0, sourceRequest: 'PR-2026-2400', sourceRfq: 'RFQ-26-0046', sourceSku: 'SKU-00412', sourceName: '伺服电机 750W' },
-  ],
-  receivingDocs: [
-    { grn: 'GRN-202605-0419', po: 'PO-2026-1282', supplier: '广州化工耗材', status: '异常处理', items: 9, failed: 2 },
-  ],
-  supplierInvoices: [
-    { invoiceNumber: 'INV-GZ-260419', supplier: '广州化工耗材', relatedPo: 'PO-2026-1282', relatedGrn: 'GRN-202605-0419', matchStatus: '差异待处理', status: '存在差异', varianceAmount: 42000, lines: [{ sku: 'SKU-00744', name: '聚氨酯密封胶' }] },
-    { invoiceNumber: 'INV-SZ-260425', supplier: '深圳新元电气', relatedPo: 'PO-2026-1287', matchStatus: '未匹配', status: '待匹配', varianceAmount: 2079200, lines: [{ sku: 'SKU-00412', name: '伺服电机 750W' }] },
-  ],
-  products: [
-    { sku: 'SKU-00412', itemName: '伺服电机 750W', availableQuantity: 34, safetyStock: 50, reorderPoint: 50, status: '不足', riskLevel: '高', riskReason: '可用库存低于安全库存' },
-  ],
-  inventoryMovements: [
-    { movementId: 'IM-20260527-0004', sku: 'SKU-00412', relatedPo: 'PO-2026-1287', status: '已确认' },
-  ],
 }
 
 test('R212 relationship and evidence models expose normalized read-only contracts', () => {
@@ -87,20 +60,6 @@ test('R215-R216 high-value surfaces retain authoritative evidence without a dupl
   assert.match(aiReadiness, /resolveSkuShortageEvidence/)
   assert.match(aiReadiness, /resolveInvoiceMatchingEvidence/)
   assert.match(aiReadiness, /recordsFromEvidence/)
-})
-
-test('R217 Today Cockpit remains evidence/count consistent for delayed PO inventory and RFQ timing', () => {
-  const cockpit = buildTodayCockpit(fixture, { now: '2026-06-29T00:00:00Z' })
-  const openPoCard = cockpit.cards.find((card) => card.id === 'open-pos')
-  const inventoryCard = cockpit.cards.find((card) => card.id === 'inventory-risk')
-  const rfqAction = cockpit.recommendedActions.find((action) => action.id === 'action-active-rfq')
-  assert.ok(openPoCard.value >= 1)
-  assert.ok(openPoCard.evidence.length > 0)
-  assert.equal(openPoCard.evidence.some((item) => item.id || item.label || item.summary), true)
-  assert.ok(['high', 'medium', 'low'].includes(inventoryCard.severity))
-  assert.ok(inventoryCard.evidence.length > 0)
-  assert.doesNotMatch(String(inventoryCard.evidence?.[0]?.summary || ''), /^(高|中|低)$/)
-  assert.match(rfqAction.reason, /RFQ/)
 })
 
 test('R218-R220 relationship guardrails preserve navigation safety and AI boundaries', () => {

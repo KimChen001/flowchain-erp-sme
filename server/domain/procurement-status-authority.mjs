@@ -138,9 +138,9 @@ export const PROCUREMENT_STATUS_TRANSITIONS = Object.freeze({
     draft: ['submitted', 'cancelled'],
     submitted: ['approved', 'rejected', 'draft', 'cancelled'],
     approved: ['draft', 'cancelled', 'converted'],
-    rejected: [],
+    rejected: ['draft'],
     cancelled: [],
-    converted: [],
+    converted: ['approved'],
   }),
   rfq: freezeTransitions({
     draft: ['open', 'cancelled'],
@@ -425,6 +425,18 @@ export function isReceivingWorkflowPostable(value = '') {
   try {
     const normalized = normalizeProcurementAuthorityStatus('receivingWorkflow', value)
     return [RECEIVING_WORKFLOW_STATUS.READY_FOR_RECEIVING, RECEIVING_WORKFLOW_STATUS.RECEIVED].includes(normalized)
+  } catch {
+    return false
+  }
+}
+
+// A purchase order not yet committed: a draft, or one waiting for approval.
+// Its lines are on order for the inventory position (design audit C2: the
+// reorder list counted none until the order was approved).
+export function isPurchaseOrderPending(value = '') {
+  try {
+    const normalized = normalizeProcurementAuthorityStatus('purchaseOrder', value)
+    return [PURCHASE_ORDER_STATUS.DRAFT, PURCHASE_ORDER_STATUS.PENDING_APPROVAL].includes(normalized)
   } catch {
     return false
   }

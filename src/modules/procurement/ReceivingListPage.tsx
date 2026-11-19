@@ -5,12 +5,14 @@ import { BusinessEntityLink } from "../../components/business/BusinessEntityLink
 import { EntityLink } from "../../components/business/EntityLink";
 import { A, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
-import { ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
+import { ExportButton, ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { receivingApi, type ReceiptListItem } from "./receivingApi";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { ListPager, usePagedRows } from "./listPaging";
+import { exportRowsToCsv } from "../../lib/data-export";
+import { instantDayInTimeZone } from "../../lib/format";
 
 // Receipts drawn at a time; the cards, search and filters cover every receipt.
 const PAGE_SIZE = 50;
@@ -75,6 +77,19 @@ export function ReceivingListPage() {
     setWarehouse("");
     setPosting("");
   };
+  // Every receipt the filters match, worded as the list shows it (design audit U-14).
+  const exportReceipts = () => exportRowsToCsv("receipts-export.csv", shown.map((row) => ({
+    [tr("收货单", "Receipt")]: row.documentNumber || row.id,
+    [tr("采购订单", "Purchase order")]: row.poNumber || row.poId || "",
+    [tr("供应商", "Supplier")]: row.supplierName || "",
+    [tr("仓库", "Warehouse")]: row.warehouse?.name || "",
+    [tr("合格数量", "Accepted")]: Number(row.acceptedQuantity || 0),
+    [tr("拒收数量", "Rejected")]: Number(row.rejectedQuantity || 0),
+    [tr("到货日期", "Arrival date")]: row.arrivedAt || row.createdAt ? instantDayInTimeZone(String(row.arrivedAt || row.createdAt), timezone) : "",
+    [tr("过账状态", "Posting")]: row.postingStatus ? statusLabel(row.postingStatus) : "",
+    [tr("流程状态", "Workflow")]: row.workflowStatus ? statusLabel(row.workflowStatus) : "",
+    [tr("收货人", "Receiver")]: row.receiver || "",
+  })), timezone);
 
   return (
     <div className="space-y-5" data-testid="procurement-receiving-list">
@@ -91,6 +106,7 @@ export function ReceivingListPage() {
         actions={<>
           <ResetButton onClick={reset} />
           <RefreshButton onClick={() => void load()} />
+          <ExportButton onClick={() => void exportReceipts()} />
         </>}
       >
         <Field label={tr("搜索", "Search")}>
@@ -119,7 +135,7 @@ export function ReceivingListPage() {
         </Field>
       </ListSearchCard>
 
-      <ListCard title={tr("收货单列表", "Receipt list")} total={state === "loaded" ? shown.length : undefined} shown={pageRows.length} testId="receiving-record-list">
+      <ListCard title={tr("收货单列表", "Receipt list")} total={state === "loaded" ? shown.length : undefined} all={state === "loaded" ? rows.length : undefined} shown={pageRows.length} testId="receiving-record-list">
         <div className={tableScrollClass}>
           <table className={`w-full min-w-[1000px] text-left ${tableBodyTextClass}`}>
             <thead>
@@ -135,7 +151,7 @@ export function ReceivingListPage() {
               </tr>
             </thead>
             <tbody>
-              {state === "loading" && <tr><td colSpan={8} className="px-4 py-12 text-center text-sm" style={{ color: A.sub }}>{tr("正在读取收货记录…", "Loading receiving records…")}</td></tr>}
+              {state === "loading" && <ListStateRow colSpan={8} state="loading" />}
               {state === "error" && <ListStateRow colSpan={8} state="error" title={tr("收货记录加载失败", "Could not load receiving records")} onRetry={() => void load()} />}
               {state === "loaded" && shown.length === 0 && (
                 rows.length === 0
@@ -171,7 +187,7 @@ export function ReceivingListPage() {
                     {/* A posted receipt says Posted; one not posted also says where it stands (draft, ready, cancelled). */}
                     <div className="flex flex-col items-start gap-1">
                       <StatusChip label={statusLabel(row.postingStatus || "—")} tone={statusToneOf(row.postingStatus)} testId="receipt-posting-status" />
-                      {row.postingStatus !== "posted" && row.workflowStatus && (
+                      {row.postingStatus !== "posted" && row.postingStatus !== "reversed" && row.workflowStatus && (
                         <StatusChip label={statusLabel(row.workflowStatus)} tone={statusToneOf(row.workflowStatus)} testId="receipt-workflow-status" />
                       )}
                     </div>

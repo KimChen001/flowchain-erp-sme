@@ -1,12 +1,21 @@
 import { randomUUID } from 'node:crypto';
+import { SUPPLIER_TIERS } from '../../shared/supplier-tiers.mjs';
 
 // Supplier tiers and business owners (docs/supplier-tiers-design.md).
 // A tier is the supplier's importance to the business: 1 Strategic, 2 Core,
-// 3 Transactional, or null for not tiered. A person sets it with a reason, and
-// every change is a tier_change audit row; that row is the tier's history. A
-// change bumps the supplier version, as a profile save does, so an edit opened
-// before it is refused instead of silently undoing it.
-export const SUPPLIER_TIERS = Object.freeze([1, 2, 3]);
+// 3 Transactional, or null for not tiered (shared/supplier-tiers.mjs). A person
+// sets it with a reason, and every change is a tier_change audit row; that row
+// is the tier's history. A change bumps the supplier version, as a profile
+// save does, so an edit opened before it is refused instead of silently
+// undoing it.
+//
+// A review keeps the tier and records that someone looked at it again, with a
+// reason, as a tier_reviewed audit row (design audit L9-12). A change and a
+// review can each set the next review day, kept on the supplier
+// (metadata.tierReview), and each audit row keeps the supplier's indicators
+// as the reviewer saw them (on time, OTIF, overdue orders, open issues), read
+// by the route. FlowChain never suggests the tier itself.
+export { SUPPLIER_TIERS };
 export const TIER_REASON_LIMITS = Object.freeze({ min: 3, max: 500 });
 
 const fail = (status, code, message, details = []) => Object.assign(new Error(message), { status, code, details });
@@ -20,9 +29,27 @@ function parseTier(value) {
   return tier;
 }
 
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+// The next review day: a calendar date, or none.
+function parseReviewDay(value) {
+  const day = text(value);
+  if (!day) return null;
+  if (!DAY.test(day) || new Date(`${day}T12:00:00Z`).toISOString().slice(0, 10) !== day) throw fail(422, 'VALIDATION_ERROR', 'Check the highlighted fields.', [{ field: 'nextReviewOn', message: 'Enter the next review date as a calendar date.' }]);
+  return day;
+}
+function parseReason(value) {
+  const reason = text(value);
+  if (reason.length < TIER_REASON_LIMITS.min || reason.length > TIER_REASON_LIMITS.max) throw fail(422, 'VALIDATION_ERROR', 'Check the highlighted fields.', [{ field: 'reason', message: 'Enter a reason of 3 to 500 characters.' }]);
+  return reason;
+}
+const tierName = (tier) => (tier ? `Tier ${tier}` : 'not tiered');
+// When the tier was last decided, by whom, and when it is due again.
+const tierReviewOf = (actorId, now, nextReviewOn) => ({ reviewedAt: now.toISOString(), reviewedById: actorId, nextReviewOn });
+
 // Writes one tier change inside the caller's transaction. Also used by the
 // walkthrough seed, which has no signed-in user (actorId null).
-export async function applySupplierTierChange(tx, supplier, { tier, reason, actorId = null, acceptedSuggestion = false, source = 'supplier-master', now = new Date() }) {
+// indicators: the supplier's figures as the person saw them, or null.
+export async function applySupplierTierChange(tx, supplier, { tier, reason, actorId = null, acceptedSuggestion = false, source = 'supplier-master', now = new Date(), nextReviewOn = null, indicators = null }) {
   const version = versionOf(supplier) + 1;
   const saved = await tx.supplier.update({
     where: { id: supplier.id },
@@ -31,13 +58,13 @@ export async function applySupplierTierChange(tx, supplier, { tier, reason, acto
       tierReason: tier === null ? null : reason,
       tierSetById: actorId,
       tierSetAt: now,
-      metadata: { ...(supplier.metadata || {}), version, ...(actorId ? { updatedBy: actorId } : {}) },
+      metadata: { ...(supplier.metadata || {}), version, ...(actorId ? { updatedBy: actorId } : {}), tierReview: tierReviewOf(actorId, now, nextReviewOn) },
     },
   });
   await tx.auditLog.create({ data: {
     id: randomUUID(), tenantId: supplier.tenantId, source, module: 'srm', action: 'tier_change', entityType: 'supplier', entityId: supplier.id, actorId,
-    summary: `Supplier tier changed from ${supplier.tier ? `Tier ${supplier.tier}` : 'not tiered'} to ${tier ? `Tier ${tier}` : 'not tiered'}`,
-    metadata: { fromTier: supplier.tier ?? null, toTier: tier, reason, acceptedSuggestion: Boolean(acceptedSuggestion), version },
+    summary: `Supplier tier changed from ${tierName(supplier.tier)} to ${tierName(tier)}`,
+    metadata: { fromTier: supplier.tier ?? null, toTier: tier, reason, acceptedSuggestion: Boolean(acceptedSuggestion), version, nextReviewOn, ...(indicators ? { indicators } : {}) },
   } });
   return saved;
 }
@@ -57,14 +84,35 @@ async function inTransaction(prisma, id, input, scope, work) {
   }
 }
 
-export async function changeSupplierTier(prisma, id, input = {}, actorId, scope) {
+// options.indicators: the supplier's figures for the audit row, read by the
+// route with the person's own access; never taken from the request body.
+export async function changeSupplierTier(prisma, id, input = {}, actorId, scope, { indicators = null, now = new Date() } = {}) {
   if (!actorId) throw fail(403, 'TENANT_REQUIRED', 'An authenticated workspace is required.');
   const tier = parseTier(input.tier);
-  const reason = text(input.reason);
-  if (reason.length < TIER_REASON_LIMITS.min || reason.length > TIER_REASON_LIMITS.max) throw fail(422, 'VALIDATION_ERROR', 'Check the highlighted fields.', [{ field: 'reason', message: 'Enter a reason of 3 to 500 characters.' }]);
+  const reason = parseReason(input.reason);
+  const nextReviewOn = parseReviewDay(input.nextReviewOn);
   return inTransaction(prisma, id, input, scope, async (tx, supplier) => {
-    if ((supplier.tier ?? null) === tier) throw fail(422, 'TIER_UNCHANGED', tier ? `This supplier is already Tier ${tier}.` : 'This supplier is already not tiered.', [{ field: 'tier', message: 'Choose a different tier.' }]);
-    return applySupplierTierChange(tx, supplier, { tier, reason, actorId, acceptedSuggestion: input.acceptedSuggestion === true });
+    if ((supplier.tier ?? null) === tier) throw fail(422, 'TIER_UNCHANGED', tier ? `This supplier is already Tier ${tier}.` : 'This supplier is already not tiered.', [{ field: 'tier', message: 'Choose a different tier, or record a review to keep this one.' }]);
+    return applySupplierTierChange(tx, supplier, { tier, reason, actorId, acceptedSuggestion: input.acceptedSuggestion === true, now, nextReviewOn, indicators });
+  });
+}
+
+// Records a review that keeps the supplier's tier (design audit L9-12): who,
+// when, why, the next review day and the indicators then. Bumps the version.
+export async function reviewSupplierTier(prisma, id, input = {}, actorId, scope, { indicators = null, now = new Date() } = {}) {
+  if (!actorId) throw fail(403, 'TENANT_REQUIRED', 'An authenticated workspace is required.');
+  const reason = parseReason(input.reason);
+  const nextReviewOn = parseReviewDay(input.nextReviewOn);
+  return inTransaction(prisma, id, input, scope, async (tx, supplier) => {
+    const version = versionOf(supplier) + 1;
+    const tier = supplier.tier ?? null;
+    const saved = await tx.supplier.update({ where: { id: supplier.id }, data: { metadata: { ...(supplier.metadata || {}), version, updatedBy: actorId, tierReview: tierReviewOf(actorId, now, nextReviewOn) } } });
+    await tx.auditLog.create({ data: {
+      id: randomUUID(), tenantId: scope.tenantId, source: 'supplier-master', module: 'srm', action: 'tier_reviewed', entityType: 'supplier', entityId: supplier.id, actorId,
+      summary: `Supplier tier reviewed and kept at ${tierName(tier)}`,
+      metadata: { tier, reason, version, nextReviewOn, ...(indicators ? { indicators } : {}) },
+    } });
+    return saved;
   });
 }
 

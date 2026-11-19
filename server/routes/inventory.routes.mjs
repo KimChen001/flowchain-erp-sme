@@ -8,7 +8,8 @@ import { createInventoryAuthoritativeReadService } from "../domain/inventory-aut
 import { capabilityForEnvironment } from "../domain/capability-registry.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { reportReadAccess, scopeBusinessContext, sendReadAccessError } from "../domain/report-read-access.mjs";
-import { createReorderListReadService, stockTruncatedSubjects } from "../domain/reorder-list-read-service.mjs";
+import { allocationTruncatedSubjects, createReorderListReadService } from "../domain/reorder-list-read-service.mjs";
+import { forecastClientFromEnv } from "../domain/reorder-point-forecast.mjs";
 import { readTenantTimezone } from "../domain/tenant-timezone.mjs";
 import { tenantCalendarDay } from "../domain/tenant-calendar-day.mjs";
 
@@ -81,7 +82,7 @@ export async function handleInventoryRoute(ctx) {
     (runtimeModel ||= buildRuntimeInventoryAllocation(await scopedContext()));
 
   const allocationPath =
-    /^\/api\/inventory\/(?:availability|allocation|shortages|demand-supply-gap|available-to-promise|reservation-preview|sales-order-impact|po-supply-impact)(?:\/.*)?$/.test(
+    /^\/api\/inventory\/(?:availability|allocation|shortages|demand-supply-gap|available-to-promise|po-supply-impact)(?:\/.*)?$/.test(
       url.pathname,
     );
   if (allocationPath && req.method !== "GET") {
@@ -224,72 +225,6 @@ export async function handleInventoryRoute(ctx) {
 
   if (
     req.method === "GET" &&
-    url.pathname === "/api/inventory/reservation-preview"
-  ) {
-    const model = await allocationModel();
-    const availability = getRuntimeSkuAvailability(
-      model,
-      url.searchParams.get("sku") || "",
-    );
-    const requestedQty = Number(url.searchParams.get("requestedQty") || 0);
-    const reservationPreview = {
-      sku: availability?.sku || "",
-      salesOrderId: url.searchParams.get("salesOrderId") || "",
-      requestedQty,
-      reservableQty:
-        availability?.available === null || !availability
-          ? null
-          : Math.min(Math.max(0, requestedQty), availability.available),
-      dataLimitations: availability?.dataLimitations || [
-        "inventory_balance_missing",
-      ],
-      evidenceLinks: availability?.evidence || [],
-    };
-    send(res, 200, {
-      reservationPreview,
-      availability,
-      allocation: availability,
-      summary: model.summary,
-      risks: [],
-      evidenceLinks: reservationPreview.evidenceLinks,
-      dataLimitations: reservationPreview.dataLimitations,
-    });
-    return true;
-  }
-
-  if (
-    req.method === "GET" &&
-    url.pathname === "/api/inventory/sales-order-impact"
-  ) {
-    if (!access.collections.salesOrders) return denied("sales_order.read", "Your role cannot view sales orders.");
-    const context = await scopedContext();
-    const model = buildRuntimeInventoryAllocation(context);
-    const id = url.searchParams.get("salesOrderId") || "";
-    const order = scopeBusinessContext(context, access).salesOrders.find(
-      (row) => String(row.salesOrderId || row.id) === id,
-    );
-    const availability = order
-      ? getRuntimeSkuAvailability(model, order.sku || order.itemId)
-      : null;
-    send(
-      res,
-      order ? 200 : 404,
-      order
-        ? {
-            salesOrder: order,
-            availability,
-            allocation: availability,
-            summary: model.summary,
-            risks: availability?.shortage > 0 ? [availability] : [],
-            dataLimitations: availability?.dataLimitations || [],
-          }
-        : { error: "Sales order not found" },
-    );
-    return true;
-  }
-
-  if (
-    req.method === "GET" &&
     url.pathname === "/api/inventory/po-supply-impact"
   ) {
     if (!access.collections.purchaseOrders) return denied("procurement.purchase_order.read", "Your role cannot view purchase orders.");
@@ -332,8 +267,19 @@ export async function handleInventoryRoute(ctx) {
   // incoming are the allocation model's over every warehouse; a reader of only
   // some warehouses gets the items as not checked. Purchase order numbers in
   // the flags need procurement.purchase_order.read.
-  if (req.method === "GET" && url.pathname === "/api/inventory/reorder-list") {
+  //
+  // /api/inventory/reorder-list/forecast reads the same list with the model
+  // suggestion (reorder-point-forecast.mjs) and returns only that, per item,
+  // so the list itself never waits for the forecast service. It is there only
+  // when FLOWCHAIN_FORECAST_URL is set; the list says so in forecastAvailable.
+  const reorderForecast = url.pathname === "/api/inventory/reorder-list/forecast";
+  if (req.method === "GET" && (url.pathname === "/api/inventory/reorder-list" || reorderForecast)) {
     const env = ctx.env || process.env;
+    const forecastClient = ctx.forecastClient !== undefined ? ctx.forecastClient : forecastClientFromEnv(env);
+    if (reorderForecast && !forecastClient) {
+      send(res, 404, { error: "No forecast service is configured.", code: "REORDER_FORECAST_NOT_CONFIGURED" });
+      return true;
+    }
     const injected = ctx.inventoryPrisma || ctx.outboundPrisma;
     if (!injected && !env.DATABASE_URL) {
       send(res, 409, {
@@ -354,12 +300,23 @@ export async function handleInventoryRoute(ctx) {
       timeZone,
       allocationRows: model.availability,
       showPurchaseOrders: Boolean(access?.collections.purchaseOrders),
+      showPurchaseRequests: Boolean(access?.collections.purchaseRequests),
       // The context's subjects the list depends on: stock balances, sales
       // orders (reservations) and purchase orders (incoming). It reads the
       // items and shipments itself and adds its own.
-      truncatedSubjects: stockTruncatedSubjects(context.truncatedSubjects),
+      truncatedSubjects: allocationTruncatedSubjects(context),
+      forecastClient: reorderForecast ? forecastClient : null,
     });
-    send(res, 200, { ...list, generatedAt: now.toISOString() });
+    if (reorderForecast) {
+      send(res, 200, {
+        today: list.today,
+        forecast: list.forecast || { status: "unavailable", error: "warehouse scope" },
+        rows: list.rows.filter((row) => row.reorderPointForecast).map((row) => ({ itemId: row.itemId, reorderPointForecast: row.reorderPointForecast })),
+        generatedAt: now.toISOString(),
+      });
+      return true;
+    }
+    send(res, 200, { ...list, forecastAvailable: Boolean(forecastClient), generatedAt: now.toISOString() });
     return true;
   }
 

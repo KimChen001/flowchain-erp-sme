@@ -150,3 +150,27 @@ test("contract file routes belong to the contract routes", async () => {
     assert.equal(await handleAttachmentRoute(context("POST", path, {}, {}, { env: CONTRACTS_ONLY }).value), false, path);
   }
 });
+
+// Design audit L10-01: the storage health and orphan checks read every
+// workspace's uploads and the server's storage path, so they are operator
+// scripts only. A signed-in user who asks for them over HTTP gets no report,
+// with any attachment capability on, and the checks never run.
+test("storage health and orphan checks are not served over HTTP", async () => {
+  const service = {
+    healthCheck: async () => assert.fail("health check must not run"),
+    orphanCheck: async () => assert.fail("orphan check must not run"),
+  };
+  const settlement = { FLOWCHAIN_PERSISTENCE_MODE: "database", FLOWCHAIN_ENABLE_DB_SETTLEMENT_WORKFLOW: "true" };
+  for (const env of [settlement, CONTRACTS_ONLY, { ...CONTRACTS_ONLY, ...settlement }]) {
+    for (const path of ["/api/attachments/orphans", "/api/attachments/health"]) {
+      const value = context("GET", path, service, {}, { env });
+      assert.equal(await handleAttachmentRoute(value.value), true, path);
+      assert.equal(value.sent.length, 1, path);
+      const [{ status, payload }] = value.sent;
+      assert.ok([404, 409].includes(status), `${path} answered ${status}`);
+      if (env !== CONTRACTS_ONLY) assert.deepEqual([status, payload.code], [404, "ATTACHMENT_ROUTE_NOT_FOUND"], path);
+      assert.equal(JSON.stringify(payload).includes("root"), false, path);
+      assert.equal(value.response.status, undefined, path);
+    }
+  }
+});

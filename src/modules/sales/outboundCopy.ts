@@ -1,7 +1,7 @@
 // English display copy for the sales order and shipment workbench. Display
 // labels only: never apply this mapping to stored business values.
 export const outboundEnglish: Record<string, string> = {
-  "可用量 = 在库量 - 预留量": "Available = on hand − reserved",
+  "可用量 = 在手量 - 预留量": "Available = on hand − reserved",
   "预留量 + 已履约量不超过订购量": "Reserved + shipped does not exceed ordered",
   "预留的消耗、释放与分配不超过预留量": "Used, released and allocated stay within the reservation",
   "发货过账数量与库存流水一致": "Posted shipment quantities match the stock movements",
@@ -22,6 +22,8 @@ export const outboundEnglish: Record<string, string> = {
   "历史出库事实不一致，系统已阻止冲销。": "Past outbound records do not match, so the reversal was blocked.",
   "已有销售发票对此发货开票，不能再冲销。如需收回货物，请使用客户退货和贷项通知单。":
     "A customer invoice already bills this shipment, so it can no longer be reversed. To take the goods back, use a customer return and credit note.",
+  "已有客户退货基于此发货单，不能冲销。请先取消该退货；如退货已收货，先冲销其收货。":
+    "A customer return is based on this shipment, so it cannot be reversed. Cancel the return first, reversing its receipt if it was posted.",
   "当前订单状态不允许此操作。": "The order's current status does not allow this action.",
   "订单物料与当前工作区基础资料不一致。": "The order's items do not match this workspace's item master.",
   "返回销售订单列表": "Back to sales orders",
@@ -73,7 +75,7 @@ export const outboundEnglish: Record<string, string> = {
   "当前订单的库存、预留与履约事实一致。": "Inventory, reservations, and fulfillment for this order are consistent.",
   "当前订单存在需要人工复核的对账差异。": "This order has reconciliation differences to review.",
   "默认库位": "Default location",
-  "现有 {n}": "On hand {n}",
+  "在手 {n}": "On hand {n}",
   "预留 {n}": "Reserved {n}",
   "可用 {n}": "Available {n}",
   "参考号：{id}": "Reference: {id}",
@@ -85,6 +87,9 @@ export const outboundEnglish: Record<string, string> = {
   "预留量": "Reserved",
   // The reserve dialog picks one stock balance.
   "仓库 / 库位": "Warehouse / location",
+  // An order on hold: "On hold", as the order list, its card and order
+  // evidence say (the workspace dictionary has "Paused").
+  "暂停": "On hold",
   // Shipment, reservation and allocation statuses.
   "待过账": "Ready to post",
   "有效": "Active",

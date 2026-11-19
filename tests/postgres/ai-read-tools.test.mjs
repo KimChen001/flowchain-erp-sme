@@ -148,6 +148,27 @@ test('the read tools answer from the seeded workspace, each role reading only wh
     // No tool returns a contact's email address, and nothing was written.
     for (const output of [results, viewerPrices, viewerOrders, viewerContracts, financeOutputs]) assert.doesNotMatch(JSON.stringify(output), /@/)
     assert.deepEqual(await state(), before)
+
+    // record_history (design audit L5-04) on the real audit log: a purchase
+    // order's entries under both spellings, newest first, with who; the
+    // values before and after for a reader with audit.read_sensitive only;
+    // nothing for a reader who may not read purchase orders.
+    const { AI_ASSISTANT_V2_HISTORY_TOOLS } = await import('../../server/domain/ai-assistant-v2-history-tools.mjs')
+    const history = AI_ASSISTANT_V2_HISTORY_TOOLS.find((tool) => tool.name === 'record_history')
+    const po20 = admin.facts.purchaseOrders.index.find((row) => String(row.orderNumber).endsWith('PO-020'))
+    await prisma.auditLog.createMany({ data: [
+      { id: `${tenantId}-history-1`, tenantId, source: 'test', module: 'procurement', action: 'create', entityType: 'purchase_order', entityId: po20.id, actorId: `${tenantId}-admin`, summary: 'Purchase order created', createdAt: new Date('2030-01-01T10:00:00Z'), metadata: {} },
+      { id: `${tenantId}-history-2`, tenantId, source: 'test', module: 'procurement', action: 'update', entityType: 'PurchaseOrder', entityId: po20.id, actorId: `${tenantId}-admin`, summary: 'Promised date moved', createdAt: new Date('2030-01-02T10:00:00Z'), metadata: { before: { promisedDate: '2026-09-26' }, after: { promisedDate: '2026-10-02' } } },
+    ] })
+    const adminHistory = await history.run({ record: 'PO-020' }, admin)
+    assert.equal(adminHistory.kind, 'purchase_order')
+    assert.deepEqual(adminHistory.rows.slice(0, 2).map((row) => [row.at, row.summary, row.by]), [['2030-01-02T10:00', 'Promised date moved', 'Read Tools admin'], ['2030-01-01T10:00', 'Purchase order created', 'Read Tools admin']])
+    assert.deepEqual(adminHistory.rows[0].after, { promisedDate: '2026-10-02' })
+    assert.equal(history.available(viewer.facts, viewer.context), true)
+    const viewerHistory = await history.run({ record: 'PO-020' }, viewer)
+    assert.equal(viewerHistory.rows[0].summary, 'Promised date moved')
+    assert.equal('after' in viewerHistory.rows[0], false, 'a viewer has no audit.read_sensitive')
+    assert.deepEqual(await history.run({ record: 'PO-020' }, finance), { error: 'not_found' })
   } finally {
     await prisma.$disconnect()
   }

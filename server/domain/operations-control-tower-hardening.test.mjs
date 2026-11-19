@@ -155,7 +155,6 @@ test('R280/R290/R300 source guardrails preserve boundaries no keys and no standa
     read('src', 'modules', 'inventory', 'Page.tsx'),
     read('src', 'modules', 'srm', 'Page.tsx'),
     read('src', 'components', 'ai', 'ContextualAIInsightPanel.tsx'),
-    read('src', 'modules', 'action-drafts', 'ActionDraftReviewShell.tsx'),
   ].join('\n')
   const all = [domainSource, uiSource].join('\n')
   const app = read('src', 'app', 'FlowChainApp.tsx')
@@ -181,7 +180,6 @@ test('R280/R290/R300 source guardrails preserve boundaries no keys and no standa
   assert.match(uiSource, /质检/)
   assert.match(uiSource, /可用量/)
   assert.match(uiSource, /风险与异常/)
-  assert.match(uiSource, /供应商跟进备注草稿/)
   assert.match(uiSource, /Add supplied item/)
   assert.match(uiSource, /设为首选/)
   assert.match(uiSource, /暂无采购交易记录/)

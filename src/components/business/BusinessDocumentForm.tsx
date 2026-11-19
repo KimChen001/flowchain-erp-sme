@@ -1,10 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { useNavigate } from "react-router";
 import { useUnsavedChanges } from "../navigation/UnsavedChangesProvider";
 import { A, Card } from "../ui";
 import { useI18n } from "../../i18n/I18n";
-import { todayInTimeZone } from "../../lib/format";
 import { useReturnsCopy } from "../../modules/inventory/returnsCopy";
 
 // Used only by /app/sales/returns/new. Nothing on this form is stored, so it
@@ -18,10 +17,15 @@ export function BusinessDocumentForm({ documentLabel, documentId, listPath, mode
   mode?: "new" | "edit";
 }) {
   const navigate = useNavigate();
-  const { timezone } = useI18n();
+  const { workspaceToday } = useI18n();
   const { copy } = useReturnsCopy();
   const [reference, setReference] = useState(documentId || "");
-  const [businessDate, setBusinessDate] = useState(() => todayInTimeZone(timezone));
+  // The workspace's day from the server, once known; never the browser's own
+  // day (design audit B3, #18).
+  const [businessDate, setBusinessDate] = useState(workspaceToday);
+  useEffect(() => {
+    if (workspaceToday && !businessDate && !dirty) setBusinessDate(workspaceToday);
+  }, [workspaceToday]);
   const [party, setParty] = useState("");
   const [remarks, setRemarks] = useState("");
   const [dirty, setDirty] = useState(false);

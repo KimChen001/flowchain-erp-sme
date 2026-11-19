@@ -21,7 +21,7 @@ import { defaultRoleTemplates, legacyRoleTemplateMap } from '../auth/permission-
 // never 0, and the report marks a figure built from it as restricted.
 
 const COLLECTION_PERMISSION = Object.freeze({
-  purchaseRequests: 'procurement.purchase_order.read',
+  purchaseRequests: 'procurement.purchase_request.read',
   rfqs: 'procurement.purchase_order.read',
   purchaseOrders: 'procurement.purchase_order.read',
   receipts: 'receiving.read',
@@ -60,12 +60,13 @@ export function reportReadAccessFor(actor) {
     amounts: allowed('finance.amounts.read'),
     partner: allowed('finance.partner_snapshot.read'),
     // What the home page reads beyond the business read context, with each
-    // page's own permission: customer invoices, receivables, contracts (their
+    // page's own permission: customer invoices, receivables, payables, contracts (their
     // owner's, or every one for a reader who manages contracts), and the
     // first-day setup steps the reader may do themselves.
     home: {
       customerInvoices: allowed('finance.customer_invoice.read'),
       receivables: allowed('finance.receivable.read'),
+      payables: allowed('finance.payable.read'),
       contracts: {
         read: allowed('contracts.contract.read'),
         manage: allowed('contracts.contract.manage'),
@@ -129,6 +130,10 @@ function withoutPartner(invoice) {
 export function scopeBusinessContext(context, access) {
   if (!access) throw new Error('Report read access is required.')
   const scoped = { ...context }
+  // The allocation model's inputs hold every order's demand and every
+  // committed purchase order, prices included. Allocation is built from the
+  // unscoped context, so the scoped one never carries them.
+  delete scoped.allocationInputs
   const restrictedSubjects = []
   for (const [key, readable] of Object.entries(access.collections)) {
     if (readable) continue

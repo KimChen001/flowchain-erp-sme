@@ -1,13 +1,14 @@
 import { useState } from "react";
+import { toast } from "sonner";
 import { Copy, Eye } from "lucide-react";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { apiErrorText } from "../../lib/apiErrorText";
 import { A, Chip, useConfirm } from "../../components/ui";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import type { CustomerMaster, PrintTemplateCatalogItem } from "./standardData";
-import { orNotProvided, useMasterDataCopy } from "./masterDataCopy";
+import { orNotProvided, paymentTermLabel, useMasterDataCopy } from "./masterDataCopy";
 import { useMasterDataWriteAccess } from "./writeAccess";
-import { RowPopover } from "../../components/ui/listLayout";
+import { RowMenu, RowPopover } from "../../components/ui/listLayout";
 import { listTableCardsRef, tableBodyTextClass, tableMinSmClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, thClass } from "../../components/ui/workbenchTable";
 
 function creditStyle(status: string) {
@@ -16,7 +17,7 @@ function creditStyle(status: string) {
   return { color: A.orange, bg: "#fff8f0" };
 }
 
-const EMPTY_CUSTOMER = { code: "", name: "", currency: "", contact: "", email: "", phone: "", address: "", paymentTerms: "" };
+const EMPTY_CUSTOMER = { code: "", name: "", currency: "", contact: "", email: "", phone: "", address: "", country: "", paymentTerms: "", creditStatus: "" };
 type CustomerField = keyof typeof EMPTY_CUSTOMER;
 const CUSTOMER_FIELDS: Array<{ key: CustomerField; label: string; required?: boolean }> = [
   { key: "code", label: "Customer code", required: true },
@@ -26,23 +27,43 @@ const CUSTOMER_FIELDS: Array<{ key: CustomerField; label: string; required?: boo
   { key: "email", label: "Email" },
   { key: "phone", label: "Phone" },
   { key: "address", label: "Address" },
+  { key: "country", label: "Country" },
   { key: "paymentTerms", label: "Payment terms" },
 ];
+// The credit standing a person can set (design audit L4-26): normal, or
+// restricted, which stops the customer's sales orders from being confirmed.
+const CREDIT_CODES: Record<string, string> = { "正常": "normal", "受限": "restricted" };
+const formOf = (customer?: CustomerMaster | null) => customer
+  ? { code: customer.code, name: customer.name, currency: customer.currency || "", contact: customer.contact, email: customer.email || "", phone: customer.phone, address: customer.address, country: customer.country || "", paymentTerms: customer.paymentTerms, creditStatus: CREDIT_CODES[customer.creditStatus] || "" }
+  : EMPTY_CUSTOMER;
 
-// The customer form writes through /api/master-data/customers; the server
-// checks the fields and answers each problem by field.
-function NewCustomerForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => void }) {
+// The customer form writes through /api/master-data/customers: a new
+// customer with every field filled in, an existing one (design audit L4-06:
+// customers could not be edited at all) with only the fields changed and the
+// version it was read at. The code is locked once the customer exists. The
+// server checks the fields and answers each problem by field.
+function CustomerForm({ customer = null, onSaved, onCancel }: { customer?: CustomerMaster | null; onSaved: () => void; onCancel: () => void }) {
   const { copy, language } = useMasterDataCopy();
-  const [form, setForm] = useState(EMPTY_CUSTOMER);
+  const initial = formOf(customer);
+  const [form, setForm] = useState(initial);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const editing = Boolean(customer?.id);
   const save = async () => {
     setSaving(true);
     setError("");
     setFieldErrors({});
     try {
-      await apiJson("/api/master-data/customers", { method: "POST", body: JSON.stringify(form) });
+      if (editing && customer) {
+        const changed = Object.fromEntries((Object.keys(form) as CustomerField[]).filter((key) => key !== "code" && form[key] !== initial[key]).map((key) => [key, form[key]]));
+        await apiJson(`/api/master-data/customers/${encodeURIComponent(customer.id || customer.code)}`, { method: "PATCH", body: JSON.stringify({ ...changed, expectedVersion: customer.version }) });
+      } else {
+        const created = await apiJson<{ customer?: { nameAlsoUsedBy?: Array<{ code: string }> } }>("/api/master-data/customers", { method: "POST", body: JSON.stringify(form) });
+        // Saved either way; a name another customer has is worth a second look (design audit L4-18).
+        const same = created?.customer?.nameAlsoUsedBy || [];
+        if (same.length) toast.warning(copy("Another customer already has this name: {codes}", { codes: same.map((row) => row.code).join(", ") }));
+      }
       onSaved();
     } catch (cause) {
       const details = cause instanceof ApiError ? cause.details : [];
@@ -53,7 +74,8 @@ function NewCustomerForm({ onSaved, onCancel }: { onSaved: () => void; onCancel:
     }
   };
   return (
-    <div data-testid="customer-form" className="space-y-3 border-b px-4 py-4" style={{ borderColor: A.border }}>
+    <div data-testid="customer-form" data-mode={editing ? "edit" : "create"} className="space-y-3 border-b px-4 py-4" style={{ borderColor: A.border }}>
+      {editing ? <p className="text-xs font-semibold" style={{ color: A.label }}>{copy("Edit customer")} · {customer?.code}</p> : null}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {CUSTOMER_FIELDS.map((field) => (
           <label key={field.key} className="grid gap-1 text-xs">
@@ -61,18 +83,28 @@ function NewCustomerForm({ onSaved, onCancel }: { onSaved: () => void; onCancel:
             <input
               aria-label={copy(field.label)}
               data-testid={`customer-field-${field.key}`}
-              className="rounded-md border px-2 py-1.5 text-sm"
+              className="rounded-md border px-2 py-1.5 text-sm disabled:bg-slate-50"
               style={{ borderColor: fieldErrors[field.key] ? A.red : A.border }}
               value={form[field.key]}
+              disabled={editing && field.key === "code"}
               onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
             />
             {fieldErrors[field.key] ? <span style={{ color: A.red }}>{fieldErrors[field.key]}</span> : null}
           </label>
         ))}
+        <label className="grid gap-1 text-xs">
+          <span style={{ color: A.gray1 }}>{copy("Credit status")}</span>
+          <select aria-label={copy("Credit status")} data-testid="customer-field-creditStatus" className="rounded-md border px-2 py-1.5 text-sm" style={{ borderColor: fieldErrors.creditStatus ? A.red : A.border }} value={form.creditStatus} onChange={(event) => setForm((current) => ({ ...current, creditStatus: event.target.value }))}>
+            <option value="">{copy("Not set")}</option>
+            <option value="normal">{copy("Normal")}</option>
+            <option value="restricted">{copy("Restricted")}</option>
+          </select>
+          <span style={{ color: fieldErrors.creditStatus ? A.red : A.sub }}>{fieldErrors.creditStatus || copy("A restricted customer's sales orders cannot be confirmed.")}</span>
+        </label>
       </div>
       {error ? <p role="alert" className="text-xs" style={{ color: A.red }}>{error}</p> : null}
       <div className="flex gap-2">
-        <button type="button" data-testid="customer-save" disabled={saving} onClick={() => void save()} className="rounded-md bg-blue-600 px-3 py-2 text-xs text-white disabled:opacity-60">{saving ? copy("Saving…") : copy("Save customer")}</button>
+        <button type="button" data-testid="customer-save" disabled={saving} onClick={() => void save()} className="rounded-md bg-blue-600 px-3 py-2 text-xs text-white disabled:opacity-60">{saving ? copy("Saving…") : copy(editing ? "Save changes" : "Save customer")}</button>
         <button type="button" onClick={onCancel} className="rounded-md bg-slate-100 px-3 py-2 text-xs">{copy("Cancel")}</button>
       </div>
     </div>
@@ -86,6 +118,8 @@ export function CustomerTable({ customers, onChanged, creating = false, onCreati
   // Changing a customer's status needs master_data.customer.manage.
   const canEdit = useMasterDataWriteAccess().customers;
   const [error, setError] = useState("");
+  // The customer being edited, by code (design audit L4-06).
+  const [editingCode, setEditingCode] = useState<string | null>(null);
   const confirmDialog = useConfirm();
   const say = (english: string, chinese: string) => (language === "en-US" ? english : chinese);
   // Changing a customer's status asks first, as it does for a supplier.
@@ -116,7 +150,11 @@ export function CustomerTable({ customers, onChanged, creating = false, onCreati
     <div>
       {confirmDialog.element}
       {error ? <p role="alert" className="px-5 pt-3 text-xs" style={{ color: A.red }}>{error}</p> : null}
-      {creating ? <NewCustomerForm onCancel={() => onCreatingDone?.()} onSaved={() => { onCreatingDone?.(); onChanged?.(); }} /> : null}
+      {creating ? <CustomerForm onCancel={() => onCreatingDone?.()} onSaved={() => { onCreatingDone?.(); onChanged?.(); }} /> : null}
+      {editingCode && !creating ? (() => {
+        const customer = customers.find((row) => row.code === editingCode);
+        return customer ? <CustomerForm key={customer.code} customer={customer} onCancel={() => setEditingCode(null)} onSaved={() => { setEditingCode(null); onChanged?.(); }} /> : null;
+      })() : null}
       {customers.length > 0 && (
         <div className={tableScrollClass} ref={listTableCardsRef}>
           <table className={tableMinSmClass}>
@@ -133,13 +171,19 @@ export function CustomerTable({ customers, onChanged, creating = false, onCreati
                   <td className={tdNowrapClass} style={{ color: A.sub }}>{orNotProvided(item.contact)}</td>
                   <td className={tdNowrapClass} style={{ color: A.sub }}>{orNotProvided(item.phone)}</td>
                   <td className="px-4 py-3 max-w-[160px] truncate" style={{ color: A.sub }} title={item.address || undefined}>{orNotProvided(item.address)}</td>
-                  <td className={tdNowrapClass}>{item.creditStatus ? <Chip label={item.creditStatus} color={credit.color} bg={credit.bg} /> : orNotProvided(item.creditStatus)}</td>
-                  <td className={tdNowrapClass} style={{ color: A.sub }}>{orNotProvided(item.paymentTerms)}</td>
+                  <td className={tdNowrapClass}>{item.creditStatus ? <Chip label={copy(item.creditStatus)} color={credit.color} bg={credit.bg} /> : orNotProvided(item.creditStatus)}</td>
+                  <td className={tdNowrapClass} style={{ color: A.sub }}>{orNotProvided(paymentTermLabel(item.paymentTerms, language))}</td>
                   <td className={tdNowrapClass}><Chip label={item.status} color={inactive ? A.gray1 : A.green} bg={inactive ? A.gray6 : "#f0faf4"} /></td>
                   <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
                     <div className="flex items-center gap-1.5">
                       <BusinessEntityLink entityType="customer" entityId={item.code} className="rounded-md bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-600">{copy("View")}</BusinessEntityLink>
-                      {canEdit && item.id ? <button type="button" data-testid={`customer-status-${item.code}`} onClick={() => void setStatus(item, inactive)} className="rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium">{copy(inactive ? "Set active" : "Set inactive")}</button> : null}
+                      {/* Changing the status sits in the row's menu, as on the purchase order list. */}
+                      {canEdit && item.id ? (
+                        <RowMenu label={say("More", "更多")} testId={`customer-row-more-${item.code}`}>
+                          <button type="button" data-testid={`customer-edit-${item.code}`} onClick={() => setEditingCode(item.code)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("Edit")}</button>
+                          <button type="button" data-testid={`customer-status-${item.code}`} onClick={() => void setStatus(item, inactive)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy(inactive ? "Set active" : "Set inactive")}</button>
+                        </RowMenu>
+                      ) : null}
                     </div>
                   </td>
                 </tr>
@@ -156,7 +200,8 @@ export function PrintTemplateTable({ templates, onCopy }: { templates: PrintTemp
   const { copy, locale } = useMasterDataCopy();
   const updated = (value: string) => { const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" }) : value; };
   return (
-    <div className={tableScrollClass}>
+    // Phone rows become cards, as on the other master data lists.
+    <div className={tableScrollClass} ref={listTableCardsRef}>
       <table className={`w-full min-w-[820px] text-left ${tableBodyTextClass}`}>
         <thead><tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
           {["Template name", "Document type", "Default", "Last updated", "Actions"].map((item) => <th key={item} className={thClass} style={{ color: A.gray1 }}>{copy(item)}</th>)}

@@ -1,6 +1,8 @@
 import { DEFAULT_TENANT_TIMEZONE } from '../domain/tenant-calendar-day.mjs'
 import { orderHasOpenDemand } from '../repositories/db-sales-order-read-repository.mjs'
 import { buildFirstRunChecklist, buildTodayWork, countDocumentsUpdatedToday } from '../domain/today-work.mjs'
+import { billPaymentStatus } from '../domain/operational-finance-read-service.mjs'
+import { customerInvoicePaymentStatus } from '../domain/operational-finance-o2c-read-service.mjs'
 
 const clone = value => structuredClone(value)
 const array = value => Array.isArray(value) ? value : []
@@ -8,6 +10,38 @@ const array = value => Array.isArray(value) ? value : []
 async function call(repository, method, fallback = [], ...args) {
   if (!repository || typeof repository[method] !== 'function') return clone(fallback)
   return await repository[method](...args)
+}
+
+// The allocation model's inputs over every record of the workspace, added up
+// in the database (design audit 2026-11-15, L15): stock per SKU in the
+// reader's warehouses with every item, open demand per SKU, and every
+// committed purchase order. The context's lists stop at 500 balance rows, the
+// latest 500 orders of each kind and 200 items, which cut stock and incoming
+// once a workspace passed them. null when a repository cannot read them; the
+// model then uses the lists. truncatedSubjects names a read past its safety
+// bound (ALLOCATION_READ_LIMIT).
+async function readAllocationInputs(repositories, inventoryScope) {
+  const { inventoryRuntime, salesOrders, procurementRuntime } = repositories
+  if (typeof inventoryRuntime?.listAllocationStock !== 'function'
+    || typeof salesOrders?.summarizeDemandBySku !== 'function'
+    || typeof procurementRuntime?.listCommittedPurchaseOrders !== 'function') return null
+  const truncated = new Map()
+  const onTruncated = ({ subject, limit }) => { if (subject) truncated.set(subject, { subject, limit }) }
+  const scope = { tenantId: inventoryScope.tenantId, onTruncated }
+  const [stock, salesDemand, supply] = await Promise.all([
+    inventoryRuntime.listAllocationStock({ ...scope, ...(Array.isArray(inventoryScope.warehouseIds) ? { warehouseIds: inventoryScope.warehouseIds } : {}) }),
+    salesOrders.summarizeDemandBySku(scope),
+    procurementRuntime.listCommittedPurchaseOrders(scope),
+  ])
+  return {
+    inventoryItems: array(stock.inventoryItems),
+    items: array(stock.items),
+    itemUnits: array(stock.itemUnits),
+    salesDemand: array(salesDemand),
+    purchaseOrders: array(supply.purchaseOrders),
+    purchaseOrderKeys: array(supply.lineKeys),
+    truncatedSubjects: [...truncated.values()],
+  }
 }
 
 export function createBusinessReadContextService({ repositories = {}, dataMode = 'user' } = {}) {
@@ -23,7 +57,7 @@ export function createBusinessReadContextService({ repositories = {}, dataMode =
       const warehouseScoped = Array.isArray(options.warehouseIds)
       const inventoryScope = warehouseScoped ? { ...scope, warehouseIds: options.warehouseIds } : scope
       const itemMethod = typeof masterData?.listManagedItems === 'function' ? 'listManagedItems' : 'listItems'
-      const [items, suppliers, customers, itemSupplierRelationships, inventoryItems, salesOrders, procurement] = await Promise.all([
+      const [items, suppliers, customers, itemSupplierRelationships, inventoryItems, salesOrders, procurement, allocationInputs] = await Promise.all([
         call(masterData, itemMethod, [], scope),
         call(masterData, 'listSuppliers', [], scope),
         call(masterData, 'listCustomers', [], scope),
@@ -31,6 +65,7 @@ export function createBusinessReadContextService({ repositories = {}, dataMode =
         call(repositories.inventoryRuntime, 'listItems', [], inventoryScope),
         call(repositories.salesOrders, 'listOrders', [], scope),
         call(repositories.procurementRuntime, 'snapshot', {}, scope),
+        readAllocationInputs(repositories, inventoryScope),
       ])
       // The recorded stock unit of every item a purchase order line names, read
       // apart from the bounded item list, so incoming never adds a line in
@@ -50,7 +85,8 @@ export function createBusinessReadContextService({ repositories = {}, dataMode =
       if (!repositories.procurementRuntime) dataLimitations.push('procurement_runtime_unavailable')
       if (!repositories.inventoryRuntime) dataLimitations.push('inventory_runtime_unavailable')
       if (!repositories.salesOrders) dataLimitations.push('sales_runtime_unavailable')
-      dataLimitations.push('warehouse_runtime_not_connected', 'bin_runtime_not_connected')
+      // No standing "warehouses / bins not connected" notes: the warehouses exist, and a
+      // note on every report reads as noise (design audit L6-16).
       if (warehouseScoped) dataLimitations.push('inventory_scoped_to_reader_warehouses')
       if (array(procurement.receipts).length === 0) dataLimitations.push('receipt_runtime_has_no_records')
       if (array(procurement.supplierInvoices).length === 0) dataLimitations.push('invoice_runtime_has_no_records')
@@ -71,6 +107,9 @@ export function createBusinessReadContextService({ repositories = {}, dataMode =
         supplierInvoices: array(procurement.supplierInvoices),
         itemSupplierRelationships: array(itemSupplierRelationships),
         itemUnits: array(itemUnits),
+        // What the inventory allocation model reads, when present (see
+        // readAllocationInputs). Never served: scopeBusinessContext drops it.
+        ...(allocationInputs ? { allocationInputs } : {}),
         dataLimitations: [...new Set(dataLimitations)],
         truncatedSubjects: [...truncated.values()],
         runtimeAdapters: {
@@ -105,21 +144,64 @@ const route = (path, id) => `${path}/${encodeURIComponent(id)}`
 // "未命名客户"; that placeholder is not a recorded name, so the row shows none.
 const UNNAMED_CUSTOMER = '未命名客户'
 const recordedCustomer = name => name && name !== UNNAMED_CUSTOMER ? name : null
-function homeDocuments(context, customerInvoices = []) {
+// An approved supplier invoice shows where its payment stands (to_pay,
+// partially_settled, settled), as the supplier invoice list shows it, when
+// its payable's status was read (payableStatuses: invoice id to status).
+const billStatus = (row, payableStatuses) => billPaymentStatus(row.status, payableStatuses?.[row.id]) || row.status
+// An issued customer invoice shows where its payment stands (to_be_paid,
+// partially_settled, settled), as the customer invoice list shows it, when its
+// receivable's status was read: on the row (receivableStatus) or in
+// receivableStatuses (invoice id to status).
+const customerInvoiceStatus = (row, receivableStatuses) =>
+  customerInvoicePaymentStatus(row.status, row.receivableStatus ?? receivableStatuses?.[row.id]) || row.status
+function homeDocuments(context, customerInvoices = [], payableStatuses = {}, receivableStatuses = {}) {
   const rows = value => Array.isArray(value) ? value : []
   return [
     ...rows(context.purchaseRequests).map(row => ({ type: 'purchase_request', id: row.id, number: row.number || row.id, status: row.status, partner: row.lines?.[0]?.supplierSnapshot?.supplierName || null, amount: amountOf(row.totalAmount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/procurement/requests', row.id) })),
     ...rows(context.rfqs).map(row => ({ type: 'rfq', id: row.id, number: row.number || row.id, status: row.status, partner: null, amount: amountOf(row.totalAmount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/procurement/rfq', row.id) })),
     ...rows(context.purchaseOrders).map(row => ({ type: 'purchase_order', id: row.id, number: row.number || row.orderNumber || row.id, status: row.status, partner: row.supplierSnapshot?.supplierName || row.supplierName || null, amount: amountOf(row.totalAmount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/procurement/orders', row.id) })),
     ...rows(context.receipts).map(row => ({ type: 'receipt', id: row.id, number: row.documentNumber || row.id, status: row.postingStatus || row.status, partner: row.supplierName || null, amount: null, currency: '', updatedAt: updatedAt(row), canonicalRoute: route('/app/procurement/receiving', row.id) })),
-    ...rows(context.supplierInvoices).map(row => ({ type: 'supplier_invoice', id: row.id, number: row.invoiceNumber || row.id, status: row.status, partner: row.supplierName || null, amount: amountOf(row.totalAmount ?? row.amount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/procurement/bills', row.id) })),
-    ...rows(context.salesOrders).map(row => ({ type: 'sales_order', id: row.id || row.salesOrderId, number: row.orderNumber || row.id, status: row.workflowStatus || row.status, partner: recordedCustomer(row.customerName), amount: amountOf(row.totalAmount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/sales/orders', row.id || row.salesOrderId) })),
-    ...rows(customerInvoices).map(row => ({ type: 'customer_invoice', id: row.id, number: row.invoiceNumber || row.id, status: row.status, partner: recordedCustomer(row.customerName), amount: amountOf(row.totalAmount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/sales/invoices', row.id) })),
+    ...rows(context.supplierInvoices).map(row => ({ type: 'supplier_invoice', id: row.id, number: row.invoiceNumber || row.id, status: billStatus(row, payableStatuses), partner: row.supplierName || null, amount: amountOf(row.totalAmount ?? row.amount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/procurement/bills', row.id) })),
+    ...rows(context.salesOrders).map(row => ({ type: 'sales_order', id: row.id || row.salesOrderId, number: row.orderNumber || row.id, status: salesOrderHomeStatus(row), partner: recordedCustomer(row.customerName), amount: amountOf(row.totalAmount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/sales/orders', row.id || row.salesOrderId) })),
+    ...rows(customerInvoices).map(row => ({ type: 'customer_invoice', id: row.id, number: row.invoiceNumber || row.id, status: customerInvoiceStatus(row, receivableStatuses), partner: recordedCustomer(row.customerName), amount: amountOf(row.totalAmount), currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: route('/app/sales/invoices', row.id) })),
   ].filter(row => row.id)
 }
 
+// A sales order shows the status the sales report shows once it has shipped:
+// fulfilled or partially fulfilled (as fulfillment status codes, which Today
+// labels "Fulfilled" and "Partially fulfilled"). Before it ships, and when it
+// is a draft or cancelled, it shows its workflow status.
+function salesOrderHomeStatus(row) {
+  const workflow = String(row.workflowStatus || '').trim()
+  if (['draft', 'cancelled', 'canceled'].includes(workflow)) return workflow
+  if (row.status === 'fulfilled' || row.fulfillmentStatus === 'fully_fulfilled') return 'fully_fulfilled'
+  if (row.status === 'partially_fulfilled' || row.fulfillmentStatus === 'partially_fulfilled') return 'partially_fulfilled'
+  return workflow || row.status
+}
+
 const instant = value => { const parsed = Date.parse(value); return Number.isFinite(parsed) ? parsed : 0 }
-export const RECENT_DOCUMENTS = 10
+export const RECENT_DOCUMENTS = 8
+// At most this many rows of one document type while other types have recent
+// documents too, so a day of seeded invoices does not fill the whole list.
+export const RECENT_DOCUMENTS_PER_TYPE = 3
+
+// The latest changed documents, newest first, with no type taking more than
+// RECENT_DOCUMENTS_PER_TYPE rows while another type has rows to show; rows of
+// a type are always its newest. Fewer types than that fill up from the rest.
+export function pickRecentDocuments(documents, { limit = RECENT_DOCUMENTS, perType = RECENT_DOCUMENTS_PER_TYPE } = {}) {
+  const order = (a, b) => instant(b.updatedAt) - instant(a.updatedAt) || a.type.localeCompare(b.type) || String(a.id).localeCompare(String(b.id))
+  const sorted = [...documents].sort(order)
+  const picked = []
+  const skipped = []
+  const perTypeCount = new Map()
+  for (const row of sorted) {
+    if (picked.length >= limit) break
+    const count = perTypeCount.get(row.type) || 0
+    if (count < perType) { picked.push(row); perTypeCount.set(row.type, count + 1) } else skipped.push(row)
+  }
+  for (const row of skipped) { if (picked.length >= limit) break; picked.push(row) }
+  return picked.sort(order)
+}
 
 // The home page (GET /api/home/overview) from the reader's scoped context and
 // the sources the route reads for it (server/domain/today-work-read-service.mjs):
@@ -130,27 +212,36 @@ export const RECENT_DOCUMENTS = 10
 //   todayChanges     how many documents the reader can open were last changed
 //                    on the workspace day; the audit log is not counted (see
 //                    countDocumentsUpdatedToday);
-//   recentDocuments  the latest changed documents of every type, with the
+//   recentDocuments  the latest changed documents of every type (no more than
+//                    three of one type while others have some), with the
 //                    instant of the change;
-//   firstRun         the first-day checklist while any step is open.
-export function buildHomeOverview(context, { now = new Date(), timeZone = DEFAULT_TENANT_TIMEZONE, sources = {}, setup = null, setupOptions = {}, hidden = [], limitations = [] } = {}) {
-  const work = buildTodayWork({
+//   firstRun         the first-day checklist while any step is open;
+//   decisions        the rows the system prepared a next step for and the
+//                    rows set aside (server/services/decision-item-service.mjs),
+//                    or { available: false } without a database. workItems
+//                    still lists every row; the page splits them.
+export function todayWorkOf(context, sources = {}, { now = new Date(), timeZone = DEFAULT_TENANT_TIMEZONE, approver = null } = {}) {
+  return buildTodayWork({
     purchaseOrders: context.purchaseOrders,
     reportPurchaseOrders: sources.reportPurchaseOrders,
     purchaseRequests: context.purchaseRequests,
+    rfqs: context.rfqs,
     supplierInvoices: context.supplierInvoices,
     salesOrders: context.salesOrders,
     allocationRows: sources.allocationRows,
     reorder: sources.reorder,
     customerInvoices: sources.customerInvoices,
     receivables: sources.receivables,
+    payables: sources.payables,
     contracts: sources.contracts,
-  }, { now, timeZone })
-  const documents = homeDocuments(context, sources.recentCustomerInvoices)
+  }, { now, timeZone, approver })
+}
+
+export function buildHomeOverview(context, { now = new Date(), timeZone = DEFAULT_TENANT_TIMEZONE, sources = {}, setup = null, setupOptions = {}, hidden = [], limitations = [], work: computed = null, decisions = { available: false } } = {}) {
+  const work = computed || todayWorkOf(context, sources, { now, timeZone })
+  const documents = homeDocuments(context, sources.recentCustomerInvoices, sources.billPayableStatuses, sources.customerInvoiceReceivableStatuses)
   const todayChanges = countDocumentsUpdatedToday(documents, { now, timeZone })
-  const recentDocuments = [...documents]
-    .sort((a, b) => instant(b.updatedAt) - instant(a.updatedAt) || a.type.localeCompare(b.type) || String(a.id).localeCompare(String(b.id)))
-    .slice(0, RECENT_DOCUMENTS)
+  const recentDocuments = pickRecentDocuments(documents)
   // A reader of only some warehouses gets the reorder list's items as not
   // checked, so Today names that instead of showing no stock to reorder.
   const reorderScoped = sources.reorder?.scope?.kind === 'reader_warehouses'
@@ -163,6 +254,7 @@ export function buildHomeOverview(context, { now = new Date(), timeZone = DEFAUL
     todayChanges,
     recentDocuments,
     firstRun: buildFirstRunChecklist(setup, setupOptions),
+    decisions,
     hidden: [...new Set(hidden)],
     counts: { workItems: work.total, overdue: work.overdue, todayChanges, recentDocuments: recentDocuments.length },
     limitations: [...new Set([...(context.dataLimitations || []), ...limitations, ...(reorderScoped ? ['reorder_not_checked_for_warehouse_scope'] : [])])],

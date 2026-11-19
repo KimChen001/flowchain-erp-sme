@@ -31,3 +31,20 @@ test('documents carry their number and masters their code', () => {
   assert.equal(supplier.code, 'SUP-FOODS-1')
   assert.equal(supplier.label, 'Foods 1 vendor')
 })
+
+// 2026-11-11 on Flash: "Order 100 cakestands" was answered that no cake stand
+// was found; the item is "Regency Cakestand 3 Tier".
+test('a name is found however it is spaced or plural, below an exact match; a single letter finds nothing', () => {
+  const items = { inventoryItems: [{ sku: '22423', itemName: 'Regency Cakestand 3 Tier', status: 'active' }, { sku: '85123A', itemName: 'White Hanging Heart T-Light Holder', status: 'active' }] }
+  const found = (query) => searchRuntimeBusinessContext(items, query).map((row) => row.label)
+  for (const query of ['cake stand', 'cakestands', 'Cake-Stand']) assert.deepEqual(found(query), ['Regency Cakestand 3 Tier'], query)
+  assert.deepEqual(found('heart holders'), ['White Hanging Heart T-Light Holder'])
+  assert.deepEqual(found('chair'), [])
+  // A code is found whole: 85123 B is no 85123A.
+  assert.deepEqual(found('85123 A'), ['White Hanging Heart T-Light Holder'])
+  assert.deepEqual(found('85123-B'), [])
+  assert.deepEqual(found('a'), found('a').filter(Boolean))
+  const exact = searchRuntimeBusinessContext(items, 'Cakestand')[0]
+  const loose = searchRuntimeBusinessContext(items, 'cake stand')[0]
+  assert.ok(exact.score > loose.score)
+})

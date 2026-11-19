@@ -24,6 +24,8 @@ export const EChart = forwardRef<EChartHandle, EChartProps>(function EChart({ op
     observer?.observe(host.current);
     return () => { observer?.disconnect(); instance.dispose(); chart.current = null; };
   }, [language]);
-  useEffect(() => { chart.current?.setOption(option, { notMerge: true }); }, [option, language]);
+  // A shallow copy: ECharts takes "media" off the option object it is given,
+  // and the same option may be set again after a resize or language change.
+  useEffect(() => { chart.current?.setOption({ ...option }, { notMerge: true }); }, [option, language]);
   return <div ref={host} role="img" aria-label={label} style={{ height, width: "100%" }} />;
 });

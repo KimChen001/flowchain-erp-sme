@@ -2,7 +2,10 @@ import { documentSettingsSeed, normalizeDocumentSettings, validateDocumentSettin
 import { DOCUMENT_NUMBER_PREFIX_PATTERN, DOCUMENT_NUMBER_TYPES, defaultNumberingRules } from '../../shared/document-numbering.mjs'
 
 export const SUPPORTED_LANGUAGES = ['en-US', 'zh-CN']
-export const SUPPORTED_LOCALES = ['zh-CN', 'en-US']
+// The regional format: how dates and numbers are written in the workspace,
+// whatever each person's interface language (design audit L11-27). en-GB
+// writes the day before the month (18 Nov 2026), as a UK workspace does.
+export const SUPPORTED_LOCALES = ['zh-CN', 'en-US', 'en-GB']
 export const SUPPORTED_TIMEZONES = [
   'Asia/Shanghai',
   'America/New_York',
@@ -30,10 +33,19 @@ export const operationalSettingsSeed = {
     // (owner decision D3, 2026-10-07). Off: such a PO starts as a draft and
     // goes through PO approval as before.
     approvedRequestApprovesPurchaseOrder: true,
+    // Off by default: Today may email a follow-up on an overdue order to its
+    // supplier, after the person confirms the text and then the address, only
+    // once an administrator turns this on (docs/drafted-decisions-design.md §4.11).
+    supplierFollowUpEmail: false,
+    // Three-way match tolerances (owner decision 2026-11-17, design audit B2):
+    // a line's price difference passes within the larger of 2% of the line
+    // and 1 currency unit; quantity has no tolerance. A workspace that saved
+    // its own values keeps them, and a match keeps the values it used
+    // (operational-finance-policy.mjs, THREE_WAY_MATCH_RULE).
     quantityTolerance: '0.0000',
-    pricePercentageTolerance: '0.0000',
+    pricePercentageTolerance: '2.0000',
     priceAbsoluteTolerance: '0.0000',
-    amountTolerance: '0.0000',
+    amountTolerance: '1.0000',
     riskLevels: ['high'],
     inventoryTolerancePercent: 5,
     reviewerRoles: ['admin', 'manager'],
@@ -79,7 +91,7 @@ export const operationalSettingsSeed = {
 // Nothing reads the other sections yet, so the settings UI shows them
 // read-only as "Not in effect yet" and keeps their stored values.
 export const REVIEW_TOLERANCE_FIELDS = ['quantityTolerance', 'pricePercentageTolerance', 'priceAbsoluteTolerance', 'amountTolerance']
-export const OPERATIONAL_SETTINGS_IN_EFFECT = Object.freeze({ numbering: ['prefix'], review: [...REVIEW_TOLERANCE_FIELDS, 'approvedRequestApprovesPurchaseOrder'], modules: [], ai: ['modelAssistEnabled'], advanced: [], documents: ['documentLanguage', 'letterhead', 'purchaseOrder', 'customerInvoice', 'layouts'] })
+export const OPERATIONAL_SETTINGS_IN_EFFECT = Object.freeze({ numbering: ['prefix'], review: [...REVIEW_TOLERANCE_FIELDS, 'approvedRequestApprovesPurchaseOrder', 'supplierFollowUpEmail'], modules: [], ai: ['modelAssistEnabled'], advanced: [], documents: ['documentLanguage', 'letterhead', 'purchaseOrder', 'customerInvoice', 'layouts'] })
 const TOLERANCE_PATTERN = /^\d+(\.\d{1,4})?$/
 
 const clone = value => structuredClone(value)
@@ -178,8 +190,10 @@ export function validateOperationalSection(section, value, options = {}) {
   if (section === 'review' && !Array.isArray(value.policies)) throw Object.assign(new Error('Review policies are required.'), { code: 'REVIEW_POLICY_VALIDATION_FAILED', status: 400 })
   if (section === 'review') {
     const next = clone(value)
-    if (value.approvedRequestApprovesPurchaseOrder !== undefined && typeof value.approvedRequestApprovesPurchaseOrder !== 'boolean') {
-      throw Object.assign(new Error('approvedRequestApprovesPurchaseOrder must be true or false.'), { code: 'SETTINGS_VALIDATION_FAILED', status: 400, details: { field: 'approvedRequestApprovesPurchaseOrder' } })
+    for (const field of ['approvedRequestApprovesPurchaseOrder', 'supplierFollowUpEmail']) {
+      if (value[field] !== undefined && typeof value[field] !== 'boolean') {
+        throw Object.assign(new Error(`${field} must be true or false.`), { code: 'SETTINGS_VALIDATION_FAILED', status: 400, details: { field } })
+      }
     }
     for (const field of REVIEW_TOLERANCE_FIELDS) {
       if (value[field] === undefined) continue

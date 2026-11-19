@@ -43,20 +43,22 @@ const rows = (value) => (Array.isArray(value) ? value : [])
 const text = (value) => String(value ?? '').trim()
 const quantity = (value) => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value))
 // Whole ten-thousandths, as the reorder list adds quantities.
-const SCALE = 10000
+export const QUANTITY_SCALE = 10000
+const SCALE = QUANTITY_SCALE
 const toUnits = (value) => Math.round(value * SCALE)
 
 // The nearest rank of the in-stock target among n sums, 1-based: 75 of 90.
 // The small tolerance keeps n × 5/6 from rounding up past a whole rank.
 export const suggestionRank = (n, target = SUGGESTION_IN_STOCK_TARGET) => Math.min(n, Math.max(1, Math.ceil(n * target - 1e-9)))
 
-// The quantity shipped on each of the 90 days before today, oldest first, in
-// whole ten-thousandths of the stock unit. A line in another unit is never
-// added; a line with no unit counts in the stock unit (as in dailyDemand).
-export function shippedUnitsPerDay({ lines = [], stockUnit, today, timeZone = DEFAULT_TENANT_TIMEZONE }) {
-  const firstDay = addCalendarDays(today, -DEMAND_WINDOW_DAYS)
-  const indexOf = new Map(Array.from({ length: DEMAND_WINDOW_DAYS }, (_, index) => [addCalendarDays(firstDay, index), index]))
-  const perDay = new Array(DEMAND_WINDOW_DAYS).fill(0)
+// The quantity shipped on each of the 90 days before today (or `days` days:
+// the model forecast reads a longer history), oldest first, in whole
+// ten-thousandths of the stock unit. A line in another unit is never added; a
+// line with no unit counts in the stock unit (as in dailyDemand).
+export function shippedUnitsPerDay({ lines = [], stockUnit, today, timeZone = DEFAULT_TENANT_TIMEZONE, days = DEMAND_WINDOW_DAYS }) {
+  const firstDay = addCalendarDays(today, -days)
+  const indexOf = new Map(Array.from({ length: days }, (_, index) => [addCalendarDays(firstDay, index), index]))
+  const perDay = new Array(days).fill(0)
   for (const line of rows(lines)) {
     const index = indexOf.get(instantCalendarDay(line.postedAt, timeZone))
     const shipped = quantity(line.quantity)
@@ -80,7 +82,8 @@ export function circularWindowSums(perDay, cover) {
 }
 
 // lines: { unit, quantity, postedAt } of posted shipments for one item.
-// leadTimeDays: the preferred supplier link's recorded lead time, or null.
+// leadTimeDays: the preferred supplier link's recorded lead time, else the
+// item's own (the row's leadTimeDays, design audit L3-08), or null.
 export function suggestReorderPoint({ lines = [], stockUnit = '', leadTimeDays = null, today, timeZone = DEFAULT_TENANT_TIMEZONE } = {}) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(text(today))) throw new Error('A workspace calendar day is required.')
   const lead = quantity(leadTimeDays)
@@ -113,8 +116,11 @@ export function suggestReorderPoint({ lines = [], stockUnit = '', leadTimeDays =
 // The reorder list (buildReorderList's result) with a suggestion on each row,
 // from the shipment lines the list was built from ({ itemId, unit, quantity,
 // postedAt }) and the row's preferred supplier lead time. recordedBelow: the
-// recorded reorder point is below the suggestion. Nothing else on the row
-// changes.
+// recorded reorder point is more than SUGGESTION_GAP below the suggestion; a
+// smaller difference is not worth a mark on every row (design audit L7-21).
+// Nothing else on the row changes. Items without a reorder point get one too
+// (L3-09), so a person can set it from the list.
+export const SUGGESTION_GAP = 0.3
 export function attachReorderPointSuggestions(list, shipmentLines = []) {
   const linesByItem = new Map()
   for (const line of rows(shipmentLines)) {
@@ -122,12 +128,14 @@ export function attachReorderPointSuggestions(list, shipmentLines = []) {
     if (!linesByItem.has(key)) linesByItem.set(key, [])
     linesByItem.get(key).push(line)
   }
+  const suggest = (entry) => suggestReorderPoint({ lines: linesByItem.get(text(entry.itemId)), stockUnit: entry.unit || '', leadTimeDays: entry.leadTimeDays ?? entry.supplier?.leadTimeDays ?? null, today: list.today, timeZone: list.timeZone })
   return {
     ...list,
     rows: rows(list?.rows).map((row) => {
-      const suggestion = suggestReorderPoint({ lines: linesByItem.get(text(row.itemId)), stockUnit: row.unit, leadTimeDays: row.supplier?.leadTimeDays ?? null, today: list.today, timeZone: list.timeZone })
-      const recordedBelow = suggestion.suggestedReorderPoint !== null && Number(row.reorderPoint) < suggestion.suggestedReorderPoint
+      const suggestion = suggest(row)
+      const recordedBelow = suggestion.suggestedReorderPoint !== null && Number(row.reorderPoint) < suggestion.suggestedReorderPoint * (1 - SUGGESTION_GAP)
       return { ...row, reorderPointSuggestion: { ...suggestion, recordedBelow } }
     }),
+    ...(list?.noReorderPoint ? { noReorderPoint: { ...list.noReorderPoint, items: rows(list.noReorderPoint.items).map((item) => ({ ...item, reorderPointSuggestion: { ...suggest(item), recordedBelow: false } })) } } : {}),
   }
 }

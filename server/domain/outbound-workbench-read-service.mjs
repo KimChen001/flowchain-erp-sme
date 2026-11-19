@@ -2,8 +2,10 @@ import { resolveProvisionedActor } from "./pilot-identity.mjs";
 import {
   outboundDecimalString as fixed,
   outboundDecimalUnits as units,
+  SHIPMENT_HOLDING_CUSTOMER_INVOICE_STATUSES,
 } from "./outbound-transaction-policy.mjs";
 import { SalesWorkbenchError } from "./sales-order-workbench-service.mjs";
+import { customerInvoicePaymentStatus } from "./operational-finance-o2c-read-service.mjs";
 import { assertAuthorized, can } from "../auth/authorization-service.mjs";
 
 const fail = (code, message, status = 400) => {
@@ -113,6 +115,15 @@ function shipmentModel(row) {
     updatedAt: iso(row.updatedAt),
   };
 }
+
+// The shipment list's status filters, each a stored status: an unposted
+// draft (still to post), posted, reversed or cancelled.
+const SHIPMENT_LIST_STATUSES = Object.freeze({
+  to_post: { workflowStatus: { in: ["draft", "ready"] }, postingStatus: "unposted" },
+  posted: { postingStatus: "posted" },
+  reversed: { postingStatus: "reversed" },
+  cancelled: { workflowStatus: "cancelled" },
+});
 
 function smartLinks({ order, reservations, shipments, movements, balances }) {
   const oneShipment = shipments.length === 1 ? shipments[0] : null;
@@ -319,6 +330,87 @@ export function outboundAuditTimelineText(row, { orderNumber = "", shipmentNumbe
   return { title, summary: [number, reason].filter(Boolean).join(" · ") };
 }
 
+// The outbound commands that post and reverse a shipment
+// (OUTBOUND_COMMAND_TYPES in outbound-posting-command-service.mjs).
+const SHIPMENT_POSTING_COMMAND = "post_sales_shipment",
+  SHIPMENT_REVERSAL_COMMAND = "reverse_sales_shipment";
+const commandKey = (commandType, idempotencyKey) => `${text(commandType)}\u0000${text(idempotencyKey)}`;
+const timeOf = (value) => {
+  const time = value ? new Date(value).getTime() : NaN;
+  return Number.isFinite(time) ? time : null;
+};
+
+// Every event on the order timeline is placed and shown at its business time,
+// on one clock. A history import replays an order's commands at the business
+// time it imports, while the records themselves are written when the import
+// runs: a posted shipment and its stock movements carry the business time, but
+// the reservation events and audit records carry the import run. Ordered by
+// those creation times, the goods left a day before the shipment existed. So:
+// a stock movement is at its occurredAt; an event of a shipment posting or
+// reversal at the shipment's postedAt or reversedAt (the time on its
+// movements); an event of any other command at the time the command
+// completed, which the command takes from the same clock; anything else at the
+// time it was recorded. Events at the same time keep the order they were
+// recorded in, so a command's reservation events, movements and audit record
+// read in the order they were written.
+function timelineClock(shipments, executions) {
+  const shipmentsById = new Map(shipments.map((row) => [row.id, row])),
+    byId = new Map(),
+    byKey = new Map();
+  for (const execution of executions) {
+    if (!execution?.id) continue;
+    byId.set(execution.id, execution);
+    if (execution.idempotencyKey) byKey.set(commandKey(execution.commandType, execution.idempotencyKey), execution);
+  }
+  const shipmentTime = (commandType, shipmentId) => {
+    const shipment = shipmentsById.get(text(shipmentId));
+    if (commandType === SHIPMENT_POSTING_COMMAND) return timeOf(shipment?.postedAt);
+    if (commandType === SHIPMENT_REVERSAL_COMMAND) return timeOf(shipment?.reversedAt);
+    return null;
+  };
+  const commandTime = (execution, commandType, shipmentId) =>
+    shipmentTime(commandType, shipmentId) ?? timeOf(execution?.completedAt);
+  // The command an audit record wrote, by its execution id or by its command
+  // type and idempotency key.
+  const auditExecution = (row) =>
+    byId.get(text(row.metadata?.commandExecutionId)) ||
+    byKey.get(commandKey(row.metadata?.commandType || row.action, row.metadata?.idempotencyKey));
+  return {
+    auditExecution,
+    audit: (row) => {
+      const execution = auditExecution(row),
+        commandType = text(row.metadata?.commandType || execution?.commandType || row.action),
+        shipmentId = row.entityType === "ShipmentDocument" ? row.entityId : execution?.entityId;
+      return commandTime(execution, commandType, shipmentId) ?? timeOf(row.createdAt);
+    },
+    reservationEvent: (row) => {
+      const execution = row.commandExecution;
+      return commandTime(execution, text(execution?.commandType || row.commandType), execution?.entityId) ?? timeOf(row.createdAt);
+    },
+    movement: (row) => timeOf(row.occurredAt) ?? timeOf(row.createdAt),
+  };
+}
+
+// The command executions behind audit records that the reservation events do
+// not already name (an order's draft, confirm, hold and resume commands, say).
+async function auditExecutions(prisma, tenantId, audits, known) {
+  const clock = timelineClock([], known);
+  const missing = audits.filter((row) => !clock.auditExecution(row));
+  const ids = [...new Set(missing.map((row) => text(row.metadata?.commandExecutionId)).filter(Boolean))],
+    keys = [...new Set(missing.map((row) => text(row.metadata?.idempotencyKey)).filter(Boolean))];
+  if (!ids.length && !keys.length) return [];
+  return prisma.businessCommandExecution.findMany({
+    where: {
+      tenantId,
+      OR: [
+        ...(ids.length ? [{ id: { in: ids } }] : []),
+        ...(keys.length ? [{ idempotencyKey: { in: keys } }] : []),
+      ],
+    },
+    select: { id: true, commandType: true, idempotencyKey: true, entityType: true, entityId: true, completedAt: true },
+  });
+}
+
 async function evidence(
   prisma,
   actor,
@@ -385,11 +477,21 @@ async function evidence(
       affectedReservationIds.every((id) => visibleReservationIds.has(id))
     );
   });
+  const knownExecutions = events.map((row) => row.commandExecution).filter(Boolean);
+  const clock = timelineClock(visibleShipments, [
+    ...knownExecutions,
+    ...(await auditExecutions(prisma, actor.tenantId, visibleAudits, knownExecutions)),
+  ]);
+  // A row at its business time (`at`, shown as occurredAt) and the time it
+  // was recorded (recordedAt), both kept in milliseconds for the sort below.
+  const stamped = (at, recordedAt, fields) => {
+    const recorded = timeOf(recordedAt) ?? at;
+    return { at, recorded, row: { ...fields, occurredAt: iso(at), recordedAt: iso(recorded) } };
+  };
   const rows = [
-    ...visibleAudits.map((row) => ({
+    ...visibleAudits.map((row) => stamped(clock.audit(row), row.createdAt, {
       eventType: row.action,
       ...outboundAuditTimelineText(row, { orderNumber: order.orderNumber, shipmentNumbers }),
-      occurredAt: iso(row.createdAt),
       actor: row.actor ? { id: row.actor.id, name: row.actor.name } : null,
       entityType: row.entityType,
       entityId: row.entityId,
@@ -399,11 +501,10 @@ async function evidence(
       evidenceLinks: [{ type: row.entityType, id: row.entityId }],
       limitations: [],
     })),
-    ...events.map((row) => ({
+    ...events.map((row) => stamped(clock.reservationEvent(row), row.createdAt, {
       eventType: `reservation_${row.eventType}`,
       title: `库存预留${{ reserved: "已创建", released: "已释放", allocated: "已分配", deallocated: "已取消分配", consumed: "已消耗", restored: "已恢复" }[row.eventType] || "已更新"}`,
       summary: `${q(row.quantity)} · ${row.reservationId}`,
-      occurredAt: iso(row.createdAt),
       actor: row.actor ? { id: row.actor.id, name: row.actor.name } : null,
       entityType: "InventoryReservation",
       entityId: row.reservationId,
@@ -415,14 +516,13 @@ async function evidence(
     })),
     ...movements
       .filter((row) => canRead(actor, row.warehouseId))
-      .map((row) => ({
+      .map((row) => stamped(clock.movement(row), row.createdAt, {
         eventType: row.movementType,
         title:
           row.movementType === "shipment_reversal"
             ? "发货冲销流水已创建"
             : "发货出库流水已创建",
         summary: `${row.sku} · ${row.warehouseId || "未指定仓库"} · ${q(row.quantityOut || row.quantityIn)}`,
-        occurredAt: iso(row.occurredAt),
         actor: row.actorId ? { id: row.actorId, name: row.actorId } : null,
         entityType: "InventoryMovement",
         entityId: row.id,
@@ -432,7 +532,11 @@ async function evidence(
         evidenceLinks: [{ type: "inventory_movement", id: row.id }],
         limitations: [],
       })),
-  ].sort((a, b) => String(a.occurredAt).localeCompare(String(b.occurredAt)));
+  ]
+    // By business time, then by when each was recorded; a row with neither
+    // time last. The sort is stable, so ties keep the order above.
+    .sort((a, b) => (a.at ?? Infinity) - (b.at ?? Infinity) || (a.recorded ?? Infinity) - (b.recorded ?? Infinity))
+    .map((entry) => entry.row);
   const visibleMovements = movements.filter((row) =>
     canRead(actor, row.warehouseId),
   );
@@ -457,6 +561,63 @@ async function evidence(
       reversedByMovementId: row.reversedByMovementId,
       occurredAt: iso(row.occurredAt),
     })),
+  };
+}
+
+// How far an order's shipped goods are invoiced, for display on the order and
+// shipment pages. Read only: what may be invoiced stays with operational
+// finance. A line counts as invoiced once an invoice holding its shipment
+// bills it (SHIPMENT_HOLDING_CUSTOMER_INVOICE_STATUSES: submitted, approved,
+// issued, disputed), the statuses that rule counts too; a draft does not.
+// Only a reader who may read customer invoices gets it, and only for the
+// shipments that reader can see; anyone else gets null.
+async function orderInvoicing(prisma, actor, order, visibleShipments) {
+  if (!permission(actor, "finance.customer_invoice.read")) return null;
+  const shipmentIds = new Set(visibleShipments.map((row) => row.id));
+  const rows = shipmentIds.size
+    ? await prisma.customerInvoiceLine.findMany({
+        where: {
+          customerInvoice: {
+            tenantId: actor.tenantId,
+            salesOrderId: order.id,
+            shipmentId: { in: [...shipmentIds] },
+          },
+        },
+        select: {
+          salesOrderLineId: true,
+          shipmentLineId: true,
+          quantity: true,
+          customerInvoice: {
+            select: { id: true, invoiceNumber: true, status: true, shipmentId: true, receivableObligation: { select: { status: true } } },
+          },
+        },
+      })
+    : [];
+  const holding = new Set(SHIPMENT_HOLDING_CUSTOMER_INVOICE_STATUSES);
+  const byOrderLine = new Map(),
+    byShipmentLine = new Map(),
+    invoices = new Map();
+  for (const row of rows) {
+    const invoice = row.customerInvoice;
+    if (!invoice) continue;
+    if (!invoices.has(invoice.id))
+      invoices.set(invoice.id, {
+        id: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        status: invoice.status,
+        // Once issued, where its payment stands (to_be_paid,
+        // partially_settled, settled), as the invoice pages show it.
+        paymentStatus: customerInvoicePaymentStatus(invoice.status, invoice.receivableObligation?.status),
+        shipmentId: invoice.shipmentId,
+      });
+    if (!holding.has(invoice.status)) continue;
+    byOrderLine.set(row.salesOrderLineId, (byOrderLine.get(row.salesOrderLineId) || 0n) + units(row.quantity));
+    byShipmentLine.set(row.shipmentLineId, (byShipmentLine.get(row.shipmentLineId) || 0n) + units(row.quantity));
+  }
+  return {
+    invoicedByOrderLine: (lineId) => fixed(byOrderLine.get(lineId) || 0n),
+    invoicedByShipmentLine: (lineId) => fixed(byShipmentLine.get(lineId) || 0n),
+    invoices: [...invoices.values()].sort((a, b) => text(a.invoiceNumber).localeCompare(text(b.invoiceNumber))),
   };
 }
 
@@ -508,13 +669,10 @@ export function createOutboundWorkbenchReadService({
         .flatMap((line) => line.allocations)
         .every((allocation) => canRead(actor, allocation.warehouseId)),
     );
-    const ev = await evidence(
-      prisma,
-      actor,
-      order,
-      visibleShipments,
-      reservations,
-    );
+    const [ev, invoicing] = await Promise.all([
+      evidence(prisma, actor, order, visibleShipments, reservations),
+      orderInvoicing(prisma, actor, order, visibleShipments),
+    ]);
     const hiddenWarehouseFacts =
       balances.length !== allBalances.length ||
       reservations.length !== order.reservations.length ||
@@ -672,9 +830,13 @@ export function createOutboundWorkbenchReadService({
     return {
       dataSource: "Authoritative PostgreSQL",
       order: orderHeader(order),
-      lines: order.lines.map((line) =>
-        lineModel(line, reservations, hiddenWarehouseFacts),
-      ),
+      // invoicedQuantity is null for a reader who may not read customer invoices.
+      lines: order.lines.map((line) => ({
+        ...lineModel(line, reservations, hiddenWarehouseFacts),
+        invoicedQuantity: invoicing ? invoicing.invoicedByOrderLine(line.id) : null,
+      })),
+      // The order's customer invoices (null without customer invoice access).
+      invoices: invoicing ? invoicing.invoices : null,
       availability,
       reservations: reservations.map(reservationModel),
       shipments: visibleShipments.map(shipmentModel),
@@ -713,6 +875,111 @@ export function createOutboundWorkbenchReadService({
             : "中",
       },
       capabilities,
+    };
+  }
+  // The workspace's shipments, newest first, a page at a time (design audit
+  // L4-28): with the sales delivery page frozen there was no list of them at
+  // all. Reading needs shipment.read; a reader limited to some warehouses
+  // sees the shipments every allocation of which is in them, as the shipment
+  // page does. The counts above the list are the workspace's, not the page's.
+  async function listShipments(query = {}, context) {
+    const actor = await resolveProvisionedActor(
+      prisma,
+      context?.identity || context,
+    );
+    assertAuthorized({ actor, permission: "shipment.read", tenantId: actor.tenantId });
+    const scope = { tenantId: actor.tenantId };
+    if (!actor.allWarehouses)
+      scope.lines = {
+        every: {
+          allocations: {
+            every: { warehouseId: { in: [...(actor.readWarehouseIds || [])] } },
+          },
+        },
+      };
+    const where = { ...scope };
+    const status = text(query.status);
+    if (SHIPMENT_LIST_STATUSES[status]) Object.assign(where, SHIPMENT_LIST_STATUSES[status]);
+    const salesOrderId = text(query.salesOrderId);
+    if (salesOrderId) where.salesOrderId = salesOrderId;
+    const search = text(query.search);
+    if (search)
+      where.OR = [
+        { shipmentNumber: { contains: search, mode: "insensitive" } },
+        { salesOrder: { orderNumber: { contains: search, mode: "insensitive" } } },
+        { salesOrder: { customerName: { contains: search, mode: "insensitive" } } },
+        { lines: { some: { sku: { contains: search, mode: "insensitive" } } } },
+      ];
+    const pageSize = Math.min(100, Math.max(1, Number.parseInt(query.pageSize, 10) || 50));
+    const page = Math.max(1, Number.parseInt(query.page, 10) || 1);
+    const [total, rows, ...counts] = await Promise.all([
+      prisma.shipmentDocument.count({ where }),
+      prisma.shipmentDocument.findMany({
+        where,
+        orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        select: {
+          id: true,
+          shipmentNumber: true,
+          salesOrderId: true,
+          workflowStatus: true,
+          postingStatus: true,
+          createdAt: true,
+          postedAt: true,
+          reversedAt: true,
+          salesOrder: { select: { orderNumber: true, customerName: true } },
+          lines: {
+            select: {
+              sku: true,
+              requestedQuantity: true,
+              unit: true,
+              allocations: { select: { warehouseId: true } },
+            },
+            orderBy: { id: "asc" },
+          },
+        },
+      }),
+      prisma.shipmentDocument.count({ where: scope }),
+      ...Object.values(SHIPMENT_LIST_STATUSES).map((filter) =>
+        prisma.shipmentDocument.count({ where: { ...scope, ...filter } }),
+      ),
+    ]);
+    return {
+      dataSource: "Authoritative PostgreSQL",
+      total,
+      page,
+      pageSize,
+      counts: Object.fromEntries(
+        ["all", ...Object.keys(SHIPMENT_LIST_STATUSES)].map((key, index) => [key, counts[index]]),
+      ),
+      shipments: rows.map((row) => {
+        const lineUnits = [...new Set(row.lines.map((line) => text(line.unit)).filter(Boolean))];
+        return {
+          id: row.id,
+          shipmentNumber: row.shipmentNumber,
+          salesOrderId: row.salesOrderId,
+          salesOrderNumber: row.salesOrder?.orderNumber || null,
+          customerName: row.salesOrder?.customerName || null,
+          workflowStatus: row.workflowStatus,
+          postingStatus: row.postingStatus,
+          createdAt: iso(row.createdAt),
+          postedAt: iso(row.postedAt),
+          reversedAt: iso(row.reversedAt),
+          lineCount: row.lines.length,
+          skus: row.lines.map((line) => line.sku),
+          // The quantity the shipment holds, when its lines share one unit;
+          // quantities in different units are not added up.
+          quantity:
+            lineUnits.length === 1
+              ? fixed(row.lines.reduce((sum, line) => sum + units(line.requestedQuantity), 0n))
+              : null,
+          unit: lineUnits.length === 1 ? lineUnits[0] : null,
+          warehouseIds: [
+            ...new Set(row.lines.flatMap((line) => line.allocations.map((allocation) => allocation.warehouseId))),
+          ].sort(),
+        };
+      }),
     };
   }
   async function shipmentWorkbench(id, context) {
@@ -796,6 +1063,22 @@ export function createOutboundWorkbenchReadService({
     const movements = orderData.movements.filter(
       (row) => row.sourceDocumentId === shipment.id,
     );
+    // An invoice that holds this posted shipment: reversing it is then
+    // refused (the reversal policy's own check), so the page offers the
+    // invoice instead of a reversal. Display only; the rule is unchanged.
+    const [invoicing, holdingInvoice] = await Promise.all([
+      orderInvoicing(prisma, actor, shipment.salesOrder, [shipment]),
+      shipment.postingStatus === "posted"
+        ? prisma.customerInvoice.findFirst({
+            where: {
+              tenantId: actor.tenantId,
+              shipmentId: shipment.id,
+              status: { in: [...SHIPMENT_HOLDING_CUSTOMER_INVOICE_STATUSES] },
+            },
+            select: { id: true },
+          })
+        : null,
+    ]);
     return {
       dataSource: "Authoritative PostgreSQL",
       shipment: shipmentModel(shipment),
@@ -807,9 +1090,13 @@ export function createOutboundWorkbenchReadService({
         itemName: line.salesOrderLine.itemName,
         requestedQuantity: q(line.requestedQuantity),
         postedQuantity: q(line.postedQuantity),
+        // Null for a reader who may not read customer invoices.
+        invoicedQuantity: invoicing ? invoicing.invoicedByShipmentLine(line.id) : null,
         unit: line.unit,
         version: line.version,
       })),
+      invoices: invoicing ? invoicing.invoices : null,
+      reversalBlockedByInvoice: Boolean(holdingInvoice),
       allocations: allocations.map((row) => ({
         id: row.id,
         reservationId: row.reservationId,
@@ -835,11 +1122,12 @@ export function createOutboundWorkbenchReadService({
       })),
       scopeCoverage: orderData.scopeCoverage,
       availableActions,
+      // This shipment's own events and stock movements; the order's other
+      // shipments are on their own pages.
       evidence: orderData.evidence.filter(
         (row) =>
           row.entityId === shipment.id ||
-          row.summary.includes(shipment.shipmentNumber) ||
-          row.eventType.includes("shipment"),
+          movements.some((movement) => movement.id === row.entityId),
       ),
       smartLinks: [
         {
@@ -861,5 +1149,5 @@ export function createOutboundWorkbenchReadService({
       capabilities,
     };
   }
-  return { orderWorkbench, shipmentWorkbench };
+  return { orderWorkbench, shipmentWorkbench, listShipments };
 }

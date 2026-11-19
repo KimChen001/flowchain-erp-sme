@@ -4,12 +4,18 @@ import { CalendarClock, FileSearch, Inbox, MessageSquareQuote } from "lucide-rea
 import { A, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { EntityLink } from "../../components/business/EntityLink";
-import { ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
+import { ExportButton, ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { procurementApi } from "./procurementApi";
+import { ListPager, usePagedRows } from "./listPaging";
+import { exportRowsToCsv } from "../../lib/data-export";
 import { useI18n } from "../../i18n/I18n";
 import { formatCalendarDay, todayInTimeZone } from "../../lib/format";
 import type { ProcurementDocument } from "./procurementTypes";
+import { RfqNoOrderNote } from "./RfqNoOrderNote";
+
+// Rows to a page, as on the purchase order list (design audit U-14).
+const PAGE_SIZE = 50;
 
 const RFQ_STATUS_LABELS: Record<string, readonly [string, string]> = {
   draft: ["Draft", "草稿"],
@@ -24,7 +30,7 @@ const COPY = {
   open: ["Open RFQs", "未结询价单"],
   openNote: ["Draft, open or collecting quotes", "草稿、未结或正在收集报价"],
   collecting: ["Collecting quotes", "收集报价"],
-  collectingNote: ["Sent to suppliers, waiting for quotes", "已发给供应商，等待报价"],
+  collectingNote: ["Opened, waiting for supplier quotes", "已开启，等待供应商报价"],
   complete: ["All quotes in", "报价已收齐"],
   completeNote: ["Every invited supplier has responded", "所有受邀供应商均已回复"],
   dueSoon: ["Due in 7 days", "7 天内截止"],
@@ -44,6 +50,9 @@ const COPY = {
   listTitle: ["RFQ list", "询价单列表"],
   rfq: ["RFQ", "询价单"],
   subject: ["Subject / item", "主题 / 物料"],
+  exportItem: ["Item", "物料"],
+  exportCategory: ["Category", "类别"],
+  exportUnit: ["Unit", "单位"],
   quantity: ["Quantity", "数量"],
   responses: ["Supplier responses", "供应商回复"],
   actions: ["Actions", "操作"],
@@ -57,7 +66,7 @@ const COPY = {
 } as const;
 
 export function RfqListPage() {
-  const { language, locale, timezone, formatNumber } = useI18n();
+  const { language, locale, timezone, formatNumber, workspaceToday } = useI18n();
   const tr = (key: keyof typeof COPY) => COPY[key][language === "en-US" ? 0 : 1];
   const statusLabel = (status?: string) => status ? (RFQ_STATUS_LABELS[status] ? RFQ_STATUS_LABELS[status][language === "en-US" ? 0 : 1] : status) : "—";
   const [rows, setRows] = useState<ProcurementDocument[]>([]);
@@ -89,11 +98,14 @@ export function RfqListPage() {
     void load();
   }, [load]);
 
-  const today = todayInTimeZone(timezone);
-  const inAWeek = new Date(Date.parse(`${today}T12:00:00Z`) + 7 * 86400000).toISOString().slice(0, 10);
+  // The workspace's day from the server (design audit B3): never the browser's own.
+  const today = workspaceToday;
+  // Until the localization has loaded the day is "": no window yet, and no
+  // Invalid Date (which would throw and take the list down).
+  const inAWeek = today ? new Date(Date.parse(`${today}T12:00:00Z`) + 7 * 86400000).toISOString().slice(0, 10) : "";
   const isOpen = (row: ProcurementDocument) => OPEN_STATUSES.includes(String(row.status || ""));
   const quotesIn = (row: ProcurementDocument) => (row.supplierCount ?? 0) > 0 && (row.respondedSupplierCount ?? 0) >= (row.supplierCount ?? 0);
-  const dueSoon = (row: ProcurementDocument) => isOpen(row) && Boolean(row.dueDate) && String(row.dueDate) <= inAWeek;
+  const dueSoon = (row: ProcurementDocument) => isOpen(row) && Boolean(inAWeek) && Boolean(row.dueDate) && String(row.dueDate) <= inAWeek;
   const overdue = (row: ProcurementDocument) => isOpen(row) && Boolean(row.dueDate) && String(row.dueDate) < today;
   const needle = query.trim().toLowerCase();
   const shown = rows.filter((row) =>
@@ -102,6 +114,19 @@ export function RfqListPage() {
     && (!due || dueSoon(row))
     && (!needle || [row.number, row.id, row.title, row.itemName, row.category].some((value) => String(value || "").toLowerCase().includes(needle))),
   );
+  const paged = usePagedRows(shown, PAGE_SIZE, [status, quotes, due, needle].join("|"));
+  // Every RFQ the filters match, worded as the list shows it (design audit U-14).
+  const exportRfqs = () => exportRowsToCsv("rfqs-export.csv", shown.map((row) => ({
+    [tr("rfq")]: row.number || row.id,
+    [tr("subject")]: row.title || "",
+    [tr("exportItem")]: row.itemName || "",
+    [tr("exportCategory")]: row.category || "",
+    [tr("quantity")]: row.quantity ?? "",
+    [tr("exportUnit")]: row.unit || "",
+    [tr("responses")]: `${row.respondedSupplierCount ?? 0} / ${row.supplierCount ?? 0}`,
+    [tr("due")]: row.dueDate ? String(row.dueDate).slice(0, 10) : "",
+    [tr("status")]: statusLabel(row.status),
+  })), timezone);
   const reset = () => {
     setQuery("");
     setSearchParams({}, { replace: true });
@@ -112,10 +137,13 @@ export function RfqListPage() {
     <div className="space-y-5" data-testid="procurement-rfq-list">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <ActionableMetricCard label={tr("open")} value={value(rows.filter(isOpen).length)} description={tr("openNote")} to="/app/procurement/rfq" icon={FileSearch} color={A.blue} />
-        <ActionableMetricCard label={tr("collecting")} value={value(rows.filter((row) => row.status === "collecting_quotes").length)} description={tr("collectingNote")} to="/app/procurement/rfq?status=collecting_quotes" icon={Inbox} color={A.orange} />
+        {/* Open RFQs take quotes as well; nothing moves an RFQ to collecting_quotes yet (design audit L1-32). */}
+        <ActionableMetricCard label={tr("collecting")} value={value(rows.filter((row) => row.status === "open" || row.status === "collecting_quotes").length)} description={tr("collectingNote")} to="/app/procurement/rfq?status=open" icon={Inbox} color={A.orange} />
         <ActionableMetricCard label={tr("complete")} value={value(rows.filter((row) => isOpen(row) && quotesIn(row)).length)} description={tr("completeNote")} to="/app/procurement/rfq?quotes=complete" icon={MessageSquareQuote} color={A.purple} />
         <ActionableMetricCard label={tr("dueSoon")} value={value(rows.filter(dueSoon).length)} description={tr("dueSoonNote")} to="/app/procurement/rfq?due=7" icon={CalendarClock} color={A.red} />
       </div>
+
+      <RfqNoOrderNote />
 
       <ListSearchCard
         title={tr("searchTitle")}
@@ -123,6 +151,7 @@ export function RfqListPage() {
         actions={<>
           <ResetButton onClick={reset} />
           <RefreshButton onClick={() => void load()} />
+          <ExportButton onClick={() => void exportRfqs()} />
         </>}
       >
         <Field label={tr("search")}>
@@ -149,7 +178,7 @@ export function RfqListPage() {
         </Field>
       </ListSearchCard>
 
-      <ListCard title={tr("listTitle")} total={state === "loaded" ? rows.length : undefined} shown={shown.length}>
+      <ListCard title={tr("listTitle")} total={state === "loaded" ? shown.length : undefined} all={state === "loaded" ? rows.length : undefined} shown={paged.pageRows.length}>
         <div className={tableScrollClass}>
           <table className={`w-full min-w-[1040px] text-left ${tableBodyTextClass}`}>
             <thead>
@@ -171,10 +200,10 @@ export function RfqListPage() {
                   ? <ListStateRow colSpan={7} state="empty" title={tr("empty")} detail={tr("emptyDetail")} />
                   : <ListStateRow colSpan={7} state="empty" title={tr("noMatch")} />
               )}
-              {state === "loaded" && shown.map((row, index) => {
+              {state === "loaded" && paged.pageRows.map((row, index) => {
                 const responded = row.respondedSupplierCount ?? 0;
                 return (
-                  <tr key={row.id} className={listRowClass} style={listRowStyle(index, shown.length)}>
+                  <tr key={row.id} className={listRowClass} style={listRowStyle(index, paged.pageRows.length)}>
                     <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
                       <Link
                         className={`${tableLinkClass} text-blue-600`}
@@ -207,6 +236,7 @@ export function RfqListPage() {
             </tbody>
           </table>
         </div>
+        {state === "loaded" && <ListPager page={paged.page} pageSize={PAGE_SIZE} total={shown.length} onPage={paged.setPage} testId="rfq-list-pager" />}
       </ListCard>
     </div>
   );

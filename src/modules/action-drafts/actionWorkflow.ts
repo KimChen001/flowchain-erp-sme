@@ -26,6 +26,7 @@ export type ReviewActionDraft = {
   targetEntityType: string;
   targetEntityId: string;
   targetEntityLabel: string;
+  // A status code; reviewStatusLabel (components/actions/reviewQueueCopy.ts) names it.
   status: string;
   priority: string;
   owner: string;
@@ -39,7 +40,7 @@ export type ReviewActionDraft = {
   missingInformation: string[];
   navigationLinks: ReviewActionNavigationLink[];
   allowedTransitions: Array<{ from: string; to: string; reasonRequired: boolean }>;
-  reviewActions: Array<{ label: string; transitionTo: string; reasonRequired: boolean; previewOnly: boolean; requiresHumanReview: boolean; boundary: string }>;
+  reviewActions: Array<{ transitionTo: string; reasonRequired: boolean; previewOnly: boolean; requiresHumanReview: boolean; boundary: string }>;
   boundaryLabels: string[];
   dataLimitations: Array<{ label: string; description: string; severity: string; affectedModules?: string[] }>;
   auditTrailPreview: string[];
@@ -55,7 +56,7 @@ export type ReviewFirstActionWorkflowV2 = {
     highPriorityCount: number;
     dataLimitedCount: number;
     sourceCount: number;
-    overallStatusLabel: string;
+    overallStatus: string;
   };
   drafts: ReviewActionDraft[];
   sourceSummary: Array<{

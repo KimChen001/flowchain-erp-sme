@@ -57,7 +57,7 @@ test("unknown child paths offer module-aware recovery to the default route", asy
 test("all available primary modules render through the same ModuleShell", async ({ page }) => {
   await authenticate(page);
   const routes = [
-    ["overview", "今日"], ["master-data", "物料"], ["procurement", "采购"], ["sales", "销售"],
+    ["overview", "今日"], ["master-data", "基础资料"], ["procurement", "采购"], ["sales", "销售"],
     ["inventory", "库存"], ["reports", "报表"], ["settings", "系统管理"],
   ];
   for (const [path, label] of routes) {

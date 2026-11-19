@@ -67,7 +67,7 @@ test('Chinese supplier form and cancel stay available', async ({ page }) => {
 test('managers are offered item and customer create controls', async ({ page }) => {
   await login(page);
   await page.goto('/app/master-data/items');
-  await expect(page.getByRole('button', { name: 'New SKU', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'New item', exact: true })).toBeVisible();
   await page.goto('/app/master-data/customers');
   await expect(page.getByTestId('customer-new')).toBeVisible();
 });
@@ -89,9 +89,9 @@ test('read-only users cannot create suppliers', async ({ page }) => {
   await page.goto('/app/master-data/items');
   await expect(page.getByPlaceholder('Search by SKU or item name')).toBeVisible();
   await page.waitForLoadState('networkidle');
-  await expect(page.getByRole('button', { name: 'New SKU', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'New item', exact: true })).toHaveCount(0);
   await page.goto('/app/master-data/customers');
-  await expect(page.getByPlaceholder('Search master data')).toBeVisible();
+  await expect(page.getByPlaceholder('Code, name, contact or phone')).toBeVisible();
   await page.waitForLoadState('networkidle');
   await expect(page.getByTestId('customer-new')).toHaveCount(0);
 });

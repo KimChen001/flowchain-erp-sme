@@ -1,9 +1,14 @@
 import { extname } from 'node:path'
+import yauzl from 'yauzl'
 import { KnowledgeError } from './ai-knowledge-service.mjs'
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024
 const MAX_PDF_PAGES = 100
 const MAX_TEXT_CHARACTERS = 100_000
+// A DOCX is a ZIP package. It may hold at most this many parts and unpack to
+// at most eight times the upload limit (the data import allows XLSX the same).
+const MAX_DOCX_ENTRIES = 1_000
+const MAX_DOCX_UNPACKED_BYTES = 8 * MAX_FILE_BYTES
 const types = Object.freeze({
   '.txt': 'text',
   '.md': 'text',
@@ -39,7 +44,46 @@ async function defaultPdfParser(bytes) {
   } finally { await parser.destroy() }
 }
 
+// Inflates every part of a DOCX package once before it is parsed, counting the
+// bytes actually unpacked rather than trusting the sizes the package declares
+// (a part larger than its declared size fails), so a small upload cannot
+// expand into a huge document in memory (design audit L10-04).
+export function assertDocxUnpackedWithinLimit(bytes, { maximumBytes = MAX_DOCX_UNPACKED_BYTES, maximumEntries = MAX_DOCX_ENTRIES } = {}) {
+  const tooLarge = () => new KnowledgeError('KNOWLEDGE_DOCX_TOO_LARGE', `The DOCX file unpacks to more than ${Math.round(maximumBytes / 1024 / 1024)} MB. Split the document or remove large images before importing.`, 413)
+  return new Promise((resolve, reject) => {
+    yauzl.fromBuffer(bytes, { lazyEntries: true, validateEntrySizes: true }, (error, zip) => {
+      if (error) return reject(error)
+      let entries = 0, declared = 0, inflated = 0, settled = false
+      const fail = (failure) => {
+        if (settled) return
+        settled = true
+        try { zip.close() } catch { /* already closed */ }
+        reject(failure)
+      }
+      zip.on('entry', (entry) => {
+        entries += 1
+        declared += Number(entry.uncompressedSize || 0)
+        if (entries > maximumEntries || declared > maximumBytes) return fail(tooLarge())
+        if (entry.fileName.endsWith('/')) return zip.readEntry()
+        zip.openReadStream(entry, (streamError, stream) => {
+          if (streamError) return fail(streamError)
+          stream.on('data', (chunk) => {
+            inflated += chunk.length
+            if (inflated > maximumBytes) { stream.destroy(); fail(tooLarge()) }
+          })
+          stream.on('error', fail)
+          stream.on('end', () => { if (!settled) zip.readEntry() })
+        })
+      })
+      zip.on('end', () => { if (!settled) { settled = true; resolve({ entries, inflatedBytes: inflated }) } })
+      zip.on('error', fail)
+      zip.readEntry()
+    })
+  })
+}
+
 async function defaultDocxParser(bytes) {
+  await assertDocxUnpackedWithinLimit(bytes)
   const mammoth = await import('mammoth')
   return (await mammoth.extractRawText({ buffer: bytes })).value
 }
@@ -60,4 +104,4 @@ export async function parseKnowledgeFile(input = {}, { parsePdf = defaultPdfPars
   }
 }
 
-export const KNOWLEDGE_FILE_LIMITS = Object.freeze({ maximumBytes: MAX_FILE_BYTES, maximumPdfPages: MAX_PDF_PAGES, maximumTextCharacters: MAX_TEXT_CHARACTERS })
+export const KNOWLEDGE_FILE_LIMITS = Object.freeze({ maximumBytes: MAX_FILE_BYTES, maximumPdfPages: MAX_PDF_PAGES, maximumTextCharacters: MAX_TEXT_CHARACTERS, maximumDocxUnpackedBytes: MAX_DOCX_UNPACKED_BYTES, maximumDocxEntries: MAX_DOCX_ENTRIES })

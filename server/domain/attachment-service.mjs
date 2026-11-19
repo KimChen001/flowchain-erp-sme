@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { assertAuthorized } from "../auth/authorization-service.mjs";
-import { resolveProvisionedActor } from "./pilot-identity.mjs";
+import { assertWarehouseAccess, resolveProvisionedActor } from "./pilot-identity.mjs";
 import { InternalSettlementError } from "./internal-settlement-command-service.mjs";
 import { createLocalDurableAttachmentStorage } from "./attachment-storage-provider.mjs";
 import { CONTRACT_FILE_MIME_TYPES, CONTRACT_PERMISSIONS } from "./contract-policy.mjs";
@@ -18,6 +18,14 @@ const CONTRACT_PURPOSE = "contract";
 const stagePolicy = (purpose) => purpose === CONTRACT_PURPOSE
   ? { permission: CONTRACT_PERMISSIONS.manage, mimeTypes: new Set(CONTRACT_FILE_MIME_TYPES) }
   : { permission: "mobile.sync.use", mimeTypes: allowedMime };
+// Receiving evidence belongs to every warehouse its receipt touches: the
+// header's and each line's (a line may be received into another warehouse).
+// Reading it needs read access to all of them and changing it operate access,
+// as the receipt itself does (receiving-draft-command-service.mjs). A receipt
+// recorded without any warehouse names none, and the web receiving list shows
+// it to every receiving reader too.
+const RECEIPT_WAREHOUSES = { lines: { select: { warehouseId: true } } };
+const receiptWarehouseIds = (receipt) => [...new Set([receipt.warehouseId, ...(receipt.lines || []).map((line) => line.warehouseId)].filter(Boolean))];
 
 export function createAttachmentService({ prisma, env = process.env, idFactory = randomUUID, now = () => new Date(), storageProvider } = {}) {
   if (!prisma) throw new Error("prisma is required");
@@ -80,13 +88,14 @@ export function createAttachmentService({ prisma, env = process.env, idFactory =
   async function bindReceiving(receivingId, input, context) {
     const actor = await actorFor(context); assertAuthorized({ actor, permission: "mobile.receiving.prepare", tenantId: actor.tenantId }); assertAuthorized({ actor, permission: "receiving.prepare", tenantId: actor.tenantId });
     return prisma.$transaction(async (tx) => {
-      const receiving = await tx.receivingDocument.findFirst({ where: { id: text(receivingId), tenantId: actor.tenantId } }); if (!receiving) fail("RECEIVING_NOT_FOUND", "Receiving draft was not found.", 404);
+      const receiving = await tx.receivingDocument.findFirst({ where: { id: text(receivingId), tenantId: actor.tenantId }, include: RECEIPT_WAREHOUSES }); if (!receiving) fail("RECEIVING_NOT_FOUND", "Receiving draft was not found.", 404);
+      assertWarehouseAccess(actor, receiptWarehouseIds(receiving), "operate");
       if (receiving.postingStatus !== "unposted") fail("RECEIVING_IMMUTABLE", "Posted receiving evidence cannot be replaced.", 409);
       const upload = await ownedUpload(tx, actor, input.uploadId), id = idFactory();
       const attachment = await tx.receivingAttachment.create({ data: { id, tenantId: actor.tenantId, receivingDocumentId: receiving.id, uploadId: upload.id, fileName: upload.fileName, mimeType: upload.mimeType, sizeBytes: upload.sizeBytes, sha256: upload.sha256, sourceDeviceId: text(input.sourceDeviceId) || null, createdById: actor.user.id } });
       await tx.stagedUpload.update({ where: { id: upload.id }, data: { status: "bound", boundAt: now() } });
       await tx.auditLog.create({ data: { id: idFactory(), tenantId: actor.tenantId, actorId: actor.user.id, source: "attachment_service", module: "procurement_receiving", action: "receiving_attachment_added", entityType: "ReceivingAttachment", entityId: attachment.id, summary: `Added evidence to receiving ${receiving.documentNumber || receiving.id}.`, metadata: { receivingDocumentId: receiving.id, sha256: upload.sha256 } } });
-      await tx.domainChangeFeed.create({ data: { tenantId: actor.tenantId, entityType: "ReceivingDocument", entityId: receiving.id, operation: "upsert", entityVersion: receiving.version, actorId: actor.user.id, source: "attachment_service", requestId: upload.id, payloadHash: digest(Buffer.from(`${attachment.id}:${upload.sha256}`)), sensitivityGroups: [], moduleKey: "receiving", authorizationClass: "receiving.read", scopeWarehouseIds: [receiving.warehouseId].filter(Boolean), resourceTenantId: actor.tenantId } });
+      await tx.domainChangeFeed.create({ data: { tenantId: actor.tenantId, entityType: "ReceivingDocument", entityId: receiving.id, operation: "upsert", entityVersion: receiving.version, actorId: actor.user.id, source: "attachment_service", requestId: upload.id, payloadHash: digest(Buffer.from(`${attachment.id}:${upload.sha256}`)), sensitivityGroups: [], moduleKey: "receiving", authorizationClass: "receiving.read", scopeWarehouseIds: receiptWarehouseIds(receiving), resourceTenantId: actor.tenantId } });
       return { attachmentId: attachment.id, receivingDocumentId: receiving.id, uploadId: upload.id, fileName: upload.fileName, mimeType: upload.mimeType, sizeBytes: upload.sizeBytes, sha256: upload.sha256, status: attachment.status };
     }, { isolationLevel: "Serializable" });
   }
@@ -104,7 +113,7 @@ export function createAttachmentService({ prisma, env = process.env, idFactory =
     if (!attachment && legacyEnabled) {
       attachment = await prisma.settlementAttachment.findFirst({ where: { id: text(attachmentId), tenantId: actor.tenantId, status: "active" }, include: { upload: true } });
       if (attachment) assertAuthorized({ actor, permission: "finance.settlement_attachment.read", tenantId: actor.tenantId });
-      if (!attachment) { attachment = await prisma.receivingAttachment.findFirst({ where: { id: text(attachmentId), tenantId: actor.tenantId, status: "active" }, include: { upload: true } }); module = "procurement_receiving"; entityType = "ReceivingAttachment"; if (attachment) assertAuthorized({ actor, permission: "receiving.read", tenantId: actor.tenantId }); }
+      if (!attachment) { attachment = await prisma.receivingAttachment.findFirst({ where: { id: text(attachmentId), tenantId: actor.tenantId, status: "active" }, include: { upload: true, receivingDocument: { include: RECEIPT_WAREHOUSES } } }); module = "procurement_receiving"; entityType = "ReceivingAttachment"; if (attachment) { assertAuthorized({ actor, permission: "receiving.read", tenantId: actor.tenantId }); assertWarehouseAccess(actor, receiptWarehouseIds(attachment.receivingDocument), "read"); } }
     }
     if (!attachment) fail("ATTACHMENT_NOT_FOUND", "Attachment was not found.", 404);
     const bytes = await storage.get(attachment.upload.storageKey);
@@ -125,17 +134,19 @@ export function createAttachmentService({ prisma, env = process.env, idFactory =
         await tx.domainChangeFeed.create({ data: { tenantId: actor.tenantId, entityType: "SettlementAttachment", entityId: settlementAttachment.id, operation: "tombstone", actorId: actor.user.id, source: "attachment_service", requestId: settlementAttachment.uploadId, payloadHash: digest(Buffer.from(`${settlementAttachment.id}:deleted`)), sensitivityGroups: ["finance_partner_snapshot"], moduleKey: "finance", authorizationClass: "finance.settlement_attachment.read", resourceTenantId: actor.tenantId } });
         return { attachmentId: settlementAttachment.id, status: "deleted" };
       }
-      const receivingAttachment = await tx.receivingAttachment.findFirst({ where: { id: text(attachmentId), tenantId: actor.tenantId, status: "active" }, include: { receivingDocument: true } });
+      const receivingAttachment = await tx.receivingAttachment.findFirst({ where: { id: text(attachmentId), tenantId: actor.tenantId, status: "active" }, include: { receivingDocument: { include: RECEIPT_WAREHOUSES } } });
       if (!receivingAttachment) fail("ATTACHMENT_NOT_FOUND", "Attachment was not found.", 404);
       assertAuthorized({ actor, permission: "mobile.receiving.prepare", tenantId: actor.tenantId }); assertAuthorized({ actor, permission: "receiving.prepare", tenantId: actor.tenantId });
+      assertWarehouseAccess(actor, receiptWarehouseIds(receivingAttachment.receivingDocument), "operate");
       if (receivingAttachment.receivingDocument.postingStatus !== "unposted") fail("POSTED_ATTACHMENT_IMMUTABLE", "Posted receiving evidence cannot be deleted.", 409);
       await tx.receivingAttachment.update({ where: { id: receivingAttachment.id }, data: { status: "deleted", deletedAt: now() } });
       await tx.auditLog.create({ data: { id: idFactory(), tenantId: actor.tenantId, actorId: actor.user.id, source: "attachment_service", module: "procurement_receiving", action: "receiving_attachment_deleted", entityType: "ReceivingAttachment", entityId: receivingAttachment.id, summary: `Deleted draft evidence ${receivingAttachment.fileName}.`, metadata: { receivingDocumentId: receivingAttachment.receivingDocumentId, sha256: receivingAttachment.sha256 } } });
-      await tx.domainChangeFeed.create({ data: { tenantId: actor.tenantId, entityType: "ReceivingAttachment", entityId: receivingAttachment.id, operation: "tombstone", actorId: actor.user.id, source: "attachment_service", requestId: receivingAttachment.uploadId, payloadHash: digest(Buffer.from(`${receivingAttachment.id}:deleted`)), sensitivityGroups: [], moduleKey: "receiving", authorizationClass: "receiving.read", scopeWarehouseIds: [receivingAttachment.receivingDocument.warehouseId].filter(Boolean), resourceTenantId: actor.tenantId } });
+      await tx.domainChangeFeed.create({ data: { tenantId: actor.tenantId, entityType: "ReceivingAttachment", entityId: receivingAttachment.id, operation: "tombstone", actorId: actor.user.id, source: "attachment_service", requestId: receivingAttachment.uploadId, payloadHash: digest(Buffer.from(`${receivingAttachment.id}:deleted`)), sensitivityGroups: [], moduleKey: "receiving", authorizationClass: "receiving.read", scopeWarehouseIds: receiptWarehouseIds(receivingAttachment.receivingDocument), resourceTenantId: actor.tenantId } });
       return { attachmentId: receivingAttachment.id, status: "deleted" };
     }, { isolationLevel: "Serializable" });
   }
-  async function healthCheck() { return storage.healthCheck(); }
+  // Every workspace's uploads against the storage directory, for the operator
+  // script scripts/attachment-orphan-check.mjs; no HTTP route serves it.
   async function orphanCheck() {
     const uploads = await prisma.stagedUpload.findMany({ select: { storageKey: true, sha256: true, status: true, expiresAt: true } });
     const byKey = new Map(uploads.map((upload) => [upload.storageKey, upload]));
@@ -148,5 +159,5 @@ export function createAttachmentService({ prisma, env = process.env, idFactory =
     const orphanFiles = (await storage.listFiles()).filter((file) => !byKey.has(file.storageKey)).map((file) => file.storageKey);
     return { provider: storage.provider, root: storage.root, missingFiles, orphanFiles, hashMismatches, expiredStagedUploads, ok: !missingFiles.length && !orphanFiles.length && !hashMismatches.length && !expiredStagedUploads.length };
   }
-  return { stageUpload, status, bindSettlement, bindReceiving, download, deleteAttachment, cleanupExpiredUploads, healthCheck, orphanCheck };
+  return { stageUpload, status, bindSettlement, bindReceiving, download, deleteAttachment, cleanupExpiredUploads, orphanCheck };
 }

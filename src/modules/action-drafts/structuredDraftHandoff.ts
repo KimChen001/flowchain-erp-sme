@@ -1,23 +1,9 @@
 import { prefillOrigin } from "../../lib/prefill";
 
-// Drafts that open a normal creation screen with its fields prefilled, rather
-// than the text draft review. The screen's own save button is the only way to
-// save; the query only fills the form. An RFQ starts from an approved purchase
-// request in FlowChain, so an RFQ draft opens the purchase request form, which
-// says so (intent=rfq).
-export function isStructuredDraftType(type?: string | null) {
-  return type === "purchase_request_draft" || type === "rfq_draft" || type === "task_draft";
-}
-
-// The card an answer opens as it arrives: a structured draft the server marked
-// autoOpen, when the user asked for an order and the choice was clear. The
-// assistant panel opens it once, when the answer arrives; a restored or
-// re-rendered answer never opens it again. The form still saves only through
-// its own button.
-export function autoOpenDraftCard<T extends { autoOpen?: boolean; draftType?: string | null }>(cards: T[] | null | undefined) {
-  return (cards || []).find((card) => card.autoOpen === true && isStructuredDraftType(card.draftType)) || null;
-}
-
+// A draft that opens a normal creation screen with its fields prefilled. The
+// screen's own save button is the only way to save; the query only fills the
+// form. An RFQ starts from an approved purchase request in FlowChain, so an RFQ
+// draft opens the purchase request form, which says so (intent=rfq).
 export function structuredDraftTarget(type: string, payload: Record<string, unknown> = {}, source?: string | null) {
   const query = Object.fromEntries(Object.entries({
     mode: "create",

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { PDFParse } from "pdf-parse";
 
 // The customer invoice document on the operational finance scenario: an
 // invoice drafted from the posted USD shipment (10 x FIN-BROWSER at 12.50 USD,
@@ -58,8 +59,7 @@ test("an invoice is checked as a document when approved and printed alone once i
   await expect(page.getByTestId("customer-invoice-shipment")).toHaveValue("finance-browser-shipment-USD");
   // No number to type: the server assigns CI-YYYYMM-NNNN when the draft is saved.
   await page.getByTestId("customer-invoice-due").fill("2026-11-15");
-  await page.getByTestId("customer-invoice-preview").click();
-  await expect(page.getByTestId("customer-invoice-create")).toBeEnabled();
+  // Create draft checks the form, previews the invoice and creates it in one click.
   await page.getByTestId("customer-invoice-create").click();
   await expect(page).toHaveURL(/\/app\/sales\/invoices\/[0-9a-f-]{36}$/);
   const invoiceUrl = page.url();
@@ -125,6 +125,53 @@ test("an invoice is checked as a document when approved and printed alone once i
   expect(await figures(page)).toEqual(english);
   // The interface stays in English.
   await expect(page.getByTestId("business-document-print")).toHaveText("Print or save as PDF");
+
+  // On a phone the A4 sheet is scaled to the screen: nothing scrolls
+  // sideways and the totals are in view across. Printing keeps its own size.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(async () => Number(await page.locator(".business-document-stage").getAttribute("data-scale"))).toBeLessThan(0.5);
+  const sheetBox = await sheet.boundingBox();
+  expect(sheetBox && sheetBox.x >= 0 && sheetBox.x + sheetBox.width <= 390).toBe(true);
+  const totalsBox = await page.getByTestId("invoice-document-totals").boundingBox();
+  expect(totalsBox && totalsBox.x + totalsBox.width <= 390).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  expect(await page.locator(".business-document-stage").evaluate((stage) => stage.scrollWidth <= stage.clientWidth)).toBe(true);
+  await page.emulateMedia({ media: "print" });
+  expect(await sheet.evaluate((element) => getComputedStyle(element).zoom)).toBe("1");
+  await page.emulateMedia({ media: "screen" });
+
+  // A long invoice prints across pages, every line once, each page numbered
+  // at its foot from the browser's counters in the document language (design
+  // audit L11-17). The issued invoice is served with 60 lines.
+  await page.setViewportSize({ width: 1280, height: 720 });
+  const sku = (n: number) => `CI-PRINT-${String(n).padStart(2, "0")}`;
+  await page.route("**/api/finance/customer-invoices/*/document", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    const line = body.document.lines[0];
+    body.document.lines = Array.from({ length: 60 }, (_, index) => ({ ...line, lineNo: index + 1, sku: sku(index + 1) }));
+    await route.fulfill({ response, json: body });
+  });
+  await page.reload();
+  await expect(page.getByTestId("invoice-document-line-60")).toBeVisible();
+  // The PDF text may read 页 as the radical ⻚, so any non-digit stands for it.
+  for (const [language, number] of [["en-US", (n: number, m: number) => new RegExp(`Page${n}of${m}(?!\\d)`)], ["zh-CN", (n: number, m: number) => new RegExp(`第${n}\\D/共${m}\\D`)]] as const) {
+    await page.getByTestId("business-document-language").selectOption(language);
+    await page.emulateMedia({ media: "print" });
+    const parser = new PDFParse({ data: new Uint8Array(await page.pdf({ preferCSSPageSize: true })) });
+    try {
+      const { text, total } = await parser.getText();
+      expect(total, language).toBeGreaterThan(1);
+      // Compared without spaces: a narrow cell can wrap inside a SKU.
+      const compact = text.replace(/\s+/g, "");
+      for (let n = 1; n <= 60; n += 1) expect(compact.split(sku(n)).length - 1, sku(n)).toBe(1);
+      expect(compact, language).toMatch(number(total, total));
+      expect(compact, language).not.toMatch(number(1, 1));
+    } finally {
+      await parser.destroy();
+    }
+    await page.emulateMedia({ media: "screen" });
+  }
 });
 
 test("an invoice that does not exist shows the page's own notice inside the app", async ({ page }) => {

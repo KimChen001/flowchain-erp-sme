@@ -79,7 +79,57 @@ const lines = (rows = []) =>
     quantity: text(row.quantity),
     quarantineBalanceId: text(row.quarantineBalanceId),
     inventoryBalanceId: text(row.inventoryBalanceId),
+    // Without a quarantine balance: the warehouse (and optional location) to
+    // receive into. The draft creates the quarantine stock record if needed.
+    warehouseId: text(row.warehouseId),
+    location: text(row.location),
   }));
+
+// Creates the quarantine stock records a receipt draft needs, once per
+// (SKU, warehouse, location), the same key receiving uses for available stock.
+// A concurrent create of the same key fails the unique index and the command
+// returns its refresh-and-retry conflict.
+async function ensureQuarantineBalances(tx, tenantId, idFactory, planLines) {
+  const created = new Map();
+  for (const line of planLines) {
+    const spec = line.createsQuarantineBalance;
+    if (!spec) continue;
+    const key = `${spec.sku}|${spec.warehouseId}|${spec.locationKey}`;
+    let balance = created.get(key);
+    if (!balance) {
+      balance =
+        (await tx.quarantineInventoryBalance.findFirst({
+          where: {
+            tenantId,
+            sku: spec.sku,
+            warehouseKey: spec.warehouseId,
+            locationKey: spec.locationKey,
+          },
+        })) ||
+        (await tx.quarantineInventoryBalance.create({
+          data: {
+            id: idFactory(),
+            tenantId,
+            itemId: spec.itemId,
+            sku: spec.sku,
+            itemName: spec.itemName,
+            warehouseId: spec.warehouseId,
+            warehouseKey: spec.warehouseId,
+            location: spec.location,
+            locationKey: spec.locationKey,
+            onHandQuantity: "0",
+            unit: spec.unit,
+            status: "active",
+            version: 0,
+          },
+        }));
+      created.set(key, balance);
+    }
+    line.quarantineBalanceId = balance.id;
+    line.balanceId = balance.id;
+  }
+  return [...created.values()].map((balance) => balance.id);
+}
 
 function normalize(type, input = {}) {
   const idempotencyKey = required(
@@ -365,6 +415,12 @@ export function createCustomerReturnCommandService({
         if (repeated) return repeated;
         if (/postingNumber/i.test(JSON.stringify(error?.meta || error)))
           fail("RETURN_POSTING_NUMBER_CONFLICT", "Return posting number is already in use.", 409);
+        if (/one_active_per_request|returnRequestId/i.test(JSON.stringify(error?.meta || error)))
+          fail(
+            "RETURN_REVERSAL_BLOCKED_BY_ACTIVE_AUTHORIZATION",
+            "Cancel the open release authorization of this return before reversing the receipt.",
+            409,
+          );
       }
       if (
         error?.code === "P2034" ||
@@ -398,6 +454,12 @@ export function createCustomerReturnCommandService({
         }),
       );
       assertWarehouseAccess(actor, plan.warehouseIds, "operate");
+      const createdBalanceIds = await ensureQuarantineBalances(
+        tx,
+        actor.tenantId,
+        idFactory,
+        plan.normalizedPlan.lines,
+      );
       const posting = await tx.returnPostingDocument.create({
         data: {
           id: idFactory(),
@@ -438,6 +500,9 @@ export function createCustomerReturnCommandService({
         idempotencyKey: normalized.idempotencyKey,
         before: null,
         after: model(posting),
+        metadata: createdBalanceIds.length
+          ? { createdQuarantineBalanceIds: createdBalanceIds }
+          : undefined,
       });
       await tx.auditLog.create({ data: event });
       return { entityType: "ReturnPostingDocument", entityId: posting.id, posting: model(posting), auditEventId: event.id };
@@ -464,6 +529,12 @@ export function createCustomerReturnCommandService({
         }),
       );
       assertWarehouseAccess(actor, plan.warehouseIds, "operate");
+      await ensureQuarantineBalances(
+        tx,
+        actor.tenantId,
+        idFactory,
+        plan.normalizedPlan.lines,
+      );
       const before = model(posting);
       await tx.returnPostingLine.deleteMany({ where: { returnPostingId: posting.id } });
       for (const line of plan.normalizedPlan.lines)

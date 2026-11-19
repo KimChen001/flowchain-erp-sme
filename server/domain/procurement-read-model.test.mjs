@@ -281,6 +281,37 @@ test('three-way match lines without a PO line are not guessed, and no lines mean
   assert.equal(match.lineVarianceAmount, null)
 })
 
+// UI review 7: the match pages showed "MATCH-3576e9ac-…" with the receipt and
+// invoice as UUIDs, and a search for GRN-202611-0009 or INV-UI7-B002 found
+// nothing. The match carries the numbers people read; the ids stay for links.
+test('a three-way match carries the supplier invoice number and the GRN number beside their ids', () => {
+  const data = partialInvoiceFixture()
+  data.supplierInvoices[0] = { ...data.supplierInvoices[0], id: 'inv-uuid-1', invoiceNumber: 'inv-uuid-1', supplierInvoiceNumber: 'INV-UI7-B002' }
+  data.receivingDocs[0] = { ...data.receivingDocs[0], documentNumber: 'GRN-202611-0009' }
+  const match = getProcurementDocument(data, 'threeWayMatch', 'MATCH-inv-uuid-1')
+  assert.equal(match.invoiceId, 'inv-uuid-1')
+  assert.equal(match.invoiceNumber, 'INV-UI7-B002')
+  assert.equal(match.grnId, 'GRN-LINE-1')
+  assert.equal(match.grnNumber, 'GRN-202611-0009')
+  const related = Object.fromEntries(match.relatedDocuments.map((row) => [row.type, row]))
+  assert.deepEqual([related.grn.id, related.grn.label], ['GRN-LINE-1', 'GRN-202611-0009'])
+  assert.deepEqual([related.invoice.id, related.invoice.label], ['inv-uuid-1', 'INV-UI7-B002'])
+  const invoice = getProcurementDocument(data, 'invoice', 'inv-uuid-1')
+  assert.deepEqual([invoice.invoiceNumber, invoice.grnNumber], ['INV-UI7-B002', 'GRN-202611-0009'])
+
+  // A number the invoice row carries (the receipt not loaded) wins; nothing
+  // recorded means no number, never the id under another name.
+  data.receivingDocs = []
+  data.supplierInvoices[0].grnNumber = 'GRN-202611-0010'
+  assert.equal(getProcurementDocument(data, 'threeWayMatch', 'MATCH-inv-uuid-1').grnNumber, 'GRN-202611-0010')
+  const bare = getProcurementDocument(partialInvoiceFixture(), 'threeWayMatch', 'MATCH-INV-LINE-1')
+  assert.equal('invoiceNumber' in bare, false)
+  assert.equal('grnNumber' in bare, false)
+  // Numbers are never masked: they are not amounts or supplier names.
+  const masked = maskProcurementRecord(getProcurementDocument({ ...partialInvoiceFixture(), supplierInvoices: [{ ...partialInvoiceFixture().supplierInvoices[0], supplierInvoiceNumber: 'INV-UI7-B002' }] }, 'threeWayMatch', 'MATCH-INV-LINE-1'), 'threeWayMatch', { types: { threeWayMatch: true }, prices: false, amounts: false, partner: false })
+  assert.equal(masked.invoiceNumber, 'INV-UI7-B002')
+})
+
 test('three-way match line amounts are hidden from a reader without finance amounts', () => {
   const match = getProcurementDocument(partialInvoiceFixture(), 'threeWayMatch', 'MATCH-INV-LINE-1')
   const masked = maskProcurementRecord(match, 'threeWayMatch', { types: { threeWayMatch: true }, prices: true, amounts: false, partner: true })

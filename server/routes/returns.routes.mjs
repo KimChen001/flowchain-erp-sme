@@ -230,6 +230,24 @@ export async function handleReturnsRoute(ctx) {
         );
         return true;
       }
+      if (ctx.req.method === "POST" && action === "revise-preview") {
+        if (!ensureCapability(ctx, "return-request")) return true;
+        ctx.send(
+          ctx.res,
+          200,
+          await read.previewRequest(body, ctx, requestId),
+        );
+        return true;
+      }
+      if (ctx.req.method === "POST" && action === "reject-preview") {
+        if (!ensureCapability(ctx, "return-authorization")) return true;
+        ctx.send(
+          ctx.res,
+          200,
+          await read.previewReject(requestId, body, ctx),
+        );
+        return true;
+      }
       if (ctx.req.method === "POST" && action === "submit-preview") {
         if (!ensureCapability(ctx, "return-request")) return true;
         ctx.send(ctx.res, 200, await read.previewSubmit(requestId, ctx));
@@ -397,6 +415,38 @@ export async function handleReturnsRoute(ctx) {
           ctx.res,
           200,
           await command.expireAuthorization(authorizationId, body, ctx),
+        );
+        return true;
+      }
+      if (ctx.req.method === "POST" && action === "close-remainder") {
+        if (!ensureCapability(ctx, "return-authorization")) return true;
+        ctx.send(
+          ctx.res,
+          200,
+          await command.closeAuthorizationRemainder(
+            authorizationId,
+            body,
+            ctx,
+          ),
+        );
+        return true;
+      }
+      const closePreview = {
+        "cancel-preview": "cancel",
+        "expire-preview": "expire",
+        "close-remainder-preview": "close_remainder",
+      }[action];
+      if (ctx.req.method === "POST" && closePreview) {
+        if (!ensureCapability(ctx, "return-authorization")) return true;
+        ctx.send(
+          ctx.res,
+          200,
+          await read.previewAuthorizationClosure(
+            authorizationId,
+            closePreview,
+            body,
+            ctx,
+          ),
         );
         return true;
       }

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { AlertTriangle, Boxes, ListChecks, PackageOpen, Warehouse } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
+import { STOCK_SIGNAL_FILTERS, inventoryStockSignals, stockSignalCounts, stockSignalMatches, stockStateOf as stockSignalState } from "../../../shared/inventory-stock-signals.mjs";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { formatDateTimeInTimeZone, formatQuantity } from "../../lib/format";
 import { movementTypeLabel, statusCodeLabel } from "../../i18n/statusLabels";
@@ -15,7 +16,7 @@ import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdName
 import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
 import { useReorderListCopy } from "./reorderListCopy";
 import { useRouteAvailability } from "../../app/routeAvailability";
-import { ListPager } from "../procurement/listPaging";
+import { ListPager, usePagedRows } from "../procurement/listPaging";
 
 type Item = {
   id?: string;
@@ -73,6 +74,8 @@ type Movement = {
   quantityIn?: string | number;
   quantityOut?: string | number;
   adjustmentQty?: string | number;
+  // The unit the movement was recorded in, shown with its quantities.
+  unit?: string | null;
   date?: string;
   sourceDocument?: string;
   status?: string;
@@ -95,9 +98,12 @@ type Focus = {
 const BALANCE_PAGE_SIZE = 200;
 const BALANCE_PAGE_LIMIT = 50;
 // Movements are paged on the server (there can be tens of thousands): one
-// page of 200 (the most the server sends at once) at a time, with the type,
-// warehouse and search applied there.
-const MOVEMENT_PAGE_SIZE = 200;
+// page of 50 at a time, as on the other long lists, with the type, warehouse
+// and search applied there.
+const MOVEMENT_PAGE_SIZE = 50;
+// The other lists (balances, warnings, lots, serials) hold every row in the
+// browser, so search and the cards count them all, and draw 50 at a time.
+const LIST_PAGE_SIZE = 50;
 // Every type and warehouse in the list, from the server, for the menus.
 type MovementFacets = { movementTypes: Array<{ code: string; count: number }>; warehouseIds: string[] };
 
@@ -126,22 +132,24 @@ const COPY = {
   stockedItems: ["Stocked items", "有库存的物料"],
   stockedItemsNote: ["SKUs with a posted balance", "已过账余额的 SKU"],
   short: ["Need replenishment", "需补货"],
-  shortNote: ["Below safety stock or at the reorder point", "低于安全库存或达到再订货点"],
+  shortNote: ["Stock position at or below the reorder point, as on the reorder list", "库存头寸等于或低于再订货点，与补货清单一致"],
+  positionUnknown: ["The reorder list cannot judge your view, so only stock on hand is shown", "补货清单无法判断你可见的库存，因此只显示现有库存信号"],
   reserved: ["Reserved lines", "有预留的行"],
   reservedNote: ["Balances with stock held for orders", "为订单预留了库存的余额"],
   warehouses: ["Warehouses", "仓库"],
   warehousesNote: ["Warehouses holding stock you can see", "你可查看且有库存的仓库"],
   // The warnings page counts its own warnings rather than repeating the stock page's cards.
-  belowSafety: ["Below safety stock", "低于安全库存"],
-  belowSafetyNote: ["Available stock under the item's safety stock", "可用量低于物料的安全库存"],
-  atReorderPoint: ["At the reorder point", "达到再订货点"],
-  atReorderPointNote: ["Available stock at or below the reorder point", "可用量等于或低于再订货点"],
+  belowSafety: ["Below safety stock (on hand)", "低于安全库存（现有）"],
+  belowSafetyNote: ["Stock on hand under safety stock, whether or not orders are coming", "现有可用量低于安全库存，不论是否有在途采购"],
+  covered: ["Covered by open orders", "已有在途采购覆盖"],
+  coveredNote: ["Below safety stock on hand, but open purchase orders keep the position above the reorder point", "现有量低于安全库存，但在途采购使库存头寸高于再订货点"],
+  coveredShort: ["covered by open orders", "已有在途采购覆盖"],
   noneAvailable: ["Nothing available", "无可用库存"],
   noneAvailableNote: ["Items with a warning and no stock available", "有预警且没有可用库存的物料"],
   searchBalances: ["Inventory search", "库存查询"],
   searchBalancesSubtitle: ["Only posted stock is shown. Search by SKU or item, warehouse and stock status.", "仅显示已过账的库存记录。可按 SKU 或物料、仓库和库存状态查询。"],
   searchWarnings: ["Warning search", "预警查询"],
-  searchWarningsSubtitle: ["Stock below safety stock or at the reorder point, judged over every location of the item.", "按物料在所有库位的合计可用量，判断是否低于安全库存或达到再订货点。"],
+  searchWarningsSubtitle: ["Items to reorder by stock position (on hand − reserved + open purchase orders, as on the reorder list), and items whose stock on hand is below safety stock. Each item is judged over all its locations.", "按库存头寸（现有 − 预留 + 在途采购，与补货清单一致）需要补货的物料，以及现有量低于安全库存的物料；每个物料按其所有库位合计判断。"],
   searchMovements: ["Movement search", "流水查询"],
   searchMovementsSubtitle: ["Posted receipts, shipments, transfers and adjustments.", "已过账的入库、出库、调拨和调整。"],
   searchLots: ["Lot search", "批次查询"],
@@ -157,6 +165,10 @@ const COPY = {
   stockStatus: ["Stock status", "库存状态"],
   allStock: ["All stock", "全部库存"],
   sufficient: ["Sufficient", "库存充足"],
+  // Under the reorder point on hand, with open purchase orders keeping the position above it (design audit L7-22).
+  onOrder: ["On order", "已有在途采购"],
+  onOrderNote: ["Stock on hand is at or below the reorder point; open purchase orders keep the position above it", "现有量等于或低于再订货点，在途采购使库存头寸高于再订货点"],
+  stockSignal: ["Stock signal", "库存信号"],
   outOfStock: ["Out of stock", "缺货"],
   movementType: ["Movement type", "流水类型"],
   allTypes: ["All types", "全部类型"],
@@ -233,27 +245,19 @@ const emptyStateFor = (copy: (label: string) => string): Record<string, { title:
 function quantity(item: Item) {
   return Number(item.availableQuantity ?? item.onHandQuantity ?? 0);
 }
-function reorder(item: Item) {
-  return Number(item.reorderPoint ?? item.safetyStock ?? 0);
+// A threshold as recorded on the item, or "—" when none is: an empty reorder
+// point read as the safety stock and an empty one as 0, while the reorder
+// list said "not set" (design audit L3-21).
+function threshold(value?: number | string | null) {
+  const number = Number(value);
+  return value === null || value === undefined || value === "" || !Number.isFinite(number) || number <= 0 ? "—" : formatQuantity(number);
 }
-// The safety stock and reorder point are one figure for the whole item, so
-// they are set against the item's available stock over every location shown,
-// as the reorder list sets them against the item's stock; a location's row is
-// never judged on its own (65 EA over A-01 and an unlocated record is above a
-// reorder point of 40, though each row alone is below it).
-function availableBySku(items: Item[]) {
-  const totals = new Map<string, number>();
-  for (const item of items) totals.set(item.sku, (totals.get(item.sku) || 0) + quantity(item));
-  return totals;
-}
-// Below the safety stock, or at or below the reorder point, as the reorder
-// list and the assistant judge it. 0 means none is recorded.
-function isShort(item: Item, totals: Map<string, number>) {
-  const available = totals.get(item.sku) ?? quantity(item);
-  const safetyStock = Number(item.safetyStock || 0);
-  const reorderPoint = Number(item.reorderPoint || 0);
-  return (safetyStock > 0 && available < safetyStock) || (reorderPoint > 0 && available <= reorderPoint);
-}
+// Stock signals per item (shared/inventory-stock-signals.mjs): "need
+// replenishment" is the reorder list's own "order now" (the stock position,
+// with every open purchase order line), and "below safety stock (on hand)" is
+// the shelf, covered or not by open orders. The safety stock and reorder point
+// are one figure for the whole item, so the stock is added over every location
+// shown; a location's row is never judged on its own.
 const contains = (needle: string, ...values: unknown[]) =>
   !needle.trim() || values.some((value) => String(value ?? "").toLowerCase().includes(needle.trim().toLowerCase()));
 
@@ -265,7 +269,6 @@ export default function InventoryPage({
   focus?: Focus;
   onNavigate?: (...args: any[]) => void;
   onActiveContextChange?: (...args: any[]) => void;
-  onReviewActionDraft?: (...args: any[]) => void;
 }) {
   const view = endpointFor[initialView] ? initialView : "empty";
   const copy = useWorkspaceCopy();
@@ -278,6 +281,9 @@ export default function InventoryPage({
   const [rows, setRows] = useState<any[]>([]);
   // The server's count for the list's filters, when it pages the list.
   const [serverTotal, setServerTotal] = useState<number | null>(null);
+  // The reorder list beside the stock records, for each item's stock
+  // position; null when it could not be read.
+  const [reorderList, setReorderList] = useState<{ rows?: unknown[]; notJudged?: unknown[] } | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [selectedSku, setSelectedSku] = useState(focus?.entityId || "");
   const [query, setQuery] = useState("");
@@ -354,6 +360,7 @@ export default function InventoryPage({
     if (view === "overview" || view === "warnings") {
       // Every stock record, a page at a time: the search box, the warnings and
       // the cards are worked out over all of them, never over the first page.
+      const reorder = apiJson<{ rows?: unknown[]; notJudged?: unknown[] }>("/api/inventory/reorder-list").catch(() => null);
       work = (async () => {
         const all: any[] = [];
         let total: number | null = null;
@@ -369,8 +376,11 @@ export default function InventoryPage({
           total = totalOf(payload);
           if (pageRows.length < BALANCE_PAGE_SIZE || total === null || all.length >= total) break;
         }
+        const list = await reorder;
+        if (!latest()) return;
         setRows(all);
         setServerTotal(total);
+        setReorderList(list);
       })();
     } else if (view === "movements") {
       const params = new URLSearchParams(queryString);
@@ -404,24 +414,36 @@ export default function InventoryPage({
     if (focus?.entityId) setSelectedSku(focus.entityId);
   }, [focus?.entityId]);
   const items = rows as Item[];
-  const totals = useMemo(() => availableBySku(items), [items]);
+  const signals = useMemo(() => inventoryStockSignals({ balances: items, reorderList }), [items, reorderList]);
+  const signalCounts = useMemo(() => stockSignalCounts(signals), [signals]);
   const base = useMemo(
-    () => (view === "warnings" ? items.filter((item) => isShort(item, totals)) : rows),
-    [items, rows, totals, view],
+    () => (view === "warnings" ? items.filter((item) => signals.get(item.sku)?.warned) : rows),
+    [items, rows, signals, view],
   );
-  const stockStateOf = (item: Item) => quantity(item) <= 0 && Number(item.onHandQuantity ?? 0) <= 0 ? "out" : isShort(item, totals) ? "short" : "ok";
+  const stockStateOf = (item: Item) => stockSignalState(signals.get(item.sku), item);
+  // ?signal= (a report or card link): the items its card counts, so the rows
+  // shown are that count (design audit L6-05). An unknown value is ignored.
+  const signalFilter = Object.hasOwn(STOCK_SIGNAL_FILTERS, searchParams.get("signal") || "") ? searchParams.get("signal")! : "";
   const visible = base.filter((row: any) => {
     if (view === "overview" || view === "warnings") {
       const item = row as Item;
       return contains(query, item.sku, item.itemName, item.name)
         && (!warehouse || (item.warehouseId || item.defaultWarehouseId) === warehouse)
-        && (!stockStatus || stockStateOf(item) === stockStatus);
+        && (!stockStatus || stockStateOf(item) === stockStatus)
+        && (!signalFilter || stockSignalMatches(signals.get(item.sku), signalFilter));
     }
     // The server has already searched and filtered the page of movements.
     if (view === "movements") return true;
     return contains(query, row.lotId, row.lot, row.serialId, row.sn, row.id, row.sku, row.itemName)
       && (!status || row.status === status);
   });
+  // One page of rows is drawn; movements arrive a page at a time already.
+  const paged = usePagedRows(visible, LIST_PAGE_SIZE, [view, queryString, query, warehouse, stockStatus, status, signalFilter].join("|"));
+  const drawn: any[] = view === "movements" ? visible : paged.pageRows;
+  // The count line: every row the view holds, and those the filters match
+  // when they narrow it (the server filters movements itself).
+  const listAll = view === "movements" && serverTotal !== null ? serverTotal : view === "overview" && serverTotal !== null ? Math.max(serverTotal, base.length) : base.length;
+  const narrowed = view !== "movements" && visible.length !== base.length;
   const selected =
     view === "overview" || view === "warnings"
       ? items.find(
@@ -444,6 +466,7 @@ export default function InventoryPage({
     if (name === "movementType") return movementTypeLabel(value, language);
     if (name === "warehouseId") return warehouseName(value) || named("selectedRecord");
     if (name === "status") return statusLabel(value);
+    if (name === "signal") return tr(value === "replenish" ? "short" : value === "below_safety" ? "belowSafety" : "covered");
     return named("selectedRecord");
   };
   const activeFilters = [
@@ -457,6 +480,7 @@ export default function InventoryPage({
     { name: "movementType", en: "Movement type", zh: "流水类型" },
     { name: "itemId", en: "Item", zh: "物料" },
     { name: "status", en: "Status", zh: "状态" },
+    ...(signalFilter ? [{ name: "signal", en: COPY.stockSignal[0], zh: COPY.stockSignal[1] }] : []),
   ].flatMap(({ name, en, zh }) =>
     searchParams.get(name)
       ? [{ name, label: english ? en : zh, value: filterValue(name, searchParams.get(name)!) }]
@@ -465,6 +489,7 @@ export default function InventoryPage({
   const clearFilters = () => {
     const next = new URLSearchParams(searchParams);
     supportedFilterNames.forEach((name) => next.delete(name));
+    next.delete("signal");
     setSearchParams(next);
   };
   const reset = () => {
@@ -499,16 +524,9 @@ export default function InventoryPage({
   };
   const statuses = [...new Set(rows.map((row: any) => row.status).filter(Boolean))] as string[];
   const balances = view === "overview" || view === "warnings";
-  // Each warned SKU once, judged on its stock over every location shown, as the list judges it.
-  const warningSkus = [...new Set(items.filter((item) => isShort(item, totals)).map((item) => item.sku))];
-  const warningFacts = (sku: string) => {
-    const item = items.find((row) => row.sku === sku) as Item;
-    const available = totals.get(sku) ?? quantity(item);
-    const safetyStock = Number(item.safetyStock || 0);
-    const reorderPoint = Number(item.reorderPoint || 0);
-    return { available, belowSafety: safetyStock > 0 && available < safetyStock, atReorderPoint: reorderPoint > 0 && available <= reorderPoint };
-  };
   const count = (value: number) => (state === "ready" ? String(value) : "—");
+  // Need replenishment needs the stock position; without it the card says so.
+  const replenishCount = () => (state === "ready" && signalCounts.positionUnknown ? "—" : count(signalCounts.needsReplenishment));
   const stateRow = (colSpan: number) =>
     state === "loading" ? <ListStateRow colSpan={colSpan} state="loading" />
       : state === "error" ? <ListStateRow colSpan={colSpan} state="error" title={tr("loadFailed")} onRetry={load} />
@@ -539,16 +557,16 @@ export default function InventoryPage({
     <div className="space-y-5">
       {view === "warnings" && (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="inventory-warning-cards">
-          <ActionableMetricCard label={tr("short")} value={count(warningSkus.length)} description={tr("shortNote")} to="/app/inventory/warnings" icon={AlertTriangle} color={A.orange} />
-          <ActionableMetricCard label={tr("belowSafety")} value={count(warningSkus.filter((sku) => warningFacts(sku).belowSafety).length)} description={tr("belowSafetyNote")} to="/app/inventory/warnings" icon={PackageOpen} color={A.red} />
-          <ActionableMetricCard label={tr("atReorderPoint")} value={count(warningSkus.filter((sku) => warningFacts(sku).atReorderPoint).length)} description={tr("atReorderPointNote")} to="/app/inventory/reorder" icon={Boxes} color={A.blue} />
-          <ActionableMetricCard label={tr("noneAvailable")} value={count(warningSkus.filter((sku) => warningFacts(sku).available <= 0).length)} description={tr("noneAvailableNote")} to="/app/inventory/warnings" icon={Warehouse} color={A.gray1} />
+          <ActionableMetricCard label={tr("short")} value={replenishCount()} description={signalCounts.positionUnknown ? tr("positionUnknown") : tr("shortNote")} to="/app/inventory/reorder" icon={AlertTriangle} color={A.orange} />
+          <ActionableMetricCard label={tr("belowSafety")} value={count(signalCounts.belowSafetyOnHand)} description={tr("belowSafetyNote")} to="/app/inventory/warnings" icon={PackageOpen} color={A.red} />
+          <ActionableMetricCard label={tr("covered")} value={state === "ready" && signalCounts.positionUnknown ? "—" : count(signalCounts.coveredByOpenOrders)} description={tr("coveredNote")} to="/app/inventory/warnings" icon={Boxes} color={A.blue} />
+          <ActionableMetricCard label={tr("noneAvailable")} value={count(signalCounts.noneAvailable)} description={tr("noneAvailableNote")} to="/app/inventory/warnings" icon={Warehouse} color={A.gray1} />
         </div>
       )}
       {view === "overview" && (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <ActionableMetricCard label={tr("stockedItems")} value={count(new Set(items.map((item) => item.sku)).size)} description={tr("stockedItemsNote")} to="/app/inventory/stock" icon={Boxes} color={A.blue} />
-          <ActionableMetricCard label={tr("short")} value={count(new Set(items.filter((item) => isShort(item, totals)).map((item) => item.sku)).size)} description={tr("shortNote")} to="/app/inventory/warnings" icon={AlertTriangle} color={A.orange} />
+          <ActionableMetricCard label={tr("short")} value={replenishCount()} description={signalCounts.positionUnknown ? tr("positionUnknown") : tr("shortNote")} to="/app/inventory/reorder" icon={AlertTriangle} color={A.orange} />
           <ActionableMetricCard label={tr("reserved")} value={count(items.filter((item) => Number(item.reservedQuantity || 0) > 0).length)} description={tr("reservedNote")} to="/app/inventory/stock" icon={PackageOpen} color={A.purple} />
           <ActionableMetricCard label={tr("warehouses")} value={count(warehouseIds.length)} description={tr("warehousesNote")} to="/app/inventory/stock" icon={Warehouse} color={A.gray1} />
         </div>
@@ -587,8 +605,10 @@ export default function InventoryPage({
           <Field label={tr("stockStatus")}>
             <select value={stockStatus} onChange={(event) => setStockStatus(event.target.value)} style={inputStyle}>
               <option value="">{tr("allStock")}</option>
-              <option value="short">{tr("short")}</option>
+              <option value="replenish">{tr("short")}</option>
+              <option value="below_safety">{tr("belowSafety")}</option>
               <option value="out">{tr("outOfStock")}</option>
+              <option value="on_order">{tr("onOrder")}</option>
               <option value="ok">{tr("sufficient")}</option>
             </select>
           </Field>
@@ -633,7 +653,7 @@ export default function InventoryPage({
         <div ref={detailRef}>
           <Card className="p-5" data-testid="inventory-local-detail">
             <div className="flex items-center gap-2">
-              <AlertTriangle size={15} color={isShort(selected, totals) ? A.orange : A.green} />
+              <AlertTriangle size={15} color={signals.get(selected.sku)?.warned ? A.orange : A.green} />
               <h3 className="fc-section-title" style={{ color: A.label }}>
                 {copy("库存详情")} · <EntityLink kind="item" id={selected.itemId || selected.sku}>{selected.sku}</EntityLink>
                 <span className="ml-2 font-normal" style={{ color: A.sub }}>{selected.itemName || selected.name || ""}</span>
@@ -645,7 +665,7 @@ export default function InventoryPage({
                 [tr("onHand"), `${formatQuantity(selected.onHandQuantity ?? "0")} ${unitLabel(selected.unit, language, Number(selected.onHandQuantity ?? 0))}`],
                 [tr("reservedQty"), formatQuantity(selected.reservedQuantity ?? "0")],
                 [tr("available"), view === "overview" ? formatQuantity(selected.availableQuantity ?? "0") : formatQuantity(quantity(selected))],
-                [tr("safetyReorder"), `${formatQuantity(Number(selected.safetyStock || 0))} / ${formatQuantity(reorder(selected))}`],
+                [tr("safetyReorder"), `${threshold(selected.safetyStock)} / ${threshold(selected.reorderPoint)}`],
               ] as const).map(([label, value]) => (
                 <div key={label} className="rounded-lg bg-slate-50 px-3 py-2">
                   <div style={{ color: A.sub }}>{label}</div>
@@ -658,21 +678,21 @@ export default function InventoryPage({
       )}
 
       {listTitle && (
-        <ListCard title={tr(listTitle)} total={state === "ready" ? (view === "movements" && serverTotal !== null ? serverTotal : view === "overview" && serverTotal !== null ? Math.max(serverTotal, base.length) : base.length) : undefined} shown={visible.length} testId={`inventory-${view}-list`}>
+        <ListCard title={tr(listTitle)} total={state === "ready" ? (narrowed ? visible.length : listAll) : undefined} all={state === "ready" && narrowed ? listAll : undefined} shown={drawn.length} testId={`inventory-${view}-list`}>
           <div className={tableScrollClass}>
             {balances && (
               <table className={`w-full min-w-[1000px] text-left ${tableBodyTextClass}`}>
                 {head([[tr("skuItem"), "left"], [tr("warehouseLocation"), "left"], [tr("onHand"), "right"], [tr("reservedQty"), "right"], [tr("available"), "right"], [tr("safetyReorder"), "right"], [tr("status"), "left"], [tr("actions"), "left"]])}
                 <tbody>
                   {stateRow(8)}
-                  {state === "ready" && (visible as Item[]).map((item, index) => {
+                  {state === "ready" && (drawn as Item[]).map((item, index) => {
                     const stock = stockStateOf(item);
                     return (
                       <tr
                         key={item.id || `${item.sku}-${item.warehouseId}-${item.locationKey}`}
                         data-testid={`inventory-item-${item.sku}`}
                         className={listRowClass}
-                        style={listRowStyle(index, visible.length)}
+                        style={listRowStyle(index, drawn.length)}
                       >
                         <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
                           <EntityLink kind="item" id={item.itemId || item.sku} className={tableLinkClass}>{item.sku}</EntityLink>
@@ -687,14 +707,21 @@ export default function InventoryPage({
                         <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>
                           {view === "overview" ? formatQuantity(item.availableQuantity ?? "0") : formatQuantity(quantity(item))}
                         </td>
-                        <td className={tdNumericRightClass} style={{ color: A.sub }}>{formatQuantity(Number(item.safetyStock || 0))} / {formatQuantity(reorder(item))}</td>
+                        <td className={tdNumericRightClass} style={{ color: A.sub }}>{threshold(item.safetyStock)} / {threshold(item.reorderPoint)}</td>
                         <td className={tdNowrapClass}>
-                          {/* Both pages say when stock is below safety stock or at the reorder point, as the warnings page lists it. */}
+                          {/* Need replenishment is the reorder list's position; below safety stock is the shelf, with whether open orders cover it. */}
                           {stock === "out"
                             ? <StatusChip label={tr("outOfStock")} tone="danger" />
-                            : stock === "short"
+                            : stock === "replenish"
                               ? <StatusChip label={tr("short")} tone="warning" />
-                              : <StatusChip label={tr("sufficient")} tone="success" />}
+                              : stock === "below_safety"
+                                ? <StatusChip label={tr("belowSafety")} tone={signals.get(item.sku)?.coveredByOpenOrders ? "info" : "danger"} />
+                                : stock === "on_order"
+                                  ? <span title={tr("onOrderNote")} data-testid={`inventory-on-order-${item.sku}`}><StatusChip label={tr("onOrder")} tone="info" /></span>
+                                  : <StatusChip label={tr("sufficient")} tone="success" />}
+                          {stock !== "replenish" && signals.get(item.sku)?.coveredByOpenOrders && (
+                            <div className="mt-0.5 text-[11px]" style={{ color: A.sub }} data-testid={`inventory-covered-${item.sku}`}>{tr("coveredShort")}</div>
+                          )}
                         </td>
                         <td className={tdNowrapClass}>
                           <button type="button" className={rowActionClass.primary} onClick={() => setSelectedSku(item.sku)}>{tr("details")}</button>
@@ -710,8 +737,8 @@ export default function InventoryPage({
                 {head([[tr("type"), "left"], [tr("source"), "left"], [tr("skuItem"), "left"], [tr("warehouseLocation"), "left"], [tr("quantityIn"), "right"], [tr("quantityOut"), "right"], [tr("date"), "left"], [tr("status"), "left"]])}
                 <tbody>
                   {stateRow(8)}
-                  {state === "ready" && (visible as Movement[]).map((row, index) => (
-                    <tr key={row.movementId || index} className={listRowClass} style={listRowStyle(index, visible.length)}>
+                  {state === "ready" && (drawn as Movement[]).map((row, index) => (
+                    <tr key={row.movementId || index} className={listRowClass} style={listRowStyle(index, drawn.length)}>
                       {/* The movement's own id is an internal UUID; show what moved it instead. */}
                       <td className={`${tdNowrapClass} sticky left-0 z-10 bg-white font-medium`} style={{ color: A.label }}>{movementTypeLabel(row.movementType || "", language, row.reason)}</td>
                       <td className={tdNowrapClass}>{sourceDocument(row)}</td>
@@ -723,8 +750,8 @@ export default function InventoryPage({
                         {warehouseName(row.warehouseId) || "—"}
                         <div className="text-[11px]" style={{ color: A.sub }}>{row.location || "—"}</div>
                       </td>
-                      <td className={tdNumericRightClass} style={{ color: Number(row.quantityIn || 0) ? "#0f766e" : A.gray2 }}>{Number(row.quantityIn || 0) ? formatQuantity(row.quantityIn) : "—"}</td>
-                      <td className={tdNumericRightClass} style={{ color: Number(row.quantityOut || 0) ? A.label : A.gray2 }}>{Number(row.quantityOut || 0) ? formatQuantity(row.quantityOut) : "—"}</td>
+                      <td className={tdNumericRightClass} style={{ color: Number(row.quantityIn || 0) ? "#0f766e" : A.gray2 }}>{Number(row.quantityIn || 0) ? `${formatQuantity(row.quantityIn)}${row.unit ? ` ${unitLabel(row.unit, language, Number(row.quantityIn))}` : ""}` : "—"}</td>
+                      <td className={tdNumericRightClass} style={{ color: Number(row.quantityOut || 0) ? A.label : A.gray2 }}>{Number(row.quantityOut || 0) ? `${formatQuantity(row.quantityOut)}${row.unit ? ` ${unitLabel(row.unit, language, Number(row.quantityOut))}` : ""}` : "—"}</td>
                       <td className={tdNowrapClass} style={{ color: A.sub }}>{formatDateTimeInTimeZone(row.date, locale, timezone)}</td>
                       <td className={tdNowrapClass}><StatusChip label={statusLabel(row.status)} tone={statusToneOf(row.status)} /></td>
                     </tr>
@@ -737,8 +764,8 @@ export default function InventoryPage({
                 {head([[tr("lot"), "left"], [tr("skuItem"), "left"], [tr("warehouse"), "left"], [tr("quantity"), "right"], [tr("expiry"), "left"], [tr("status"), "left"]])}
                 <tbody>
                   {stateRow(6)}
-                  {state === "ready" && (visible as Lot[]).map((row, index) => (
-                    <tr key={row.lotId || row.lot || index} className={listRowClass} style={listRowStyle(index, visible.length)}>
+                  {state === "ready" && (drawn as Lot[]).map((row, index) => (
+                    <tr key={row.lotId || row.lot || index} className={listRowClass} style={listRowStyle(index, drawn.length)}>
                       <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>{row.lotId || row.lot || "—"}</td>
                       <td className={tdNameClass}>
                         <EntityLink kind="item" id={row.sku} className={tableLinkClass}>{row.sku}</EntityLink>
@@ -758,8 +785,8 @@ export default function InventoryPage({
                 {head([[tr("serial"), "left"], [tr("skuItem"), "left"], [tr("warehouse"), "left"], [tr("status"), "left"]])}
                 <tbody>
                   {stateRow(4)}
-                  {state === "ready" && (visible as Serial[]).map((row, index) => (
-                    <tr key={row.serialId || row.sn || index} className={listRowClass} style={listRowStyle(index, visible.length)}>
+                  {state === "ready" && (drawn as Serial[]).map((row, index) => (
+                    <tr key={row.serialId || row.sn || index} className={listRowClass} style={listRowStyle(index, drawn.length)}>
                       <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>{row.serialId || row.sn || "—"}</td>
                       <td className={tdNameClass}><EntityLink kind="item" id={row.sku} className={tableLinkClass}>{row.sku}</EntityLink></td>
                       <td className={tdNowrapClass}>{warehouseName(row.warehouseId) || "—"}</td>
@@ -774,8 +801,8 @@ export default function InventoryPage({
                 {head([[tr("exception"), "left"], [tr("skuItem"), "left"], [tr("impact"), "right"], [tr("reason"), "left"], [tr("status"), "left"]])}
                 <tbody>
                   {stateRow(5)}
-                  {state === "ready" && (visible as InventoryException[]).map((row, index) => (
-                    <tr key={row.id || index} className={listRowClass} style={listRowStyle(index, visible.length)}>
+                  {state === "ready" && (drawn as InventoryException[]).map((row, index) => (
+                    <tr key={row.id || index} className={listRowClass} style={listRowStyle(index, drawn.length)}>
                       <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>{row.id}</td>
                       <td className={tdNameClass}>
                         <EntityLink kind="item" id={row.sku} className={tableLinkClass}>{row.sku}</EntityLink>
@@ -792,6 +819,9 @@ export default function InventoryPage({
           </div>
           {view === "movements" && state === "ready" && serverTotal !== null && (
             <ListPager page={movementPage} pageSize={MOVEMENT_PAGE_SIZE} total={serverTotal} onPage={setMovementPage} testId="inventory-movement-pager" />
+          )}
+          {view !== "movements" && state === "ready" && (
+            <ListPager page={paged.page} pageSize={LIST_PAGE_SIZE} total={visible.length} onPage={paged.setPage} testId={`inventory-${view}-pager`} />
           )}
         </ListCard>
       )}

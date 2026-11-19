@@ -46,8 +46,8 @@ export function createOutboxMailer({ path, now = () => new Date() }) {
   return {
     provider: "outbox",
     path,
-    send({ to, subject, text, html, tag }) {
-      const entry = { id: randomUUID(), provider: "outbox", to, subject, text, html, tag: tag || null, createdAt: now().toISOString() };
+    send({ to, subject, text, html, tag, replyTo }) {
+      const entry = { id: randomUUID(), provider: "outbox", to, subject, text, html, tag: tag || null, ...(replyTo ? { replyTo } : {}), createdAt: now().toISOString() };
       // Writes are serialized so concurrent sends never lose a message.
       const write = queue.then(async () => {
         const messages = [...(await readOutbox(path)), entry].slice(-OUTBOX_LIMIT);

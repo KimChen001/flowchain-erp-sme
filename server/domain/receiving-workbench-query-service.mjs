@@ -1,6 +1,7 @@
 import { ReceivingCommandError } from './receiving-posting-command-service.mjs'
 import { procurementDocumentNumber } from '../../shared/document-numbering.mjs'
 import {
+  availableRecordLedger,
   buildReceivingPostingPlan,
   buildReceivingReversalPlan,
   receivingDecimalString,
@@ -52,7 +53,10 @@ function lotSerialCapability(line) {
 }
 
 async function loadAggregate(prisma, tenantId, receivingDocumentId) {
+  // A receipt opens by its id or by the number it shows (GRN-202611-0008), as
+  // requests, RFQs and orders do (design audit L1-24); the id is tried first.
   const receivingDocument = await prisma.receivingDocument.findFirst({ where: { id: receivingDocumentId, tenantId }, include: { lines: true } })
+    || (receivingDocumentId ? await prisma.receivingDocument.findFirst({ where: { tenantId, documentNumber: { equals: String(receivingDocumentId), mode: 'insensitive' } }, include: { lines: true } }) : null)
   if (!receivingDocument) fail('RECEIVING_NOT_FOUND', 'Receiving document was not found.', 404)
   const purchaseOrder = receivingDocument.poId
     ? await prisma.purchaseOrder.findFirst({ where: { id: receivingDocument.poId, tenantId }, include: { lines: true } })
@@ -66,8 +70,63 @@ async function loadAggregate(prisma, tenantId, receivingDocumentId) {
   return { receivingDocument, purchaseOrder, warehouses: new Map(warehouses.map((row) => [row.id, row])), supplier }
 }
 
+// The other receipts of the same order that are posted, with their lines, for
+// what was received before this one. Read only for a posted receipt.
+async function loadOtherPostedReceipts(prisma, tenantId, grn) {
+  if (grn.postingStatus !== 'posted' || !grn.poId) return []
+  return prisma.receivingDocument.findMany({
+    where: { tenantId, poId: grn.poId, postingStatus: 'posted', id: { not: grn.id } },
+    select: { id: true, poId: true, postingStatus: true, postedAt: true, createdAt: true, lines: { select: { purchaseOrderLineId: true, acceptedQty: true } } },
+  })
+}
+
+// Which receipts were posted before this one: by posting time, then creation
+// time, then id, so two receipts never both count as before the other.
+const instant = (value) => { const time = value ? new Date(value).getTime() : NaN; return Number.isFinite(time) ? time : null }
+const postedOrder = (doc) => [instant(doc.postedAt), instant(doc.createdAt), text(doc.id)]
+function postedBefore(other, grn) {
+  const [a, b] = [postedOrder(other), postedOrder(grn)]
+  for (let index = 0; index < 2; index += 1) {
+    if (a[index] !== null && b[index] !== null && a[index] !== b[index]) return a[index] < b[index]
+  }
+  return a[2] < b[2]
+}
+
+// The accepted quantity on each PO line, in units, of the order's other
+// posted (not reversed) receipts: those posted before this one (before) and
+// those posted after it (after). A receipt posted later had not arrived when
+// this one was posted, so it is not "received before" (UI review 7b,
+// finding 5); after lets a received quantity no receipt accounts for (an
+// older record) be told apart.
+export function acceptedAroundByPoLine(grn = {}, receipts = []) {
+  const before = new Map()
+  const after = new Map()
+  for (const other of receipts) {
+    if (!other || other.id === grn.id || other.postingStatus !== 'posted' || other.poId !== grn.poId) continue
+    const target = postedBefore(other, grn) ? before : after
+    for (const line of other.lines || []) {
+      if (!line.purchaseOrderLineId) continue
+      target.set(line.purchaseOrderLineId, (target.get(line.purchaseOrderLineId) || ZERO) + receivingDecimalUnits(line.acceptedQty ?? '0'))
+    }
+  }
+  return { before, after }
+}
+
+// One receipt line's PO quantities, in units. A posted receipt shows what was
+// received on the line before it (acceptedBefore, from earlier receipts only,
+// plus any received quantity no receipt accounts for) and what was still open
+// just after it. A receipt not posted, or reversed, counts nothing itself, so
+// it shows everything posted so far and what is open now.
+export function receiptLineProgress({ posted, ordered, currentReceived, acceptedBefore = ZERO, acceptedAfter = ZERO, documentAccepted = ZERO }) {
+  if (!posted) return { previous: currentReceived, remaining: ordered - currentReceived }
+  const unaccounted = currentReceived - acceptedBefore - acceptedAfter - documentAccepted
+  const previous = acceptedBefore + (unaccounted > ZERO ? unaccounted : ZERO)
+  return { previous, remaining: ordered - previous - documentAccepted }
+}
+
 function detailModel(aggregate, capabilities = {}, availableActions = {}) {
-  const { receivingDocument: grn, purchaseOrder: po, warehouses, supplier } = aggregate
+  const { receivingDocument: grn, purchaseOrder: po, warehouses, supplier, otherReceipts = [] } = aggregate
+  const accepted = acceptedAroundByPoLine(grn, otherReceipts)
   const poLines = new Map(po.lines.map((line) => [line.id, line]))
   const posted = grn.postingStatus === 'posted'
   const documentAcceptedByPoLine = grn.lines.reduce((result, line) => {
@@ -76,12 +135,15 @@ function detailModel(aggregate, capabilities = {}, availableActions = {}) {
   }, new Map())
   const lines = grn.lines.map((line) => {
     const poLine = poLines.get(line.purchaseOrderLineId) || {}
-    const accepted = receivingDecimalUnits(line.acceptedQty)
-    const currentReceived = receivingDecimalUnits(poLine.receivedQuantity)
-    const currentlyApplied = posted ? accepted : ZERO
-    const documentCurrentlyApplied = posted ? (documentAcceptedByPoLine.get(line.purchaseOrderLineId) || ZERO) : ZERO
-    const previous = currentReceived - documentCurrentlyApplied
-    const remaining = receivingDecimalUnits(poLine.orderedQuantity) - currentReceived
+    const currentlyApplied = posted ? receivingDecimalUnits(line.acceptedQty) : ZERO
+    const { previous, remaining } = receiptLineProgress({
+      posted,
+      ordered: receivingDecimalUnits(poLine.orderedQuantity),
+      currentReceived: receivingDecimalUnits(poLine.receivedQuantity),
+      acceptedBefore: accepted.before.get(line.purchaseOrderLineId) || ZERO,
+      acceptedAfter: accepted.after.get(line.purchaseOrderLineId) || ZERO,
+      documentAccepted: documentAcceptedByPoLine.get(line.purchaseOrderLineId) || ZERO,
+    })
     const warehouse = warehouses.get(line.warehouseId || grn.warehouseId)
     return {
       id: line.id,
@@ -161,7 +223,8 @@ export function createReceivingWorkbenchQueryService({ prisma, capabilities = {}
     // A receipt that was never posted can be cancelled, as a draft or ready.
     const canCancel = grn.postingStatus === 'unposted' && ['draft', 'ready_for_receiving'].includes(grn.workflowStatus)
       && Boolean(capabilities.posting?.enabled) && can({ actor, permission: 'receiving.prepare', tenantId: actor.tenantId }) && warehouseAllowed
-    return detailModel(aggregate, capabilities, {
+    const otherReceipts = await loadOtherPostedReceipts(prisma, scope.tenantId, grn)
+    return detailModel({ ...aggregate, otherReceipts }, capabilities, {
       canEditDraft: draftOpen,
       canSubmit: draftOpen,
       canCancel,
@@ -260,7 +323,7 @@ export function createReceivingWorkbenchQueryService({ prisma, capabilities = {}
     if (!keys.length) return { receivingDocumentId, status: 'unavailable', entries: [], reason: 'No inventory movements exist for this receiving document.' }
     const entries = await Promise.all(keys.map(async (key) => {
       const [movements, balance] = await Promise.all([
-        prisma.inventoryMovement.findMany({ where: { tenantId: scope.tenantId, sku: key.sku, warehouseId: key.warehouseId, locationKey: key.locationKey, status: 'posted' }, select: { id: true, quantityIn: true, quantityOut: true, adjustmentQty: true } }),
+        prisma.inventoryMovement.findMany({ where: { tenantId: scope.tenantId, sku: key.sku, warehouseId: key.warehouseId, locationKey: key.locationKey, status: 'posted' }, select: { id: true, quantityIn: true, quantityOut: true, adjustmentQty: true, movementType: true, metadata: true } }).then(availableRecordLedger),
         prisma.inventoryBalance.findUnique({ where: { tenantId_sku_warehouseKey_locationKey: { tenantId: scope.tenantId, sku: key.sku, warehouseKey: key.warehouseKey, locationKey: key.locationKey } } }),
       ])
       const calculated = movements.reduce((sum, movement) => sum + receivingMovementNetUnits(movement), ZERO)

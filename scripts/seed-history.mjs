@@ -69,13 +69,36 @@ export async function scenarioActor(prisma, tenantId, permissions, documents) {
   throw new Error(`No active workspace user may post ${documents}. Run pilot:setup first.`)
 }
 
+// Someone other than the submitter who may approve, for the step a second
+// person takes: who submitted a document does not approve it when someone
+// else may (design audit C4, self-approval.mjs). The submitter when no one
+// else may, which the app allows and audits. permission: one code, or a list
+// the approver must all hold.
+export async function scenarioApprover(prisma, tenantId, submitter, permission) {
+  const permissions = Array.isArray(permission) ? permission : [permission]
+  const users = await prisma.user.findMany({ where: { tenantId, status: 'active', id: { not: submitter.userId } }, orderBy: { email: 'asc' } })
+  for (const user of users) {
+    const identity = { authenticated: true, tenantId, userId: user.id, role: user.role, name: user.name, source: 'local_walkthrough_scenario' }
+    try {
+      const actor = await resolveProvisionedActor(prisma, identity)
+      if (permissions.every((code) => authorize({ actor, permission: code, tenantId }).allowed)) return identity
+    } catch {
+      // A user without a complete role assignment cannot approve; try the next one.
+    }
+  }
+  return submitter
+}
+
 export const HISTORY_PERMISSIONS = ['inventory.adjustment.create', 'inventory.adjustment.approve', 'inventory.adjustment.post', 'shipment.prepare', 'shipment.post']
 
 // Ships one confirmed sales order in full as of its day: reserve, draft and
 // post through the outbound commands. order = { id, offset, shippedAt,
 // lines: [{ id, quantity }] }. Resumes a run that stopped between the steps;
 // returns false when the order was already shipped or is not confirmed.
-export async function shipHistoryOrder(prisma, order, { tenantId, calendar, identity, env, warehouseId = 'LOCAL-DEMO-WH-001', location = 'A-01', keyPrefix = 'local-walkthrough-scenario' }) {
+// ship: the order's lines to ship, the rest stay reserved (the public-data
+// seed's orders still being filled, design audit L4-34); [] reserves the
+// whole order and ships nothing.
+export async function shipHistoryOrder(prisma, order, { tenantId, calendar, identity, env, warehouseId = 'LOCAL-DEMO-WH-001', location = 'A-01', keyPrefix = 'local-walkthrough-scenario', ship = order.lines }) {
   // The order's one shipment, found by the order (the server numbers it).
   const posted = await prisma.shipmentDocument.findFirst({ where: { tenantId, salesOrderId: order.id }, orderBy: { createdAt: 'asc' } })
   if (posted && (posted.postingStatus !== 'unposted' || posted.workflowStatus === 'cancelled')) return false
@@ -92,12 +115,13 @@ export async function shipHistoryOrder(prisma, order, { tenantId, calendar, iden
     }, { identity })
     salesOrder = await prisma.salesOrder.findUniqueOrThrow({ where: { id: order.id }, include: { reservations: true } })
   }
+  if (!ship.length) return true
   let shipment = posted
   if (!shipment) {
     const reservationOf = new Map(salesOrder.reservations.map((row) => [row.salesOrderLineId, row]))
     const created = await service.createShipmentDraft({
       idempotencyKey: key('draft'), salesOrderId: order.id, expectedOrderVersion: salesOrder.version,
-      lines: order.lines.map((line) => ({ salesOrderLineId: line.id, allocations: [{ reservationId: reservationOf.get(line.id).id, quantity: String(line.quantity) }] })),
+      lines: ship.map((line) => ({ salesOrderLineId: line.id, allocations: [{ reservationId: reservationOf.get(line.id).id, quantity: String(line.quantity) }] })),
     }, { identity })
     shipment = await prisma.shipmentDocument.findUniqueOrThrow({ where: { id: created.shipment.id } })
   }
