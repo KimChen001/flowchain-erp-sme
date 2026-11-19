@@ -107,12 +107,12 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
   const formShown = (current: SupplierReplyCardData | null) => canPaste && open && (entry === "order" || !current || pasteAgain);
   const pasteForm = (current: SupplierReplyCardData | null) => formShown(current) ? (
     <div className="mt-2 space-y-2 rounded-md bg-slate-50 p-2 text-xs" data-testid="supplier-reply-paste">
-      <label className="block">
+      <label className="block text-xs font-normal">
         <span className="font-medium">{t("pasteLabel")}</span>
         <textarea className="mt-1 block min-h-28 w-full rounded border bg-white p-2" aria-label={t("pasteLabel")} placeholder={t("pastePlaceholder")} value={text} onChange={(event) => setText(event.target.value)} data-testid="supplier-reply-paste-text" />
       </label>
       <div className="flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-1.5">
+        <label className="flex items-center gap-1.5 text-xs font-normal">
           <span>{t("receivedOn")}</span>
           <input type="date" className="rounded border bg-white px-1 py-0.5" max={workspaceToday || undefined} value={receivedOn || workspaceToday} onChange={(event) => setReceivedOn(event.target.value)} data-testid="supplier-reply-received-on" />
         </label>
