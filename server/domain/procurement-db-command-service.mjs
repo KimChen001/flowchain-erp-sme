@@ -37,6 +37,16 @@ function databaseEnabled(env) {
 // Each PO command: the statuses it starts from, the status it leaves, and the
 // catalog permission it needs. Drafting commands use "revise" (buyer, manager,
 // admin); approval decisions use "approve" and "reject" (manager, admin).
+// Where a promise revision can come from besides the command itself, and the
+// revision source each gives.
+const PROMISE_REVISION_SOURCES = Object.freeze({ supplier_reply: "supplier_reply" });
+function promiseRevisionOrigin(value) {
+  if (value === undefined || value === null) return null;
+  const type = text(value?.type);
+  const originId = text(value?.id);
+  if (!PROMISE_REVISION_SOURCES[type] || !originId || originId.length > 120) fail("PROMISE_REVISION_ORIGIN_INVALID", "The origin of a promised date change is not one this command takes.", 422, [{ field: "origin" }]);
+  return { type, id: originId };
+}
 // Cancelling a PO that is already pending or approved needs "reject".
 const { DRAFT, PENDING_APPROVAL, APPROVED, ISSUED, PARTIALLY_RECEIVED, CLOSED, CANCELLED } = PURCHASE_ORDER_STATUS;
 export const PURCHASE_ORDER_COMMANDS = Object.freeze({
@@ -184,7 +194,7 @@ export function createDbProcurementCommandService({ prisma, env = process.env, i
       const audit = await execute(tx, actor, row);
       const updated = await tx.purchaseOrder.findFirst({ where: { id: row.id, tenantId: actor.tenantId }, include: LINES_WITH_REVISIONS });
       await inject("after_po_update");
-      const result = { entityType: "PurchaseOrder", entityId: updated.id, status: updated.status, entityVersion: updated.version, purchaseOrder: mapPurchaseOrder(updated), pendingSync: false, serverTime: serial(now()) };
+      const result = { entityType: "PurchaseOrder", entityId: updated.id, status: updated.status, entityVersion: updated.version, purchaseOrder: mapPurchaseOrder(updated), pendingSync: false, serverTime: serial(now()), ...(audit.result || {}) };
       await inject("before_audit");
       await tx.auditLog.create({ data: { id: idFactory(), tenantId: actor.tenantId, actorId: actor.user.id, source: "procurement_db_command_service", module: "procurement", action: audit.action, entityType: "PurchaseOrder", entityId: updated.id, summary: audit.summary, metadata: { commandType, idempotencyKey: key, expectedVersion, ...audit.metadata } } });
       await inject("before_change_feed");
@@ -311,10 +321,15 @@ export function createDbProcurementCommandService({ prisma, env = process.env, i
 
   // Changes promised dates on lines of an issued PO. Each changed line gets a
   // revision row and an audit row (purchase-order-promise-dates.mjs); the PO
-  // gets the usual command audit row.
+  // gets the usual command audit row. An optional origin says where the dates
+  // came from: { type: "supplier_reply", id } for a supplier reply's card
+  // (docs/supplier-reply-dates-design.md §4.7). The revisions then have source
+  // supplier_reply and the audit rows carry the reply's id; the original
+  // promise stays as it is. The result lists the revisions written.
   async function revisePromisedDates(id, input = {}, context) {
     const permission = "procurement.purchase_order.revise";
     await actorFor(await db(), context, permission);
+    const origin = promiseRevisionOrigin(input.origin);
     if (!text(input.idempotencyKey)) fail("IDEMPOTENCY_KEY_REQUIRED", "idempotencyKey is required.", 422);
     const expectedVersion = version(input.expectedVersion);
     const changes = (Array.isArray(input.lines) ? input.lines : []).map((line) => ({ purchaseOrderLineId: text(line?.purchaseOrderLineId), promisedDate: text(line?.promisedDate) }));
@@ -326,16 +341,17 @@ export function createDbProcurementCommandService({ prisma, env = process.env, i
       permission,
       input,
       context,
-      payload: { id: text(id), expectedVersion, lines: changes, reason: text(input.reason) },
+      payload: { id: text(id), expectedVersion, lines: changes, reason: text(input.reason), ...(origin ? { origin } : {}) },
       execute: async (tx, actor, row) => {
         // An approved PO not issued yet takes the date the supplier confirms
         // as a plain change: its original promise is recorded at issue or at
         // the first receipt, so nothing is a revision yet (design audit L1-05).
         // Once issued, every change is a revision.
         if (!isIssuedPurchaseOrder(row) && row.status !== APPROVED) fail("PURCHASE_ORDER_NOT_ISSUED", "Promised dates are revised on approved or issued purchase orders.", 409, { entityId: row.id, currentStatus: row.status });
-        const outcome = await applyPromisedDateChanges(tx, { tenantId: actor.tenantId, purchaseOrder: row, changes, reason: input.reason, actorId: actor.user.id, source: "procurement_db_command_service", at: now(), idFactory });
+        const outcome = await applyPromisedDateChanges(tx, { tenantId: actor.tenantId, purchaseOrder: row, changes, reason: input.reason, actorId: actor.user.id, source: origin ? PROMISE_REVISION_SOURCES[origin.type] : "procurement_db_command_service", at: now(), idFactory, origin });
         if (!outcome.changedLineIds.length) fail("PROMISED_DATE_UNCHANGED", "The lines already have these promised dates.", 422, [{ field: "lines" }]);
-        return { action: "purchase_order_promised_dates_revised", summary: `${outcome.revisions.length ? "Revised" : "Set"} promised dates on ${outcome.changedLineIds.length} line(s) of purchase order ${row.id}.`, metadata: { reason: text(input.reason), revisionIds: outcome.revisions.map((revision) => revision.id), changedLineIds: outcome.changedLineIds, originalPromisesRecorded: outcome.originalPromisesRecorded } };
+        const revisionIds = outcome.revisions.map((revision) => revision.id);
+        return { action: "purchase_order_promised_dates_revised", summary: `${outcome.revisions.length ? "Revised" : "Set"} promised dates on ${outcome.changedLineIds.length} line(s) of purchase order ${row.id}${origin ? " from a supplier reply" : ""}.`, metadata: { reason: text(input.reason), revisionIds, changedLineIds: outcome.changedLineIds, originalPromisesRecorded: outcome.originalPromisesRecorded, ...(origin ? { origin } : {}) }, result: { revisionIds, changedLineIds: outcome.changedLineIds } };
       },
     });
   }

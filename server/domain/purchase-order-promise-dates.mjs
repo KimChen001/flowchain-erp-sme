@@ -98,6 +98,9 @@ export async function applyPromisedDateChanges(tx, {
   at = new Date(),
   idFactory = randomUUID,
   bumpVersions = true,
+  // Where the dates came from, beyond the command: { type: 'supplier_reply',
+  // id } for a supplier reply's card. Kept in each revision's audit row.
+  origin = null,
 }) {
   if (!tenantId || purchaseOrder?.tenantId !== tenantId) fail("PURCHASE_ORDER_NOT_FOUND", "Purchase order was not found.", 404);
   if (!Array.isArray(changes) || !changes.length) fail("PROMISED_DATE_CHANGES_REQUIRED", "Choose at least one line and a new promised date.", 422, [{ field: "lines" }]);
@@ -159,7 +162,7 @@ export async function applyPromisedDateChanges(tx, {
         id: idFactory(), tenantId, actorId, source, module: "procurement", action: "purchase_order_promise_revised",
         entityType: "PurchaseOrderLine", entityId: line.id,
         summary: `Promised date of ${purchaseOrder.id} line ${line.id} changed from ${previous || "none"} to ${day}.`,
-        metadata: { purchaseOrderId: purchaseOrder.id, revisionId: revision.id, previousDate: previous, newDate: day, reason: why, originalPromiseRecorded: recordOriginal },
+        metadata: { purchaseOrderId: purchaseOrder.id, revisionId: revision.id, previousDate: previous, newDate: day, reason: why, originalPromiseRecorded: recordOriginal, ...(origin ? { origin } : {}) },
         createdAt: at,
       },
     });

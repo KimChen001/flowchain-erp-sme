@@ -11,13 +11,16 @@ import {
 const order = {
   number: 'PO-202611-0012', supplierName: 'Acme Ltd', status: 'issued',
   lines: [
-    { ref: 'L1', purchaseOrderLineId: 'pol-1', sku: 'SKU-1040', itemName: 'Bracket', remaining: 60, unit: 'pcs', promisedDate: '2026-11-12' },
-    { ref: 'L2', purchaseOrderLineId: 'pol-2', sku: 'SKU-2210', itemName: 'Hinge', remaining: 20, unit: 'pcs', promisedDate: '2026-11-12' },
+    { ref: 'L1', purchaseOrderLineId: 'pol-1', sku: 'SKU-1040', supplierSku: 'ACM-5521', itemName: 'Bracket', remaining: 60, unit: 'pcs', promisedDate: '2026-11-12' },
+    { ref: 'L2', purchaseOrderLineId: 'pol-2', sku: 'SKU-2210', supplierSku: null, itemName: 'Hinge', remaining: 20, unit: 'pcs', promisedDate: '2026-11-12' },
   ],
 }
 
 test('the order snapshot and the model reading parse; anything else is refused', () => {
   assert.ok(supplierReplyOrderSchema.safeParse(order).success)
+  // The supplier's own code is part of a line (a reply often quotes it).
+  const { supplierSku, ...withoutCode } = order.lines[0]
+  assert.ok(!supplierReplyOrderSchema.safeParse({ ...order, lines: [withoutCode] }).success)
   const reading = { replyKind: 'dates', lines: [{ line: 'L1', date: '2026-11-28', quote: 'We can ship the balance on 28 November.', dateKind: 'stated' }], flags: [{ kind: 'price_change', quote: 'unit price rises 4% from December' }], reason: null }
   assert.ok(supplierReplyReadingSchema.safeParse(reading).success)
   // A vague date has no day.
@@ -30,12 +33,12 @@ test('the order snapshot and the model reading parse; anything else is refused',
 })
 
 test('the card a reader gets, and the requests the routes take', () => {
-  const line = { ref: 'L1', purchaseOrderLineId: 'pol-1', outcome: 'proposed', issue: null, currentDate: '2026-11-12', proposedDate: '2026-11-28', quote: 'We can ship the balance on 28 November.', dateKind: 'stated', readAs: null, readings: null, parts: null, sku: 'SKU-1040', itemName: 'Bracket', remaining: 60, unit: 'pcs', overdueDays: 5 }
+  const line = { ref: 'L1', purchaseOrderLineId: 'pol-1', outcome: 'proposed', issue: null, currentDate: '2026-11-12', proposedDate: '2026-11-28', quote: 'We can ship the balance on 28 November.', dateKind: 'stated', readAs: null, readings: null, parts: null, sku: 'SKU-1040', supplierSku: 'ACM-5521', itemName: 'Bracket', remaining: 60, unit: 'pcs', overdueDays: 5 }
   const card = {
     contractVersion: SUPPLIER_REPLY_CONTRACT_VERSION, id: 'sr-1', purchaseOrderId: 'po-12', purchaseOrderNumber: 'PO-202611-0012', orderVersion: 4, supplierName: 'Acme Ltd',
     source: 'paste', receivedOn: '2026-11-17', createdAt: '2026-11-17T10:00:00.000Z', state: 'proposed', readingStatus: 'read', replyKind: 'dates',
-    text: 'We can ship the balance on 28 November.', quotedTextHidden: true, lines: [line], flags: [], reason: null, instructionsIgnored: false,
-    formLines: [{ purchaseOrderLineId: 'pol-1', sku: 'SKU-1040', itemName: 'Bracket', remaining: 60, unit: 'pcs', currentDate: '2026-11-12', overdueDays: 5 }],
+    text: 'We can ship the balance on 28 November.', quotedTextHidden: true, quotedText: '> Please confirm PO-202611-0012.', lines: [line], flags: [], reason: null, instructionsIgnored: false,
+    formLines: [{ purchaseOrderLineId: 'pol-1', sku: 'SKU-1040', supplierSku: 'ACM-5521', itemName: 'Bracket', remaining: 60, unit: 'pcs', currentDate: '2026-11-12', overdueDays: 5 }],
     canDecide: true, notNowUntil: null, decision: null, supersededById: null,
   }
   assert.ok(supplierReplyCardSchema.safeParse(card).success, JSON.stringify(supplierReplyCardSchema.safeParse(card).error?.issues))

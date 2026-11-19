@@ -122,6 +122,7 @@ model Tenant {
   intakeSchemaSnapshots                 IntakeSchemaSnapshot[]
   documentNumberSequences               DocumentNumberSequence[]
   decisionItems                         DecisionItem[]
+  supplierReplies                       SupplierReply[]
 }
 
 enum IntakeSourceType {
@@ -1307,8 +1308,9 @@ model PurchaseOrder {
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 
-  tenant Tenant              @relation(fields: [tenantId], references: [id])
-  lines  PurchaseOrderLine[]
+  tenant          Tenant              @relation(fields: [tenantId], references: [id])
+  lines           PurchaseOrderLine[]
+  supplierReplies SupplierReply[]
 
   @@unique([tenantId, number])
   @@index([tenantId, status])
@@ -3685,4 +3687,56 @@ model DecisionItem {
   @@unique([tenantId, activeKey])
   @@index([tenantId, state])
   @@index([tenantId, kind, recordId])
+}
+
+// A supplier's reply to a purchase order, pasted by a person on the order
+// (docs/supplier-reply-dates-design.md §5; shapes in
+// shared/supplier-reply-contract.mjs). It is the run record of the reply flow
+// (#392 §2): the cleaned text, the reading and its checks, and the person's
+// decision. activeKey is the order id while the card is open (proposed or
+// needs_you) and NULL after, so an order has one open card; a later reply
+// supersedes it. A recorded reply lists the promise revisions it created.
+model SupplierReply {
+  id                  String        @id
+  tenantId            String
+  purchaseOrderId     String
+  supplierId          String?
+  activeKey           String?
+  source              String        @default("paste")
+  receivedOn          String
+  text                String
+  quotedTextHidden    Boolean       @default(false)
+  quotedText          String?
+  sender              String?
+  messageId           String?
+  inReplyTo           String?
+  followUpAuditId     String?
+  state               String
+  readingStatus       String
+  provider            String?
+  model               String?
+  promptVersion       String?
+  reading             Json?
+  check               Json?
+  usage               Json?
+  instructionsIgnored Boolean       @default(false)
+  createdById         String
+  createdAt           DateTime      @default(now())
+  decision            String?
+  reasonCode          String?
+  note                String?
+  decidedById         String?
+  decidedAt           DateTime?
+  editedLines         Int           @default(0)
+  revisionIds         Json?
+  notNowUntil         String?
+  supersededById      String?
+  updatedAt           DateTime      @default(now()) @updatedAt
+  tenant              Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  purchaseOrder       PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, activeKey])
+  @@unique([tenantId, messageId])
+  @@index([tenantId, purchaseOrderId, createdAt])
+  @@index([tenantId, state])
 }
