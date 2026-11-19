@@ -17,7 +17,7 @@
     "start": "node server/index.mjs",
     "typecheck": "tsc --noEmit",
     "audit:i18n": "node scripts/audit-interface-language.mjs",
-    "test": "node --test server/domain/*.test.mjs server/routes/*.test.mjs",
+    "test": "node --test server/domain/*.test.mjs server/routes/*.test.mjs tests/ai-eval/supplier-reply/*.test.mjs",
     "eval:assistant:public": "node tests/ai-eval/v2-public/run.mjs",
     "eval:assistant:uci": "node tests/ai-eval/v2-public/run.mjs --suite=uci",
     "test:browser:english": "playwright test --config playwright.english.config.ts",
