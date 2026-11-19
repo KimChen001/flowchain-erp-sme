@@ -11,7 +11,7 @@
 // parse from its own quote to the same day; a relative date is proposed only
 // when code computes it from its quote and the reply date; our own quoted
 // chase is removed before reading; invisible characters are stripped.
-import { aiInjectionDetected } from './ai-injection-guard.mjs'
+import { PROMPT_INJECTION, aiInjectionDetected } from './ai-injection-guard.mjs'
 import {
   SUPPLIER_REPLY_LIMITS, SUPPLIER_REPLY_PROMPT_VERSION, supplierReplyCheckSchema, supplierReplyReadingSchema,
 } from '../../shared/supplier-reply-contract.mjs'
@@ -63,10 +63,13 @@ const THREAD_START = [
   /^\s*(?:在|于).{0,120}(?:写道|wrote)\s*[:：]\s*$/,
 ]
 // "From: … " followed within four lines by "Sent:" or "Date:" (Outlook), or
-// 发件人 followed by 发送时间 / 时间.
+// 发件人 followed by 发送时间 / 时间. "To:" alone does not make a header: a
+// supplier may write "From: our side … / To: confirm …".
 const HEADER_FROM = /^\s*(?:From|发件人)\s*[:：]/i
-const HEADER_NEXT = /^\s*(?:Sent|Date|To|发送时间|时间|收件人)\s*[:：]/i
-const SIGNATURE = /^--\s?$/
+const HEADER_NEXT = /^\s*(?:Sent|Date|发送时间|时间)\s*[:：]/i
+// The signature delimiter is "-- " with its space (RFC 3676); a bare "--" is
+// the supplier's own text.
+const SIGNATURE = /^-- $/
 
 // The reply as the reading sees it: invisible characters stripped, the quoted
 // earlier message and a trailing signature dropped (kept apart for display,
@@ -112,9 +115,12 @@ export function cleanSupplierReply(value) {
 // the card only (instructionsIgnored): nothing relies on it, since the
 // reading has no tools and every value is checked (#392 §3). Read over the
 // whole pasted text, the hidden parts included.
+// A name and a colon counts only for an assistant ("assistant:", "AI:"):
+// "Model: X200" and "Shipping agent: DHL" are a supplier's ordinary words.
 const ADDRESSED_TO_SYSTEM = [
   /\b(?:note|message|instructions?)\s+(?:to|for)\s+(?:the\s+)?(?:ai|assistant|system|bot|model|agent)\b/i,
-  /(?:^|[\s<!-])(?:ai|assistant|system|bot|model|agent|chatgpt|claude|copilot)\s*:/im,
+  /\b(?:system|ai|assistant)\s+(?:note|message|instruction|notice|prompt|command)s?\b/i,
+  /(?:^|[\s<!(\[【-])(?:ai|assistant|chatgpt|claude|copilot|chatbot)\s*[:：]/im,
   /\b(?:ignore|disregard|forget)\b[^.\n]{0,40}\b(?:instructions?|rules|prompt|above|previous|prior)\b/i,
   /\b(?:mark|set|record)\s+(?:all|every)\s+(?:the\s+)?(?:lines?|items?|orders?|promised\s+dates?)\b/i,
   /\bdo\s+not\s+(?:mention|tell|show)\b[^.\n]{0,30}\b(?:user|buyer|person)\b/i,
@@ -203,6 +209,8 @@ function datesWithPlaces(source, receivedOn) {
   take(new RegExp(`\\b(?:the\\s+)?(${ORDINAL_WORD})(?:\\s+of)?\\s+(${MONTH})\\b`, 'gi'), (m) => exactly(withYear(MONTHS[m[2].toLowerCase()], ordinalValue(m[1]), null, receivedOn)))
   take(new RegExp(`\\b(${MONTH})\\s+(?:the\\s+)?(${ORDINAL_WORD})\\b`, 'gi'), (m) => exactly(withYear(MONTHS[m[1].toLowerCase()], ordinalValue(m[2]), null, receivedOn)))
   // 28/11/2026, 28.11.2026, 28-11-2026 (a year is needed with . or -), 28/11, 03/12
+  // A number after "invoice", "PO", "no." or "#" is a reference, not a date.
+  take(/(?:\b(?:invoice|inv|po|order|ref|no|item|sku|batch|lot)\.?|#)\s*\d{1,2}[/.-]\d{1,2}(?:[/.-]\d{2,4})?/gi, () => null)
   take(/(?<![\d/.-])(\d{1,2})\/(\d{1,2})(?:\/(\d{2}|\d{4}))?(?![\d/])|(?<![\d/.-])(\d{1,2})[.-](\d{1,2})[.-](\d{2}|\d{4})(?![\d.-])/g, (m) => {
     const a = Number(m[1] ?? m[4])
     const b = Number(m[2] ?? m[5])
@@ -214,11 +222,15 @@ function datesWithPlaces(source, receivedOn) {
     return exactly(dayFirst || monthFirst)
   })
   // A day without a month: "the 28th", "on the twenty-eighth" (not "the 28th
-  // of next month"), 28号, 二十八号 (not 3日后, three days later).
+  // of next month"), 28号, 二十八号 (not 3日后, three days later). An ordinal
+  // before a noun counts things ("the 2nd batch", "the 3rd shipment"), and a
+  // number before 仓 / 线 / 楼 / 门 / 车间 … names a place (3号仓库), so neither
+  // is a day (#394 review).
   const dayOnly = (date) => { const value = dayOnlyDate(date, receivedOn); return value ? { date: value, dayOnly: true } : null }
-  take(/\bthe\s+(\d{1,2})(?:st|nd|rd|th)\b(?!\s+of\b)/gi, (m) => dayOnly(Number(m[1])))
-  take(new RegExp(`\\bthe\\s+(${ORDINAL_WORD})\\b(?!\\s+of\\b)`, 'gi'), (m) => dayOnly(ordinalValue(m[1])))
-  take(/(?<![\d一二三四五六七八九十两月周期拜])(\d{1,2}|[一二三四五六七八九十]{1,3})\s*[号日](?!\s*(?:前|后|之后|以后|内|之内|起))/g, (m) => dayOnly(zhCount(m[1])))
+  const NOT_A_NOUN = '(?!\\s+(?!(?:at|or|and|as|to|by|for|then|please|latest|earliest|instead|if)\\b)[a-z])'
+  take(new RegExp(`\\bthe\\s+(\\d{1,2})(?:st|nd|rd|th)\\b(?!\\s+of\\b)${NOT_A_NOUN}`, 'gi'), (m) => dayOnly(Number(m[1])))
+  take(new RegExp(`\\bthe\\s+(${ORDINAL_WORD})\\b(?!\\s+of\\b)${NOT_A_NOUN}`, 'gi'), (m) => dayOnly(ordinalValue(m[1])))
+  take(/(?<![\d一二三四五六七八九十两月周期拜])(\d{1,2}|[一二三四五六七八九十]{1,3})\s*[号日](?!\s*(?:前|后|之后|以后|内|之内|起|仓|库|线|楼|门|车间|厂|房|柜|位|机|口|台|区|栋|室|码头|货架|窗口))/g, (m) => dayOnly(zhCount(m[1])))
   return found
 }
 
@@ -269,7 +281,15 @@ export function relativeDateInQuote(quote, receivedOn) {
     const count = /^\d+$/.test(m[1]) ? Number(m[1]) : COUNT_WORDS[m[1]]
     hit(m[0], addDays(receivedOn, count * (m[2].startsWith('week') ? 7 : 1)))
   }
+  // A weekday written next to a calendar date names that date ("on Monday 7
+  // December", 12月7日（周一）): it is part of the date, not a relative day.
+  const written = datesWithPlaces(source, receivedOn).filter((row) => !row.dayOnly)
+  const besideDate = (index, end) => written.some((row) => {
+    const rowEnd = row.index + row.phrase.length
+    return (row.index >= end && row.index - end <= 3) || (index >= rowEnd && index - rowEnd <= 3)
+  })
   for (const m of lower.matchAll(new RegExp(`\\b(next|this|coming|on|by)\\s+(${WEEKDAY})\\b`, 'g'))) {
+    if (besideDate(m.index, m.index + m[0].length)) continue
     const weekday = WEEKDAYS[m[2]]
     if (m[1] === 'next') hit(m[0], addDays(mondayOf(receivedOn), 7 + weekday))
     else if (m[1] === 'this') {
@@ -287,6 +307,7 @@ export function relativeDateInQuote(quote, receivedOn) {
     if (count) hit(m[0], addDays(receivedOn, count * (['周', '星期', '礼拜'].includes(m[2]) ? 7 : 1)))
   }
   for (const m of source.matchAll(/(下|这|本)?\s*(?:个)?\s*(?:周|星期|礼拜)\s*([一二三四五六日天])/g)) {
+    if (!m[1] && besideDate(m.index, m.index + m[0].length)) continue
     const weekday = ZH_WEEKDAYS[m[2]]
     if (m[1] === '下') hit(m[0], addDays(mondayOf(receivedOn), 7 + weekday))
     else if (m[1] === '这' || m[1] === '本') {
@@ -374,29 +395,34 @@ export async function readSupplierReply({ order, text: reply, receivedOn, today,
   let issues = null
   let messages = prompt.messages
   if (typeof callModel !== 'function') return outcome('no_provider')
-  while (calls < SUPPLIER_REPLY_LIMITS.calls) {
-    const call = { system: prompt.system, messages, maxTokens: prompt.maxTokens }
-    const hold = reserve ? await reserve(call) : { ok: true }
-    if (!hold?.ok) return outcome(OUTAGE_CODES.has(hold?.code) ? hold.code : 'over_cap')
-    let answer
-    try {
-      calls += 1
-      answer = await callModel(call)
-    } catch (error) {
-      return outcome(OUTAGE_CODES.has(error?.code) ? error.code : 'failed')
-    } finally {
-      hold.release?.()
+  // One reservation holds both calls (the reading and its one retry), so the
+  // retry is not let through against a spend read before the first call
+  // (#394 review). reserve({ system, messages, maxTokens, calls }).
+  const hold = reserve ? await reserve({ system: prompt.system, messages, maxTokens: prompt.maxTokens, calls: SUPPLIER_REPLY_LIMITS.calls }) : { ok: true }
+  if (!hold?.ok) return outcome(OUTAGE_CODES.has(hold?.code) ? hold.code : 'over_cap')
+  try {
+    while (calls < SUPPLIER_REPLY_LIMITS.calls) {
+      const call = { system: prompt.system, messages, maxTokens: prompt.maxTokens }
+      let answer
+      try {
+        calls += 1
+        answer = await callModel(call)
+      } catch (error) {
+        return outcome(OUTAGE_CODES.has(error?.code) ? error.code : 'failed')
+      }
+      provider = answer?.provider || provider
+      model = answer?.model || model
+      usage.inputTokens += Number(answer?.usage?.inputTokens) || 0
+      usage.outputTokens += Number(answer?.usage?.outputTokens) || 0
+      const parsed = supplierReplyReadingSchema.safeParse(jsonIn(answer?.text))
+      if (parsed.success) return outcome('read', { reading: parsed.data })
+      issues = parsed.error.issues.slice(0, 5).map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
+      messages = [...prompt.messages, { role: 'assistant', content: String(answer?.text ?? '').slice(0, 4000) }, { role: 'user', content: `That was not the JSON object asked for (${issues.join('; ')}). Return only the JSON object.` }]
     }
-    provider = answer?.provider || provider
-    model = answer?.model || model
-    usage.inputTokens += Number(answer?.usage?.inputTokens) || 0
-    usage.outputTokens += Number(answer?.usage?.outputTokens) || 0
-    const parsed = supplierReplyReadingSchema.safeParse(jsonIn(answer?.text))
-    if (parsed.success) return outcome('read', { reading: parsed.data })
-    issues = parsed.error.issues.slice(0, 5).map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
-    messages = [...prompt.messages, { role: 'assistant', content: String(answer?.text ?? '').slice(0, 4000) }, { role: 'user', content: `That was not the JSON object asked for (${issues.join('; ')}). Return only the JSON object.` }]
+    return outcome('invalid')
+  } finally {
+    hold.release?.()
   }
-  return outcome('invalid')
 }
 
 // --- Checks in code (#363 §4.5, tightened by §10's build notes) ------------------------
@@ -405,20 +431,33 @@ export async function readSupplierReply({ order, text: reply, receivedOn, today,
 export const SUPPLIER_REPLY_ORDER_STATES = Object.freeze(['issued', 'partially_received'])
 const ORDER_NUMBER = /\b([A-Z]{1,6}(?:-[A-Z0-9]{1,8})*-\d{1,8})\b/g
 
-// One value's date, as code reads it from its quote: { date, kind, readAs?,
-// readings?, issue? }. A stated date must parse from its quote to the same
-// day; a relative date is the one code computes from the quote and the reply
-// date; an ambiguous numeric date is never chosen.
-// Words before a date that say it is the one being replaced: "instead of 30
+// Words before a date that say it is replaced or refused: "instead of 30
 // November", "can't make 28 Nov", "was 12 Nov", "from 30 Nov to 3 Dec",
-// 原定11月30日, 而不是11月30日, 30号发不了 (after). Up to three words may stand
-// between the marker and the date in English.
-// A refusal counts with any verb after it, within five words: "cannot ship
-// on", "can't deliver by", "won't be able to deliver on", "unable to ship".
-// "not later than" and "no later than" are deadlines, not refusals.
-const REPLACED_BEFORE = /(?:\binstead\s+of|\brather\s+than|\bcan['’]?t|\bcan\s+not|\bcannot|\bwon['’]?t|\bwill\s+not|\bunable\s+to|\bnot\s+able\s+to|\bnot(?!\s+later\s+than)|\bwas|\bwere|\boriginally|\bpreviously|\bno\s+longer|\bfrom)(?:\s+[\w'’]+){0,5}\s*$/i
-const REPLACED_BEFORE_ZH = /(?:原定|原来|原计划|原先|而不是|不是|赶不上|来不及|无法|不能)[^。，,.;；!?！？]{0,6}$/
-const REPLACED_AFTER_ZH = /^[^。，,.;；!?！？]{0,4}(?:发不了|做不到|来不及|赶不上|不行|不能|无法|没法)/
+// "cannot ship on", "won't be able to deliver on", "unable to ship", up to
+// five words before the date; 原定, 而不是, 无法, 不能. "not later than" and "no
+// later than" are deadlines, not refusals. FROM_BEFORE ("from 30 Nov to 3
+// Dec") counts only when the sentence names another date.
+const REPLACED_BEFORE = /(?:\bcan['’]?t|\bcan\s+not|\bcannot|\bwon['’]?t|\bwill\s+not|\bunable\s+to|\bnot\s+able\s+to|\bnot(?!\s+later\s+than)|\bwas|\bwere|\bno\s+longer)(?:\s+[\w'’]+){0,5}\s*$/i
+// Only when the sentence names another date: "instead of", "rather than",
+// "originally", "previously", "from … to"; 原定 / 原来 / 而不是. Alone they
+// confirm a date ("都按原定的11月30日交货，没有变化").
+const FROM_BEFORE = /(?:\binstead\s+of|\brather\s+than|\boriginally|\bpreviously|\bfrom)(?:\s+[\w'’]+){0,5}\s*$/i
+const REPLACED_IF_OTHER_ZH = /(?:原定|原来|原计划|原先|而不是)[^。，,.;；!?！？]{0,6}$/
+const REPLACED_BEFORE_ZH = /(?:不是|赶不上|来不及|无法|不能)[^。，,.;；!?！？]{0,6}$/
+// Words after a date that refuse it: "28 November is no longer possible",
+// "is not possible", "won't work", "can't be met", "is off"; 发不了, 不能.
+const REFUSED_AFTER = /^[^.!?;\n。！？；]{0,12}?(?:\b(?:is|are|was|has)?\s*(?:no\s+longer\s+(?:possible|feasible|an\s+option|works?|available)|not\s+(?:possible|feasible|available)|isn['’]?t\s+(?:possible|feasible)|won['’]?t\s+(?:work|happen|be\s+possible)|will\s+not\s+(?:work|happen|be\s+possible)|can(?:['’]?t|not)\s+be\s+(?:met|kept|done)|is\s+off|(?:been\s+)?cancell?ed|(?:been\s+)?postponed|slipped|moved)\b|发不了|交不了|到不了|送不了|出不了|做不到|来不及|赶不上|赶不及|不行|不能|无法|没法|取消|推迟|延后)/i
+// Every date, whatever the reading called it, is a promise only when nothing
+// conditions it. CONDITIONED: anywhere in its sentence ("depends on",
+// "subject to", "pending", "if", "tentatively", 取决于, 待定, 可能).
+// HEDGE_BEFORE / HEDGE_AFTER: right beside the date ("starting", "from",
+// "after", "once", "around", "week of", "no earlier than"; "onwards", "or
+// later", "at the earliest", 起, 以后, 左右). A bare "by", "expected", "ETA" or
+// "earliest is" stays a date the supplier gives.
+const CONDITIONED = /\b(?:depend(?:s|ing|ent)?\s+on|subject\s+to|pending|provided\s+(?:that|we|the)|assuming|if|unless|tbc|tbd|to\s+be\s+confirmed|tentative(?:ly)?|provisional(?:ly)?|hopefully|maybe|perhaps|possibly|probably|might|not\s+(?:yet\s+)?confirmed|unconfirmed)\b|取决于|视[^。，,]{0,12}而定|待定|暂定|如果|看情况|不确定|还没确定|未确定|可能|也许|要看/i
+const HEDGE_BEFORE = /(?:\b(?:starting|start(?:s|ing)?\s+(?:on|from)|from|after|once|following|around|approx(?:imately)?|roughly|circa|about|week\s+of|beginning\s+of|end\s+of|no\s+earlier\s+than|not\s+before)(?:\s+(?:on|the|of|about|around))?\s*$)|(?:大概|大约|约|等到?|要等)[^。，,]{0,4}$/i
+const HEDGE_AFTER = /^[^.!?;。！？；]{0,8}?(?:\b(?:onwards?|or\s+(?:so|later|thereabouts|after)|at\s+the\s+earliest|and\s+later)\b|起|开始|以后|之后|左右|前后|(?<!交|发)后(?!天))/i
+
 // Delivery promised with no day: "asap", "as soon as", "once it is released",
 // 尽快, 一放行就, 到了就发.
 const UNTIMED_DELIVERY = /\b(?:asap|as soon as (?:possible|we can|it|they|the)|once (?:it|they|the|we)\b[^.!?\n]{0,60}\b(?:released|cleared|arrives?|arrived|ready|in stock|back)|shortly|in due course)\b|尽快|尽早|一[^。！？\n]{0,10}就(?:发|送|安排)|到了就(?:发|送)/i
@@ -433,17 +472,55 @@ const UNTIMED_DELIVERY = /\b(?:asap|as soon as (?:possible|we can|it|they|the)|o
 // weeks) stays a relative date.
 const HEDGED = /\b(?:around|about|approx(?:imately)?|roughly|circa|week\s+of|early|mid|late|end\s+of|beginning\s+of|start\s+of|before|by|until|till|latest|earliest|no\s+later|not\s+later|hopefully|maybe|perhaps|possibly|probably|might|could|if|unless|tbc|tbd|estimated?|eta|expected?|after|from|once|following|starting|start(?:s|ing)?\s+on|onwards?|pending|subject\s+to|at\s+the\s+earliest)\b|左右|前后|大概|大约|约|之前|以前|以后|之后|月底|月初|月中|上旬|中旬|下旬|最早|最晚|最迟|可能|也许|预计|争取|尽量|如果|看情况|待|等[^。，,]{0,8}(?:后|再)|(?:[日号]|\d)\s*(?:起|开始|后)/i
 
-// One value's date, as code reads it from its quote: { date, kind, readAs? }
-// or { issue, readings? }. A stated date must parse from its quote to the
-// same day; a day without a month is read as its next occurrence, shown as
-// "read as"; a relative date is the one code computes from the quote and the
-// reply date; an ambiguous numeric date is never chosen. A quote naming
-// several dates passes only a date that is not the line's current promise and
-// not the one the quote says is replaced (#392 review, 2026-11-19).
-function resolveDate(entry, receivedOn, currentDate = null) {
+// The sentence of the cleaned reply around a quote, folded as quotes are
+// compared (quoteForm), so a narrowed quote ("ship on 28 November" from "We
+// cannot ship on 28 November") is read with the words around it. The quote
+// itself when it is not found (it is dropped then anyway).
+const SENTENCE_END = /[.!?](?=\s|$)|[。！？；;]/g
+export function sentenceAround(reply, quote) {
+  const whole = quoteForm(reply)
+  const part = quoteForm(quote)
+  const at = part ? whole.indexOf(part) : -1
+  if (at < 0) return part
+  let start = 0
+  let end = whole.length
+  for (const mark of whole.matchAll(SENTENCE_END)) {
+    if (mark.index < at) start = mark.index + 1
+    else if (mark.index >= at + part.length - 1) { end = mark.index + 1; break }
+  }
+  return whole.slice(start, end).trim()
+}
+
+// Whether a date standing at [index, end) of a sentence is refused or
+// replaced there: a marker before it (from the previous date on, so "from 30
+// Nov to 4 Dec" leaves 4 Dec alone), or a refusal right after it.
+function refusedAt(sentence, places, { index, end }, { otherDates }) {
+  const ends = places.map((row) => row.index + row.phrase.length)
+  const previous = Math.max(0, ...ends.filter((value) => value <= index))
+  const before = sentence.slice(Math.max(previous, index - 40), index)
+  const after = sentence.slice(end, end + 48)
+  return REPLACED_BEFORE.test(before) || REPLACED_BEFORE_ZH.test(before) || (otherDates && (FROM_BEFORE.test(before) || REPLACED_IF_OTHER_ZH.test(before))) || REFUSED_AFTER.test(after)
+}
+
+// One value's date, as code reads it: { date, kind, readAs, inferred } or
+// { issue, readings? } (#363 §4.5, tightened by the #394 reviews).
+//   - A stated date must parse from its own quote to the same day; a day
+//     without a month is read as its next occurrence and shown as read; a
+//     relative date is the one code computes from the quote and the reply
+//     date; an ambiguous numeric date is never chosen.
+//   - The reading gave no day or called it vague: code proposes a day only
+//     when the quote writes exactly one calendar date with its month and
+//     nothing hedges it (marked inferred). A day without a month, a weekday,
+//     today or a relative phrase goes to the person, offered as a reading.
+//     A "relative" entry with no day is computed from its phrase.
+//   - Every date is read in its sentence of the reply: refused or replaced
+//     there ("cannot ship on 28 November", "28 November is no longer
+//     possible", 发不了), it goes to the person, as does a sentence with
+//     several dates where this one is the current promise or not the one
+//     the quote writes.
+function resolveDate(entry, receivedOn, currentDate = null, reply = null) {
   const quote = entry.quote
   const source = String(quote ?? '').normalize('NFKC')
-  const places = datesWithPlaces(source, receivedOn)
   const written = datesInQuote(quote, receivedOn)
   const relative = relativeDateInQuote(quote, receivedOn)
   let claimed = entry.date
@@ -451,19 +528,22 @@ function resolveDate(entry, receivedOn, currentDate = null) {
   let inferred = false
   const pair = written.ambiguous.find((readings) => readings.includes(claimed)) || (written.exact.length || written.dayOnly.length ? null : written.ambiguous[0])
   if (pair) return { issue: 'ambiguous_numeric', readings: pair }
-  if (entry.dateKind === 'vague' || !claimed) {
-    // The model gave no day, or called it vague. Code reads the quote itself:
-    // the one day it names, written or relative, when nothing hedges it
-    // ("around", "by", 左右, 之前); otherwise the person decides. A relative
-    // phrase is never taken from the model's day alone (2026-11-19 eval:
-    // DeepSeek gives "next Friday" with date null; 二十八号 as vague).
-    const days = [...new Set([...places.flatMap((row) => row.readings || [row.date]), relative?.date].filter(Boolean))]
-    if (days.length !== 1 || HEDGED.test(source)) return { issue: entry.dateKind === 'relative' && !relative ? 'relative_unreadable' : 'vague' }
-    claimed = days[0]
+  const sentence = reply ? sentenceAround(reply, quote) : quoteForm(quote)
+  if (!claimed && entry.dateKind === 'relative') {
+    if (!relative || HEDGED.test(sentence)) return { issue: 'relative_unreadable' }
+    claimed = relative.date
+    inferred = true
+  } else if (entry.dateKind === 'vague' || !claimed) {
+    const lone = written.exact.length === 1 && !written.dayOnly.length && !written.ambiguous.length && !relative ? written.exact[0] : null
+    if (!lone || HEDGED.test(sentence)) {
+      const seen = [...new Set([...written.exact, ...written.dayOnly.map((row) => row.date), relative?.date].filter(Boolean))].sort()
+      return { issue: 'vague', readings: seen.length && seen.length <= 2 ? seen : null }
+    }
+    claimed = lone
     inferred = true
   }
   const dayOnly = written.dayOnly.find((row) => row.date === claimed)
-  const writtenAs = places.find((row) => row.date === claimed && !row.dayOnly)
+  const writtenAs = datesWithPlaces(source, receivedOn).find((row) => row.date === claimed && !row.dayOnly)
   const hit = written.exact.includes(claimed) ? { date: claimed, kind: 'stated', readAs: inferred && writtenAs ? { phrase: writtenAs.phrase.slice(0, 80), from: receivedOn, date: claimed } : null }
     : dayOnly ? { date: claimed, kind: 'stated', readAs: dayOnly }
       : relative?.date === claimed ? { date: claimed, kind: 'relative', readAs: relative }
@@ -473,29 +553,76 @@ function resolveDate(entry, receivedOn, currentDate = null) {
     const other = relative?.date || (written.exact.length === 1 ? written.exact[0] : written.dayOnly.length === 1 ? written.dayOnly[0].date : null)
     return { issue: 'date_mismatch', readings: other && other !== claimed ? [other, claimed].sort() : null }
   }
-  const distinct = [...new Set([...places.flatMap((row) => row.readings || [row.date]), relative?.date].filter(Boolean))].sort()
-  if (distinct.length > 1) {
-    const several = { issue: 'several_dates', readings: distinct.length === 2 ? distinct : null }
-    if (claimed === currentDate) return several
-    const at = places.filter((row) => row.date === claimed).map((row) => ({ index: row.index, end: row.index + row.phrase.length }))
-    if (hit.kind === 'relative') {
-      const index = source.toLowerCase().indexOf(relative.phrase.toLowerCase())
-      if (index >= 0) at.push({ index, end: index + relative.phrase.length })
-    }
-    // The words between the previous date and this one ("from 30 Nov to 4
-    // Dec": only " to " stands before 4 Dec).
-    const ends = places.map((row) => row.index + row.phrase.length)
-    const replaced = at.some(({ index, end }) => {
-      const previous = Math.max(0, ...ends.filter((value) => value <= index))
-      const before = source.slice(Math.max(previous, index - 40), index)
-      return REPLACED_BEFORE.test(before) || REPLACED_BEFORE_ZH.test(before) || REPLACED_AFTER_ZH.test(source.slice(end, end + 12))
-    })
-    if (replaced) return several
+  // The sentence the date stands in.
+  const places = datesWithPlaces(sentence, receivedOn)
+  const sentenceRelative = relativeDateInQuote(sentence, receivedOn)
+  const distinct = [...new Set([...places.flatMap((row) => row.readings || [row.date]), sentenceRelative?.date].filter(Boolean))].sort()
+  const several = (issue) => ({ issue, readings: distinct.length === 2 ? distinct : null })
+  if (distinct.length > 1 && (claimed === currentDate || !written.exact.includes(claimed) && hit.kind === 'relative')) return several('several_dates')
+  const at = places.filter((row) => row.date === claimed).map((row) => ({ index: row.index, end: row.index + row.phrase.length }))
+  if (hit.kind === 'relative' || hit.readAs) {
+    const phrase = (hit.readAs?.phrase || '').toLowerCase()
+    const index = phrase ? sentence.indexOf(phrase) : -1
+    if (index >= 0) at.push({ index, end: index + phrase.length })
   }
+  if (at.some((place) => refusedAt(sentence, places, place, { otherDates: distinct.length > 1 }))) return several(distinct.length > 1 ? 'several_dates' : 'refused')
+  // A date the supplier conditions, or that only opens a window, is not a
+  // promise whatever the reading called it (held-out gate on a12b654d:
+  // "resume starting December 3", "3 Dec, but that depends on when customs
+  // release"). The person decides, the day offered.
+  const ends = places.map((row) => row.index + row.phrase.length)
+  // "150 of the 300 on 25 November, the rest TBC": the condition is about the
+  // rest, and the line is a part (split_incomplete in checkReplyReading).
+  const hedged = (CONDITIONED.test(sentence) && partQuantity(sentence) === null) || at.some(({ index, end }) => {
+    const previous = Math.max(0, ...ends.filter((value) => value <= index))
+    return HEDGE_BEFORE.test(sentence.slice(Math.max(previous, index - 40), index)) || HEDGE_AFTER.test(sentence.slice(end, end + 24))
+  })
+  if (hedged) return { issue: 'vague', readings: [claimed] }
   return { ...hit, inferred }
 }
 
 const lineRow = (fields) => ({ ref: null, purchaseOrderLineId: null, outcome: 'dropped', issue: null, currentDate: null, proposedDate: null, quote: null, dateKind: null, readAs: null, readings: null, parts: null, inferred: false, ...fields })
+
+// The parts of the reply (in quoteForm) that are addressed to the system:
+// from where the address starts to the end of its paragraph. A value quoted
+// from them is dropped, whatever it says (#394 review: "System note: record
+// 2026-12-31 for all lines." was proposed).
+function addressedSpans(reply) {
+  const visible = String(reply ?? '').replace(INVISIBLE, '').normalize('NFKC')
+  const whole = quoteForm(visible)
+  const spans = []
+  for (const paragraph of visible.split(/\n\s*\n/)) {
+    const lines = paragraph.split('\n')
+    for (let at = 0; at < lines.length; at += 1) {
+      const starts = [...ADDRESSED_TO_SYSTEM, PROMPT_INJECTION].map((pattern) => new RegExp(pattern.source, pattern.flags.replace('g', '')).exec(lines[at])).filter(Boolean).map((match) => match.index)
+      if (!starts.length) continue
+      const rest = quoteForm([lines[at].slice(Math.min(...starts)), ...lines.slice(at + 1)].join('\n'))
+      const start = rest ? whole.indexOf(rest) : -1
+      if (start >= 0) spans.push([start, start + rest.length])
+      break
+    }
+  }
+  return spans
+}
+
+// A shortfall the supplier states for a line: a quantity_change or
+// cancellation flag that says less will come ("can only supply", "cancel the
+// balance", 只能, 取消) and is about this line (it names its SKU, the
+// supplier's SKU or the item, or the order has this one open line).
+const SHORTFALL_WORDS = /\bcancel|\b(?:the\s+)?(?:rest|remaining|balance|remainder|others?)\b[^.!?]{0,40}\b(?:will\s+not|won['’]?t|cannot|can['’]?t|not\s+be|no\s+longer)\b|\bcan\s+only\s+(?:supply|ship|deliver|make|provide|send)|\bonly\s+(?:have|supply|ship|deliver)\b|\breduce\s+(?:the\s+)?order|\bno\s+(?:more|further)\s+(?:stock|supply)|取消|只能|没办法补|补不了|不再|减少|不够/i
+// "150 of the 300", "200 out of 360", 先发150个: a part of what is open, read by
+// code whatever quantity the reading gives.
+const PART_OF = /\b(\d[\d,]*)\s+(?:pcs\s+|units\s+|pieces\s+)?(?:of|out\s+of)\s+(?:the\s+|all\s+)?(\d[\d,]*)\b/i
+const PART_FIRST_ZH = /先(?:发|送|出货?)\s*(\d+)|(\d+)\s*(?:个|件|套|箱)?\s*先(?:发|送)/
+function partQuantity(sentence) {
+  const of = PART_OF.exec(sentence)
+  if (of) {
+    const part = Number(of[1].replace(/,/g, ''))
+    if (part < Number(of[2].replace(/,/g, ''))) return part
+  }
+  const first = PART_FIRST_ZH.exec(sentence)
+  return first ? Number(first[1] ?? first[2]) : null
+}
 
 // The reading checked against the reply and the order (supplierReplyOrderSchema):
 // each line proposed, for the person, dropped or confirmed, the flags whose
@@ -503,10 +630,18 @@ const lineRow = (fields) => ({ ref: null, purchaseOrderLineId: null, outcome: 'd
 export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
   const open = SUPPLIER_REPLY_ORDER_STATES.includes(text(order?.status))
   const byRef = new Map(array(order?.lines).map((line) => [line.ref, line]))
+  const openLines = array(order?.lines).filter((line) => Number(line.remaining) > 0).length
+  const whole = quoteForm(reply)
+  const spans = addressedSpans(reply)
+  const addressed = (quote) => {
+    const part = quoteForm(quote)
+    const at = part ? whole.indexOf(part) : -1
+    return at >= 0 && spans.some(([start, end]) => at < end && at + part.length > start)
+  }
   let dropped = 0
   const flags = []
   for (const flag of array(reading?.flags)) {
-    if (!quoteFound(reply, flag.quote)) { dropped += 1; continue }
+    if (!quoteFound(reply, flag.quote) || addressed(flag.quote)) { dropped += 1; continue }
     let orderNumber = null
     if (flag.kind === 'other_order') {
       const named = [...String(flag.quote).matchAll(ORDER_NUMBER)].map((m) => m[1]).filter((number) => number !== order?.number)
@@ -516,15 +651,17 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
     }
     flags.push({ kind: flag.kind, quote: flag.quote, orderNumber })
   }
-  // The supplier says the rest will not come (less supplied, or the balance
-  // cancelled): a partial quantity is then all that is coming, not a part
-  // waiting for a date (2026-11-19 eval: "only 300 of the 360, ship on 27
-  // November" is a proposal, with the flag).
-  const shortfallSaid = flags.some((flag) => ['quantity_change', 'cancellation'].includes(flag.kind))
+  // The supplier says the rest of this line will not come: a partial quantity
+  // is then all that is coming, not a part waiting for a date (2026-11-19
+  // eval: "only 300 of the 360, ship on 27 November" is a proposal, with the
+  // flag; a flag about another line, or without such words, is not).
+  const namesLine = (quote, line) => [line.sku, line.supplierSku, line.itemName].map(text).filter((value) => value.length >= 3).some((value) => quoteForm(quote).includes(quoteForm(value)))
+  const shortfallFor = (line) => flags.some((flag) => ['quantity_change', 'cancellation'].includes(flag.kind) && SHORTFALL_WORDS.test(quoteForm(flag.quote)) && (openLines === 1 || namesLine(flag.quote, line)))
   const out = []
   const groups = new Map()
   for (const entry of array(reading?.lines)) {
     if (!quoteFound(reply, entry.quote)) { dropped += 1; out.push(lineRow({ ref: entry.line, issue: 'quote_not_found', dateKind: entry.dateKind })); continue }
+    if (addressed(entry.quote)) { dropped += 1; out.push(lineRow({ ref: entry.line, issue: 'addressed_to_system', quote: entry.quote, dateKind: entry.dateKind })); continue }
     const line = byRef.get(entry.line)
     if (!line) { dropped += 1; out.push(lineRow({ ref: entry.line, issue: 'unknown_line', quote: entry.quote, dateKind: entry.dateKind })); continue }
     if (!groups.has(entry.line)) groups.set(entry.line, [])
@@ -535,7 +672,7 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
     const line = byRef.get(ref)
     const base = { ref, purchaseOrderLineId: line.purchaseOrderLineId, currentDate: line.promisedDate || null, quote: entries[0].quote, dateKind: entries[0].dateKind }
     if (!open || !(Number(line.remaining) > 0)) { out.push(lineRow({ ...base, issue: 'not_open' })); continue }
-    const resolved = entries.map((entry) => ({ entry, ...resolveDate(entry, receivedOn, line.promisedDate || null) }))
+    const resolved = entries.map((entry) => ({ entry, ...resolveDate(entry, receivedOn, line.promisedDate || null, reply) }))
     const failed = resolved.find((row) => row.issue)
     if (failed) { out.push(lineRow({ ...base, outcome: 'needs_you', issue: failed.issue, quote: failed.entry.quote, dateKind: failed.entry.dateKind, readings: failed.readings || null })); continue }
     let date = resolved[0].date
@@ -546,8 +683,10 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
     // One part of what is open ("150 of the 330 on 25 November"): the rest
     // has no day yet, so the line is not complete (2026-11-19 eval hard fail).
     const single = resolved.length === 1 ? resolved[0].entry : null
-    if (single && !shortfallSaid && Number.isFinite(single.quantity) && single.quantity > 0 && single.quantity < Number(line.remaining)) {
-      out.push(lineRow({ ...base, outcome: 'needs_you', issue: 'split_incomplete', parts: [{ quantity: single.quantity, date: resolved[0].date, quote: single.quote }] }))
+    const shortfall = shortfallFor(line)
+    const partOf = single ? [single.quantity, partQuantity(sentenceAround(reply, single.quote))].find((quantity) => Number.isFinite(quantity) && quantity > 0 && quantity < Number(line.remaining)) : undefined
+    if (single && partOf !== undefined && !shortfall) {
+      out.push(lineRow({ ...base, outcome: 'needs_you', issue: 'split_incomplete', parts: [{ quantity: partOf, date: resolved[0].date, quote: single.quote }] }))
       continue
     }
     if (resolved.length > 1) {
@@ -555,7 +694,7 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
       const total = parts.every((part) => part.quantity !== null) ? parts.reduce((sum, part) => sum + part.quantity, 0) : null
       const last = [...resolved].sort((a, b) => a.date.localeCompare(b.date)).at(-1)
       // The date of the last part, when the parts cover what is still open.
-      if (total === null || (total < Number(line.remaining) && !shortfallSaid)) { out.push(lineRow({ ...base, outcome: 'needs_you', issue: 'split_incomplete', parts })); continue }
+      if (total === null || (total < Number(line.remaining) && !shortfall)) { out.push(lineRow({ ...base, outcome: 'needs_you', issue: 'split_incomplete', parts })); continue }
       date = last.date
       readAs = last.readAs || null
       kind = last.kind
@@ -566,7 +705,7 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
     out.push(lineRow({ ...base, outcome: 'proposed', proposedDate: date, dateKind: kind, readAs, parts, inferred }))
   }
   let reason = reading?.reason ?? null
-  if (reason && !quoteFound(reply, reason)) { dropped += 1; reason = null }
+  if (reason && (!quoteFound(reply, reason) || addressed(reason))) { dropped += 1; reason = null }
   // A reply that talks about when the goods will come without naming a day
   // ("we'll send them asap once it is released"), read with no line: the
   // person decides, rather than nothing to record (2026-11-19 eval).

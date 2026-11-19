@@ -36,6 +36,8 @@ import { getPrismaClient } from '../persistence/prisma-client.mjs'
 const text = (value) => String(value ?? '').trim()
 const array = (value) => (Array.isArray(value) ? value : [])
 const REVISE = 'procurement.purchase_order.revise'
+// A reply is received within this many days before today (#394 review).
+const SUPPLIER_REPLY_RECEIVED_WITHIN_DAYS = 60
 // "Not now" puts the card back after this many workdays, as a chased overdue
 // order comes back (DECISION_RETURN.chasedWorkdays).
 const NOT_NOW_WORKDAYS = 3
@@ -116,11 +118,21 @@ export function supplierReplyOrderSnapshot(order, supplierSkus = new Map()) {
 
 // One model call as the reading makes it: the assistant's client with no
 // tools, its text collected, its usage counted in the workspace's month.
-async function streamedCall(client, { system, messages, maxTokens }, signal) {
+// A call the provider reports no usage for is metered at its reservation
+// estimate (the prompt, and the whole output allowance), never as free.
+// signal: the request's, joined with a deadline (READING_DEADLINE_MS), so a
+// stream that stalls ends as failed and the reply is still kept.
+const READING_DEADLINE_MS = 45_000
+async function streamedCall(client, { system, messages, maxTokens }, signal, estimate, deadlineMs = READING_DEADLINE_MS) {
   let answer = ''
   let usage = null
+  const deadline = AbortSignal.timeout(deadlineMs)
+  const stop = signal ? AbortSignal.any([signal, deadline]) : deadline
   try {
-    for await (const event of client.stream({ system, messages, tools: [], maxTokens }, signal)) {
+    // The signal ends a stream that stalls; { deadline } bounds the resilient
+    // client's wait for a first event and its one retry.
+    for await (const event of client.stream({ system, messages, tools: [], maxTokens }, stop, { deadline: Date.now() + deadlineMs })) {
+      if (stop.aborted) throw Object.assign(new Error('The reading was stopped.'), { name: 'AbortError' })
       if (event?.type === 'text_delta') answer += event.text || ''
       if (event?.type === 'message_end') {
         usage = anthropicMessagesUsage({ usage: event.usage })
@@ -131,11 +143,12 @@ async function streamedCall(client, { system, messages, maxTokens }, signal) {
     await recordAiProviderCall({ ok: false })
     throw error
   }
-  await recordAiProviderCall({ ok: true, usage })
-  return { text: answer, usage }
+  const metered = usage || estimate || null
+  await recordAiProviderCall({ ok: true, usage: metered })
+  return { text: answer, usage: metered }
 }
 
-export function createSupplierReplyService({ prisma = null, env = process.env, procurement, now = () => new Date(), idFactory = randomUUID, ledger = ASSISTANT_V2_COST_LEDGER, modelClient } = {}) {
+export function createSupplierReplyService({ prisma = null, env = process.env, procurement, now = () => new Date(), idFactory = randomUUID, ledger = ASSISTANT_V2_COST_LEDGER, modelClient, readingDeadlineMs = READING_DEADLINE_MS } = {}) {
   if (!procurement?.readPurchaseOrder || !procurement?.revisePromisedDates) throw new Error('The supplier reply service needs the procurement command service.')
   const db = async () => prisma || getPrismaClient(env)
   const actorOf = async (client, context) => resolveProvisionedActor(client, context?.identity || context)
@@ -150,15 +163,21 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
   function cardOf(row, { order, access, actor, today, skus = new Map() }) {
     const lines = new Map(array(order.lines).map((line) => [line.purchaseOrderLineId || line.id, line]))
     const orderOpen = SUPPLIER_REPLY_ORDER_STATES.includes(text(order.status))
+    // A reading's line keeps currentDate as the date it was read against; the
+    // order's date now is in formLines. They differ when the dates changed on
+    // the order meanwhile: recording the proposal is then refused
+    // (SUPPLIER_REPLY_STALE). Days late count from the order's date now.
     const view = (lineId, fields) => {
       const line = lines.get(lineId) || {}
       const remaining = Number.isFinite(Number(line.remainingQuantity)) ? Number(line.remainingQuantity) : null
-      const current = line.promisedDate || fields.currentDate || null
+      const current = line.promisedDate || null
       const late = orderOpen && remaining > 0 && current && today && current < today ? daysBetween(current, today) : null
       return { sku: text(line.sku) || null, supplierSku: skus.get(lineId) || null, itemName: text(line.itemName) || null, remaining, unit: text(line.unit) || null, overdueDays: late, ...fields }
     }
     const check = row.check || null
-    const open = SUPPLIER_REPLY_OPEN_STATES.includes(row.state)
+    // Open and the order's active card: an outage paste beside an open card
+    // does not take its place (#394 review), so it is not decided here.
+    const open = SUPPLIER_REPLY_OPEN_STATES.includes(row.state) && Boolean(row.activeKey)
     const card = {
       contractVersion: SUPPLIER_REPLY_CONTRACT_VERSION,
       id: row.id,
@@ -213,12 +232,13 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
       const prices = aiUsagePrices(scoped.env)
       const provider = providerRuntimeConfig(scoped.env).kind || null
       const modelName = text(scoped.env.FLOWCHAIN_AI_PROVIDER_MODEL) || null
+      // Both calls of a reading are held at once, at their worst case.
       const reserve = async (call) => {
-        const micros = aiCallCostMicros({ inputTokens: supplierReplyPromptTokens(call), outputTokens: call.maxTokens }, prices)
+        const micros = aiCallCostMicros({ inputTokens: supplierReplyPromptTokens(call), outputTokens: call.maxTokens }, prices) * Math.max(1, Number(call.calls) || 1)
         const hold = ledger.reserve(tenantId, scoped.aiWorkspaceAccess, { micros })
         return hold.ok ? hold : { ok: false, code: 'over_cap' }
       }
-      const callModel = async (call) => ({ ...(await streamedCall(model, call, signal)), provider, model: modelName })
+      const callModel = async (call) => ({ ...(await streamedCall(model, call, signal, { inputTokens: supplierReplyPromptTokens(call), outputTokens: call.maxTokens }, readingDeadlineMs)), provider, model: modelName })
       return readSupplierReply({ order: snapshot, text: cleaned.text, receivedOn, today, callModel, reserve })
     })
   }
@@ -234,6 +254,8 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
     const today = await todayOf(client, actor.tenantId)
     const receivedOn = input.receivedOn || today
     if (receivedOn > today) fail('SUPPLIER_REPLY_RECEIVED_IN_FUTURE', 'The reply cannot be received after today.', 422, [{ field: 'receivedOn' }])
+    // An old reply would anchor relative dates in the past (#394 review).
+    if (daysBetween(receivedOn, today) > SUPPLIER_REPLY_RECEIVED_WITHIN_DAYS) fail('SUPPLIER_REPLY_RECEIVED_TOO_EARLY', `The reply must be received within the last ${SUPPLIER_REPLY_RECEIVED_WITHIN_DAYS} days.`, 422, [{ field: 'receivedOn' }])
     const cleaned = cleanSupplierReply(input.text)
     if (!cleaned.text) fail('SUPPLIER_REPLY_EMPTY', 'Nothing is left of the reply once the quoted earlier message is removed.', 422, [{ field: 'text' }])
     const skus = await supplierSkusOf(client, actor.tenantId, order)
@@ -244,16 +266,22 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
     const state = check ? check.state : 'needs_you'
     const id = idFactory()
     const open = SUPPLIER_REPLY_OPEN_STATES.includes(state)
+    // A later reply replaces the order's open card (#392 §2) only when it was
+    // read and is itself open: an outage, an auto-reply or nothing to record
+    // does not push a proposal aside (#394 review). Without an open card, an
+    // open reply (an outage's manual form too) becomes the card.
+    const takesOver = open && read.readingStatus === 'read'
     let superseded = []
+    let active = false
     try {
       await client.$transaction(async (tx) => {
-        // A later reply replaces the order's open card (#392 §2).
         const previous = await tx.supplierReply.findMany({ where: { tenantId: actor.tenantId, purchaseOrderId: order.id, activeKey: { not: null } }, select: { id: true } })
-        superseded = previous.map((row) => row.id)
+        if (takesOver) superseded = previous.map((row) => row.id)
         if (superseded.length) await tx.supplierReply.updateMany({ where: { tenantId: actor.tenantId, id: { in: superseded } }, data: { state: 'superseded', activeKey: null, supersededById: id } })
+        active = open && (takesOver || !previous.length)
         await tx.supplierReply.create({
           data: {
-            id, tenantId: actor.tenantId, purchaseOrderId: order.id, supplierId: text(order.supplierId) || null, activeKey: open ? order.id : null,
+            id, tenantId: actor.tenantId, purchaseOrderId: order.id, supplierId: text(order.supplierId) || null, activeKey: active ? order.id : null,
             source: 'paste', receivedOn, text: cleaned.text, quotedTextHidden: cleaned.quotedTextHidden, quotedText: cleaned.quoted, state, readingStatus: read.readingStatus,
             provider: read.provider || null, model: read.model || null, promptVersion: read.promptVersion || null, reading: read.reading || null, check: check || null,
             usage: { calls: read.calls, inputTokens: read.usage?.inputTokens || 0, outputTokens: read.usage?.outputTokens || 0, ms: Date.now() - startedAt, invisibleRemoved: cleaned.invisibleRemoved, issues: read.issues || null },
@@ -265,7 +293,7 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
           data: {
             id: idFactory(), tenantId: actor.tenantId, actorId: actor.user.id, source: 'supplier_reply_service', module: 'procurement', action: 'supplier_reply_pasted',
             entityType: 'PurchaseOrder', entityId: order.id, summary: `Supplier reply on purchase order ${snapshot.number}: ${state}.`,
-            metadata: { replyId: id, state, readingStatus: read.readingStatus, calls: read.calls, lines: array(check?.lines).map((line) => line.outcome), superseded },
+            metadata: { replyId: id, state, readingStatus: read.readingStatus, calls: read.calls, lines: array(check?.lines).map((line) => line.outcome), superseded, active },
           },
         })
       })
@@ -297,8 +325,27 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
     const order = await readOrder(orderId, context, access)
     const row = await client.supplierReply.findFirst({ where: { id: text(replyId), tenantId: actor.tenantId, purchaseOrderId: order.id } })
     if (!row) fail('SUPPLIER_REPLY_NOT_FOUND', 'The supplier reply was not found on this order.', 404)
-    if (!SUPPLIER_REPLY_OPEN_STATES.includes(row.state)) fail('SUPPLIER_REPLY_NOT_OPEN', 'This supplier reply was already decided or replaced.', 409, [{ field: 'state', code: row.state }])
+    if (!SUPPLIER_REPLY_OPEN_STATES.includes(row.state) || !row.activeKey) fail('SUPPLIER_REPLY_NOT_OPEN', 'This supplier reply was already decided or replaced.', 409, [{ field: 'state', code: row.activeKey ? row.state : (SUPPLIER_REPLY_OPEN_STATES.includes(row.state) ? 'not_active' : row.state) }])
     return { actor, access, order, row }
+  }
+
+  // The revisions an earlier run of this reply's record wrote (their audit
+  // rows carry the reply as origin), for a record retried after them.
+  async function revisionsFromReply(client, tenantId, replyId) {
+    const rows = await client.auditLog.findMany({ where: { tenantId, action: 'purchase_order_promise_revised', metadata: { path: ['origin', 'id'], equals: replyId } }, select: { metadata: true } })
+    return rows.map((entry) => text(entry.metadata?.revisionId)).filter(Boolean)
+  }
+
+  // Puts a claimed card back after its record failed; when another reply has
+  // become the order's card meanwhile, this one is replaced by it.
+  async function reopenCard(client, tenantId, row) {
+    try {
+      await client.supplierReply.updateMany({ where: { id: row.id, tenantId, activeKey: null, state: 'recorded' }, data: { activeKey: row.purchaseOrderId, state: row.state, decision: null, decidedById: null, decidedAt: null, editedLines: 0 } })
+    } catch (error) {
+      if (error?.code !== 'P2002') throw error
+      const current = await client.supplierReply.findFirst({ where: { tenantId, purchaseOrderId: row.purchaseOrderId, activeKey: { not: null } }, select: { id: true } })
+      await client.supplierReply.updateMany({ where: { id: row.id, tenantId }, data: { state: 'superseded', decision: null, decidedById: null, decidedAt: null, supersededById: current?.id || null } })
+    }
   }
 
   // Closes an open card, once: a card someone else closed meanwhile is refused.
@@ -319,23 +366,47 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
     const lines = input.lines || proposed.map((line) => ({ purchaseOrderLineId: line.purchaseOrderLineId, promisedDate: line.proposedDate }))
     if (!lines.length) fail('SUPPLIER_REPLY_NO_DATES', 'Enter at least one line\'s new promised date.', 422, [{ field: 'lines' }])
     const editedLines = lines.filter((line) => proposal.get(line.purchaseOrderLineId) !== line.promisedDate).length
+    // A proposal read against dates that have changed on the order since is
+    // stale: recording it would overwrite the newer date (#394 review). Lines
+    // the person entered themselves, seeing the current date, are theirs.
+    const pasted = new Map(array(row.check?.lines).filter((line) => line.purchaseOrderLineId).map((line) => [line.purchaseOrderLineId, line.currentDate ?? null]))
+    const nowDates = new Map(array(order.lines).map((line) => [line.purchaseOrderLineId || line.id, line.promisedDate || null]))
+    // A line already at the proposed date is not stale: an earlier run of this
+    // record wrote it.
+    const stale = lines.filter((given) => pasted.has(given.purchaseOrderLineId) && pasted.get(given.purchaseOrderLineId) !== (nowDates.get(given.purchaseOrderLineId) ?? null) && nowDates.get(given.purchaseOrderLineId) !== given.promisedDate && (!input.lines || proposal.get(given.purchaseOrderLineId) === given.promisedDate))
+    if (stale.length) fail('SUPPLIER_REPLY_STALE', 'The promised dates changed on the order after this reply was pasted. Check the current dates before recording.', 409, stale.map((given) => ({ purchaseOrderLineId: given.purchaseOrderLineId, pastedDate: pasted.get(given.purchaseOrderLineId), currentDate: nowDates.get(given.purchaseOrderLineId) ?? null })))
     // The reason the revision keeps: the supplier's own words, with the reply date.
     const quotes = [...new Set(array(row.check?.lines).filter((line) => line.quote && lines.some((given) => given.purchaseOrderLineId === line.purchaseOrderLineId)).map((line) => line.quote))]
     const words = quotes.length ? ` "${quotes.join(' / ')}"` : ''
     const reason = `Supplier reply of ${row.receivedOn}:${words}`.slice(0, 600)
-    const result = await procurement.revisePromisedDates(order.id, {
-      expectedVersion: input.expectedVersion,
-      lines,
-      reason,
-      idempotencyKey: input.idempotencyKey || `supplier-reply:${row.id}:v${input.expectedVersion}`,
-      origin: { type: 'supplier_reply', id: row.id },
-    }, context)
-    const revisionIds = array(result?.revisionIds)
-    await closeCard(client, { actor, row }, { state: 'recorded', decision: 'recorded', editedLines, revisionIds }, {
-      action: 'supplier_reply_recorded',
-      summary: `Promised dates recorded from a supplier reply on purchase order ${text(order.number) || order.id}.`,
-      metadata: { replyId: row.id, lines: lines.length, editedLines, revisionIds },
-    })
+    // Claim the card first, so a supersede or dismissal cannot slip between
+    // the dates written and the card closed (#394 review); put it back if the
+    // command fails.
+    const claimed = await client.supplierReply.updateMany({ where: { id: row.id, tenantId: actor.tenantId, activeKey: { not: null } }, data: { activeKey: null, state: 'recorded', decision: 'recorded', decidedById: actor.user.id, decidedAt: now(), editedLines } })
+    if (claimed.count !== 1) fail('SUPPLIER_REPLY_NOT_OPEN', 'This supplier reply was already decided or replaced.', 409)
+    let revisionIds
+    try {
+      const result = await procurement.revisePromisedDates(order.id, {
+        expectedVersion: input.expectedVersion,
+        lines,
+        reason,
+        idempotencyKey: input.idempotencyKey || `supplier-reply:${row.id}:v${input.expectedVersion}`,
+        origin: { type: 'supplier_reply', id: row.id },
+      }, context)
+      revisionIds = array(result?.revisionIds)
+    } catch (error) {
+      // These dates were written by an earlier run of this record: recorded.
+      const earlier = error?.code === 'PROMISED_DATE_UNCHANGED' ? await revisionsFromReply(client, actor.tenantId, row.id) : []
+      if (!earlier.length) {
+        await reopenCard(client, actor.tenantId, row)
+        throw error
+      }
+      revisionIds = earlier
+    }
+    await client.$transaction([
+      client.supplierReply.updateMany({ where: { id: row.id, tenantId: actor.tenantId }, data: { revisionIds } }),
+      client.auditLog.create({ data: { id: idFactory(), tenantId: actor.tenantId, actorId: actor.user.id, source: 'supplier_reply_service', module: 'procurement', entityType: 'PurchaseOrder', entityId: row.purchaseOrderId, action: 'supplier_reply_recorded', summary: `Promised dates recorded from a supplier reply on purchase order ${text(order.number) || order.id}.`, metadata: { replyId: row.id, lines: lines.length, editedLines, revisionIds } } }),
+    ])
     const fresh = await readOrder(order.id, context, access)
     const today = await todayOf(client, actor.tenantId)
     const updated = await client.supplierReply.findFirst({ where: { id: row.id, tenantId: actor.tenantId } })

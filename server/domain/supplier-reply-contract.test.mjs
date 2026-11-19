@@ -45,7 +45,9 @@ test('the card a reader gets, and the requests the routes take', () => {
   assert.deepEqual(SUPPLIER_REPLY_STATES, ['proposed', 'needs_you', 'nothing_to_record', 'recorded', 'not_recorded', 'superseded'])
   assert.equal(SUPPLIER_REPLY_ROUTES.record, '/api/procurement/orders/:id/supplier-replies/:replyId/record')
   assert.ok(supplierReplyPasteRequestSchema.safeParse({ text: 'Balance ships 28 Nov.', receivedOn: '2026-11-17' }).success)
-  assert.ok(!supplierReplyPasteRequestSchema.safeParse({ text: 'x'.repeat(8001) }).success)
+  // A long thread is cut to the reply after: twice the cleaned limit is taken.
+  assert.ok(supplierReplyPasteRequestSchema.safeParse({ text: 'x'.repeat(16000) }).success)
+  assert.ok(!supplierReplyPasteRequestSchema.safeParse({ text: 'x'.repeat(16001) }).success)
   assert.ok(supplierReplyRecordRequestSchema.safeParse({ expectedVersion: 4 }).success)
   assert.ok(supplierReplyRecordRequestSchema.safeParse({ expectedVersion: 4, lines: [{ purchaseOrderLineId: 'pol-1', promisedDate: '2026-11-30' }] }).success)
   assert.ok(!supplierReplyRecordRequestSchema.safeParse({ lines: [] }).success)
