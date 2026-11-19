@@ -159,6 +159,11 @@ export const supplierReplyCheckedLineSchema = z.strictObject({
   readings: z.array(day).max(2).nullable(),
   // A split delivery's parts; the proposed date is the last part's.
   parts: z.array(z.strictObject({ quantity: quantity.nullable(), date: day, quote })).max(10).nullable(),
+  // True when the reading gave no day (or called it vague) and code read the
+  // one day the quote names: readAs is set, and the card says the day was
+  // read from the reply, not stated as a delivery day. The server always
+  // sends it; optional only so earlier fixtures parse.
+  inferred: z.boolean().optional(),
 })
 
 export const supplierReplyCheckedFlagSchema = z.strictObject({
