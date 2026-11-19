@@ -32,6 +32,9 @@ test.beforeAll(async () => {
 });
 
 test("authoritative Product Recovery pages remain useful and truthful", async ({ page, request }) => {
+  // The walk visits more than twenty pages and takes 42–48 s on CI, against
+  // the 45 s default, so it gets its own limit.
+  test.setTimeout(90_000);
   const adminLogin = await request.post("/api/auth/login", {
     data: { email: "admin@flowchain.local", name: "Initial Admin", company: "Product Recovery" },
   });
