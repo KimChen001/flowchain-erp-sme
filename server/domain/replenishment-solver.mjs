@@ -127,8 +127,12 @@ export function resolveReplenishmentParameters(options = {}) {
 // onHand, reserved, openLines [{ remaining, dueInDays }], dailyDemand (the
 // same number of days, oldest first, for every item), and optionally name,
 // unit, supplier, reorderPoint, openRequests (quantity on open purchase
-// requests, counted in the position) and extraDemand (units on top of every
-// scenario: a known order the history does not show).
+// requests, counted in the position), pendingOrders (on draft and
+// pending-approval purchase orders, counted in the position), backorders
+// (open sales demand no reservation covers, taken out of it; design audit
+// C2), reorderListQuantity (what the reorder list asks for, when the caller
+// knows it) and extraDemand (units on top of every scenario: a known order
+// the history does not show).
 export function normalizeReplenishmentItems(items) {
   if (!Array.isArray(items) || !items.length) fail('At least one item is required.')
   if (items.length > REPLENISHMENT_SOLVER_LIMITS.items) fail(`At most ${REPLENISHMENT_SOLVER_LIMITS.items} items can be planned at once.`)
@@ -165,10 +169,16 @@ export function normalizeReplenishmentItems(items) {
     const reorderPoint = item.reorderPoint === null || item.reorderPoint === undefined ? null : Number(item.reorderPoint)
     const openRequests = item.openRequests === null || item.openRequests === undefined ? 0 : Number(item.openRequests)
     if (!finite(openRequests) || openRequests < 0) bad('openRequests must be 0 or more')
+    const pendingOrders = item.pendingOrders === null || item.pendingOrders === undefined ? 0 : Number(item.pendingOrders)
+    const backorders = item.backorders === null || item.backorders === undefined ? 0 : Number(item.backorders)
+    if (!finite(pendingOrders) || pendingOrders < 0 || !finite(backorders) || backorders < 0) bad('pendingOrders and backorders must be 0 or more')
+    const reorderListQuantity = item.reorderListQuantity === null || item.reorderListQuantity === undefined ? null : Number(item.reorderListQuantity)
+    if (reorderListQuantity !== null && (!finite(reorderListQuantity) || reorderListQuantity < 0)) bad('reorderListQuantity must be 0 or more')
     return {
       sku, name: text(item.name) || null, unit: text(item.unit) || null, supplier: text(item.supplier) || null,
-      unitPrice, moq, leadTimeDays, onHand, reserved, openLines, openRequests, dailyDemand, extraDemand,
+      unitPrice, moq, leadTimeDays, onHand, reserved, openLines, openRequests, pendingOrders, backorders, dailyDemand, extraDemand,
       reorderPoint: finite(reorderPoint) && reorderPoint > 0 ? reorderPoint : null,
+      reorderListQuantity,
     }
   })
 }
@@ -178,10 +188,11 @@ export function normalizeReplenishmentItems(items) {
 // due_within_cycle: only lines due within the item's lead time + review days
 // (the prototype's single-cycle position); a line due later cannot serve this
 // cycle's demand. Lines without a due day count in both. Open purchase
-// requests (openRequests) count in both, as the assistant's other order tools
-// count them: ordering on top of a pending request would order twice.
+// requests, draft and pending-approval orders count in both and backorders
+// come out, as the reorder list's position counts them (design audit C2):
+// ordering on top of a pending request or order would order twice.
 export function inventoryPosition(item, cycleDays, rule = 'all_open_lines') {
-  let position = item.onHand - item.reserved + (item.openRequests || 0)
+  let position = item.onHand - item.reserved + (item.openRequests || 0) + (item.pendingOrders || 0) - (item.backorders || 0)
   const counted = []
   const dueAfterCycle = []
   for (const line of item.openLines) {
@@ -518,12 +529,16 @@ const quantitiesFrom = (instance, plan) => {
   return instance.items.map((item) => bySku.get(item.sku.toLowerCase()) ?? 0)
 }
 
-// The reorder list's quantities (buildReorderList since #249): the shortfall
-// below the recorded reorder point of on hand - reserved + every open line,
-// raised to the supplier's minimum; 0 at or above it. Items bought in their
-// stock unit only, as the solver's items are.
+// The reorder list's quantities: what the list asks for when the caller gives
+// it (reorderListQuantity; the assistant passes the list's own, reorderSizing
+// in reorder-list.mjs, so the comparison is the page's). Otherwise, for an
+// input without it (an export), the shortfall below the recorded reorder
+// point of on hand - reserved + every open line, raised to the supplier's
+// minimum; 0 at or above it. Items bought in their stock unit only, as the
+// solver's items are.
 export function reorderListQuantities(items) {
   return items.map((item) => {
+    if (item.reorderListQuantity !== null && item.reorderListQuantity !== undefined) return item.reorderListQuantity
     if (!(item.reorderPoint > 0)) return 0
     const position = item.onHand - item.reserved + item.openLines.reduce((sum, line) => sum + line.remaining, 0)
     const shortfall = Math.max(0, item.reorderPoint - position)

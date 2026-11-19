@@ -961,6 +961,13 @@ async function orderPlanRecords(args, { facts, context }) {
     if (args.supplier && (!source || (!fold(source.name).includes(fold(args.supplier)) && fold(source.id) !== fold(args.supplier)))) continue
     if (reason) { left.push({ sku: row.sku, reason }); continue }
     const stockHistory = movements.get(text(item.id)) || { movements: [], firstDay: null }
+    // The reorder list's position and quantity for the item (design audit
+    // C2, C3), so the plan starts where the list does and its "reorder list"
+    // plan is the list's own.
+    const incoming = array(stock.incomingLines).reduce((sum, line) => sum + (Number(line.remaining) || 0), 0)
+    const parts = inventoryPosition({ onHand: Number(stock.onHand) || 0, reserved: Number(stock.reserved) || 0, incoming, pendingOrders: Number(stock.pendingPurchaseQty) || 0, openRequests: openRequestsOf(facts, row), backorders: Number(stock.unreservedSalesDemand) || 0 })
+    const point = recordedReorderPoint(item)
+    const listed = point === null ? null : reorderSizing({ item, reorderPoint: point, demand: history, position: parts.position, stock: parts.stock, minimum: requestMinimumOf(item, source, itemStockUnit(item)), today: facts.today })
     planned.push({
       row, item, source,
       stockout: stockoutDays({ onHandNow: Number(stock.onHand) || 0, movements: stockHistory.movements, days: windowDays, firstDay: stockHistory.firstDay }),
@@ -968,11 +975,13 @@ async function orderPlanRecords(args, { facts, context }) {
         sku: row.sku, name: row.itemName || item.name || null, unit: itemStockUnit(item), supplier: suppliersVisible ? source.name : null,
         unitPrice, moq: requestMinimumOf(item, source, itemStockUnit(item)), leadTimeDays: source.leadTimeDays,
         onHand: Number(stock.onHand) || 0, reserved: Number(stock.reserved) || 0, openRequests: openRequestsOf(facts, row),
+        pendingOrders: Number(stock.pendingPurchaseQty) || 0, backorders: Number(stock.unreservedSalesDemand) || 0,
+        reorderListQuantity: listed?.dated && listed.sized.quantity.value !== null ? listed.sized.quantity.value : 0,
         openLines: array(stock.incomingLines).map((line) => ({ remaining: Number(line.remaining) || 0, dueInDays: line.dueDay ? Math.round((Date.parse(`${line.dueDay}T12:00:00Z`) - Date.parse(`${facts.today}T12:00:00Z`)) / 86400000) : null, reference: ordersVisible ? text(line.orderNumber) || null : null })),
         dailyDemand: history.daily,
         reorderPoint: recordedReorderPoint(item),
         // Days of cover, to keep the items that run out first when there are many.
-        cover: ((Number(stock.onHand) || 0) - (Number(stock.reserved) || 0) + array(stock.incomingLines).reduce((sum, line) => sum + (Number(line.remaining) || 0), 0)) / history.averageDailyDemand,
+        cover: parts.position / history.averageDailyDemand,
       },
     })
   }
@@ -986,7 +995,7 @@ async function orderPlanRecords(args, { facts, context }) {
 
 const optimizeOrderPlan = defineAiTool({
   name: 'optimize_order_plan',
-  description: 'The cheapest order to place now across items, solved exactly (a mixed-integer program, HiGHS) from the records: each item\'s stock position (on hand - reserved + the open purchase order lines due within its lead time plus review days, late ones included, + open purchase requests), the preferred supplier\'s lead time, minimum order and reference price, and the last 90 days of shipments as 200 demand scenarios. It weighs the cost of holding stock against running short over each item\'s lead time plus the review days, within the budget and the minimum orders, and costs the plan beside ordering nothing, the reorder list\'s quantities and a plan the user proposes. Use it for what to order now (with or without a budget), for what-ifs, and to judge an order someone proposes. Read-only. Say what cautions lists: not_proven_optimal (the solver hit its time limit: call the decision the best plan found, not the optimal one, and give gapPercent); demand_may_be_understated (items with stockoutDays: on a day with no stock nothing ships, so their history understates demand and the plan may order too little for them); lines_due_after_cycle (openLinesDueAfterCycle: arrive too late to cover the cycle, so they are not counted in the position). A plan in decision.aboutTheSame costs the same as the decision within the cost estimate\'s sampling error: say they cost about the same, not that one saves money. A plan in decision.cheaperOnFreshSamples costs clearly less on the fresh samples: say so, since the decision is proven best on the 200 scenarios only.',
+  description: 'The cheapest order to place now across items, solved exactly (a mixed-integer program, HiGHS) from the records: each item\'s stock position (the reorder list\'s, less lines due after its cycle), the preferred supplier\'s lead time, minimum order and reference price, and the last 90 days of shipments as 200 demand scenarios. It weighs the cost of holding stock against running short over each item\'s cycle (lead time plus review days), within the budget and the minimum orders, and costs the plan beside ordering nothing, the reorder list\'s quantities and a plan the user proposes. Use it for what to order now (with or without a budget), for what-ifs, and to judge an order someone proposes. Read-only. Say each of cautions.',
   parameters: {
     budget: { type: 'number', minimum: 0, maximum: 100000000, description: 'The most to spend on this order, in the workspace currency, when the user gives one.' },
     plan: { type: 'array', items: planLine, maxItems: AI_TOOL_LIMITS.items, description: 'An order the user proposes or asks about, to cost beside the best one (e.g. [{ sku: "SKU-123", quantity: 50 }]).' },
@@ -1036,6 +1045,15 @@ const optimizeOrderPlan = defineAiTool({
 
 // The solver's answer as the assistant reads it: the decision first, then the
 // plans side by side and the items, every figure rounded as the app shows it.
+// The order plan's cautions: a code and the words the answer gives it.
+const ORDER_PLAN_CAUTIONS = Object.freeze({
+  not_proven_optimal: { code: 'not_proven_optimal', say: 'The solver stopped at its time limit: call the decision the best plan found, not the optimal one, and give gapPercent.' },
+  demand_may_be_understated: { code: 'demand_may_be_understated', say: 'Items with stockoutDays had no stock on those days, when nothing could ship, so their history understates demand and the plan may order too little for them.' },
+  lines_due_after_cycle: { code: 'lines_due_after_cycle', say: 'The lines in openLinesDueAfterCycle arrive after the lead time plus review days the plan covers, so they are not counted in the position.' },
+  about_the_same: { code: 'about_the_same', say: 'The plans in decision.aboutTheSame cost the same as the decision within the cost estimate\'s sampling error: say they cost about the same, not that one saves money.' },
+  cheaper_on_fresh_samples: { code: 'cheaper_on_fresh_samples', say: 'The plans in decision.cheaperOnFreshSamples cost clearly less on fresh samples: say so, since the decision is proven best on the 200 scenarios only.' },
+})
+
 function orderPlanResult(result, { facts, records, items, args }) {
   const plan = (id) => result.plans.find((entry) => entry.id === id) || null
   const cost = (entry) => (entry.heldOut || entry.inSample)
@@ -1043,6 +1061,11 @@ function orderPlanResult(result, { facts, records, items, args }) {
   const reorder = plan('reorder_list')
   const yours = plan('your_plan')
   const noOrder = plan('no_order')
+  // Plans whose cost is the decision's within the estimate's sampling error,
+  // and plans clearly cheaper on the fresh samples.
+  const compared = [['no_order', noOrder], ['reorder_list', reorder], ['your_plan', yours]]
+  const aboutTheSame = compared.filter(([, entry]) => entry?.withinSamplingErrorOfOptimal === true).map(([id]) => id)
+  const cheaperOnFreshSamples = compared.filter(([, entry]) => entry && entry.withinSamplingErrorOfOptimal === false && entry.costAboveOptimal < 0).map(([id]) => id)
   const free = result.binding?.budget?.withoutBudget
   const planRow = (id, entry) => entry && ({
     plan: id,
@@ -1114,13 +1137,17 @@ function orderPlanResult(result, { facts, records, items, args }) {
       provenOptimal: result.optimalityProven === true,
       // Plans whose cost is the decision's within the estimate's sampling
       // error, and plans clearly cheaper on the fresh samples.
-      aboutTheSame: [['no_order', noOrder], ['reorder_list', reorder], ['your_plan', yours]].filter(([, entry]) => entry?.withinSamplingErrorOfOptimal === true).map(([id]) => id),
-      cheaperOnFreshSamples: [['no_order', noOrder], ['reorder_list', reorder], ['your_plan', yours]].filter(([, entry]) => entry && entry.withinSamplingErrorOfOptimal === false && entry.costAboveOptimal < 0).map(([id]) => id),
+      aboutTheSame,
+      cheaperOnFreshSamples,
     } : null,
+    // What the answer must say, each with its words, so the description
+    // stays short (the fixed prompt's budget; design audit 2026-11-18).
     cautions: [
-      ...(optimal && result.optimalityProven !== true ? ['not_proven_optimal'] : []),
-      ...(itemRows.some((row) => row.demandMayBeUnderstated) ? ['demand_may_be_understated'] : []),
-      ...(itemRows.some((row) => row.openLinesDueAfterCycle) ? ['lines_due_after_cycle'] : []),
+      ...(optimal && result.optimalityProven !== true ? [ORDER_PLAN_CAUTIONS.not_proven_optimal] : []),
+      ...(itemRows.some((row) => row.demandMayBeUnderstated) ? [ORDER_PLAN_CAUTIONS.demand_may_be_understated] : []),
+      ...(itemRows.some((row) => row.openLinesDueAfterCycle) ? [ORDER_PLAN_CAUTIONS.lines_due_after_cycle] : []),
+      ...(optimal && aboutTheSame.length ? [ORDER_PLAN_CAUTIONS.about_the_same] : []),
+      ...(optimal && cheaperOnFreshSamples.length ? [ORDER_PLAN_CAUTIONS.cheaper_on_fresh_samples] : []),
     ],
     budget: budget ? { amount: round(budget.amount), spend: round(budget.spend), left: round(budget.left), binds: budget.binds, ...(free ? { spendWithoutLimit: round(free.spend), costWithoutLimit: round(cost(free).total), costSavedWithoutLimit: round(cost(optimal).total - cost(free).total) } : {}) } : null,
     minimumOrders: result.binding ? { raised: result.binding.raisedToMinimumOrder, skippedAsTooCostly: result.binding.skippedForMinimumOrder } : null,

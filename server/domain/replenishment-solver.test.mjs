@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { addCalendarDays } from '../../shared/purchase-request-prefill.mjs'
 import {
   ReplenishmentInputError, buildReplenishmentInstance, comparePlanCosts, evaluateReplenishmentPlan, inventoryPosition, logReplenishmentCall, planReplenishment,
-  reorderListQuantities, replenishmentInputFromExport, sampleCosts, solveReplenishmentMilp, unbudgetedQuantities,
+  normalizeReplenishmentItems, reorderListQuantities, replenishmentInputFromExport, sampleCosts, solveReplenishmentMilp, unbudgetedQuantities,
 } from './replenishment-solver.mjs'
 import { runReplenishmentSolver } from '../../scripts/replenishment-solver.mjs'
 
@@ -209,4 +209,20 @@ test('each call can be logged as one JSON line, and the study script runs the sa
   } finally {
     rmSync(folder, { recursive: true, force: true })
   }
+})
+
+// Design audit C2: the position the plan starts from is the reorder list's.
+// Draft and pending-approval orders count, backorders come out, under either
+// rule; only lines due after the cycle are left out by due_within_cycle. The
+// reorder list's own quantity, when given, is its plan.
+test('the position counts pending orders and takes out backorders, and the reorder list plan is the list\'s own', () => {
+  const item = { onHand: 28, reserved: 0, openRequests: 50, pendingOrders: 120, backorders: 35, openLines: [{ remaining: 30, dueInDays: -2 }, { remaining: 40, dueInDays: 30 }] }
+  assert.equal(inventoryPosition(item, 19, 'all_open_lines').position, 233)
+  assert.equal(inventoryPosition(item, 19, 'due_within_cycle').position, 193)
+  // Without it (an export), the old shortfall of on hand - reserved + every
+  // open line below the reorder point: 300 - (28 + 70) = 202.
+  assert.deepEqual(reorderListQuantities([{ ...item, reorderPoint: 300, moq: 100, reorderListQuantity: 72 }, { ...item, reorderPoint: 300, moq: 100, reorderListQuantity: null }]), [72, 202])
+  const [normalized] = normalizeReplenishmentItems([{ sku: 'A', unitPrice: 1, leadTimeDays: 3, onHand: 1, openLines: [], dailyDemand: Array(7).fill(1), pendingOrders: 4, backorders: 2, reorderListQuantity: 9 }])
+  assert.deepEqual([normalized.pendingOrders, normalized.backorders, normalized.reorderListQuantity], [4, 2, 9])
+  assert.throws(() => normalizeReplenishmentItems([{ sku: 'A', unitPrice: 1, leadTimeDays: 3, onHand: 1, openLines: [], dailyDemand: Array(7).fill(1), backorders: -1 }]), /pendingOrders and backorders/)
 })

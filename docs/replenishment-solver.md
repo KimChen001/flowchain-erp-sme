@@ -10,7 +10,7 @@ The research prototype's single-cycle sample average approximation (research not
 
 | Symbol | Meaning | From |
 |---|---|---|
-| I_i | stock position: on hand − reserved + open purchase order lines + open purchase requests. The library default (`positionRule: 'all_open_lines'`) counts every open line, late or not, as the reorder list does. The assistant tool uses `due_within_cycle`: a line due after L_i + R days cannot cover the cycle the cost is taken over, so it is listed and not counted (late lines still count) | allocation read model (the inventory position of a reorder-point policy); requests as `suggest_purchase_lines` counts them |
+| I_i | stock position: on hand − reserved + open purchase order lines + draft and pending-approval orders + open purchase requests − backorders (open sales demand no reservation covers), as the reorder list counts it (design audit C2). The library default (`positionRule: 'all_open_lines'`) counts every open line, late or not, as the reorder list does. The assistant tool uses `due_within_cycle`: a line due after L_i + R days cannot cover the cycle the cost is taken over, so it is listed and not counted (late lines still count) | allocation read model (the inventory position of a reorder-point policy); requests as `suggest_purchase_lines` counts them |
 | c_i, m_i, L_i | unit price, minimum order quantity, lead time | the preferred approved supplier: reference price, MOQ, lead time |
 | R | review period, days to the next chance to order | 7 (assumed; the user can change it) |
 | h_i | holding cost per unit left at the end of the cycle = rate × c_i × (L_i + R) / 365 | rate 25% a year (assumed, as in #269) |
@@ -49,17 +49,21 @@ returns it:
 - `decision`: the lines to order, their spend, the expected cost, and the saving against no order, the reorder
   list and the user's plan; `provenOptimal`; `aboutTheSame`, the plans whose cost is the decision's within the
   sampling error; and `cheaperOnFreshSamples`, the plans clearly cheaper on the held-out samples.
-- `cautions`: `not_proven_optimal` (the 10-second limit stopped the solve: the answer calls the decision the best
+- `cautions`: each `{ code, say }`, the words the answer gives it (they live in the result, not the tool description,
+  to keep the fixed prompt within its budget): `not_proven_optimal` (the 10-second limit stopped the solve: the answer calls the decision the best
   plan found and gives the gap); `demand_may_be_understated` (an item had days that ended with no stock, worked back
   from its stock movements in `stockout-days.mjs`: nothing ships on such a day, so its shipped history is too low;
   the item row gives `stockoutDays`); `lines_due_after_cycle` (open lines due after the cycle, listed per item and
-  not counted).
+  not counted); `about_the_same` and `cheaper_on_fresh_samples` (when `decision.aboutTheSame` or
+  `decision.cheaperOnFreshSamples` lists a plan).
 - `budget`: whether the budget binds, and what lifting it would buy.
 - `minimumOrders`: which items were raised to their minimum, and which were skipped because the minimum costs more
   than it saves.
 - `plans`: the plans side by side.
 - `items`: per item the position, open requests, days covered, expected demand, the minimum and its value, the best,
-  reorder-list and proposed quantities, the chance of running short with each, and why.
+  reorder-list and proposed quantities, the chance of running short with each, and why. The reorder-list quantity is
+  the list's own request quantity (`reorderSizing`, up to its order-up-to level; design audit C3), passed in as
+  `reorderListQuantity`; an input without it (an export) falls back to the shortfall below the reorder point.
 - `assumptions` and `method`, as data.
 
 Arguments: budget, plan (a proposed order), fixedLines, exclude, extraDemand (a known order the history does not
@@ -129,5 +133,5 @@ check covered its ±10% budget plans too.
   history does not hold. `extraDemand` is how known information enters.
 - Costs are assumed, not accounting data. Because π is proportional to price, cheap items are cut first under a tight
   budget. The expected cost is a planning figure, not cash; spend is cash.
-- The position counts open purchase requests, as the assistant's other order tools do. The export does not, so an
-  item with an open request can get a smaller order from the assistant than from the script.
+- The position counts open purchase requests, draft and pending-approval orders and backorders, as the reorder list
+  does. The export does not, so such an item can get a different order from the assistant than from the script.
