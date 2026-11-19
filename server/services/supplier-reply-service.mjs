@@ -18,7 +18,6 @@ import {
   supplierReplyCardSchema, supplierReplyDismissRequestSchema, supplierReplyNotNowRequestSchema, supplierReplyPasteRequestSchema, supplierReplyRecordRequestSchema,
 } from '../../shared/supplier-reply-contract.mjs'
 import { assertAuthorized, can } from '../auth/authorization-service.mjs'
-import { aiInjectionDetected } from '../domain/ai-injection-guard.mjs'
 import { ASSISTANT_V2_COST_LEDGER } from '../domain/ai-assistant-v2-controls.mjs'
 import { createAssistantV2ModelClient } from '../domain/ai-assistant-v2-model/index.mjs'
 import { providerRuntimeConfig } from '../domain/ai-runtime-provider-adapter-v2.mjs'
@@ -30,7 +29,7 @@ import { localDevelopmentEnabled } from '../domain/local-development-contract.mj
 import { ITEM_SUPPLIER_NAMESPACE, mapItemSupplierRecord } from '../domain/master-data-commands.mjs'
 import { resolveProvisionedActor } from '../domain/pilot-identity.mjs'
 import { procurementReadAccessFor } from '../domain/procurement-read-access.mjs'
-import { SUPPLIER_REPLY_ORDER_STATES, checkReplyReading, cleanSupplierReply, daysBetween, readSupplierReply, supplierReplyPromptTokens } from '../domain/supplier-reply-reading.mjs'
+import { SUPPLIER_REPLY_ORDER_STATES, checkReplyReading, cleanSupplierReply, daysBetween, readSupplierReply, supplierReplyInstructionsIgnored, supplierReplyPromptTokens } from '../domain/supplier-reply-reading.mjs'
 import { tenantCalendarDay } from '../domain/tenant-calendar-day.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 
@@ -258,7 +257,7 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
             source: 'paste', receivedOn, text: cleaned.text, quotedTextHidden: cleaned.quotedTextHidden, quotedText: cleaned.quoted, state, readingStatus: read.readingStatus,
             provider: read.provider || null, model: read.model || null, promptVersion: read.promptVersion || null, reading: read.reading || null, check: check || null,
             usage: { calls: read.calls, inputTokens: read.usage?.inputTokens || 0, outputTokens: read.usage?.outputTokens || 0, ms: Date.now() - startedAt, invisibleRemoved: cleaned.invisibleRemoved, issues: read.issues || null },
-            instructionsIgnored: aiInjectionDetected(cleaned.text), createdById: actor.user.id,
+            instructionsIgnored: supplierReplyInstructionsIgnored(input.text), createdById: actor.user.id,
           },
         })
         // Codes and ids only: the reply text stays on its own row.

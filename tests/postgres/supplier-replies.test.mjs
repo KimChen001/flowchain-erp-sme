@@ -196,7 +196,7 @@ test('the reading with a mocked model: a proposal recorded as proposed, a reply 
     const usage = await prisma.aiUsageMonthly.findFirst({ where: { tenantId: tenantC } })
     assert.deepEqual([usage.calls, usage.inputUnits, usage.outputUnits], [1, 900, 80])
     const stored = await prisma.supplierReply.findFirst({ where: { id: first.id } })
-    assert.deepEqual([stored.promptVersion, stored.usage.calls, stored.activeKey, stored.createdById], ['supplier-reply-read-1', 1, 'PO-C', `${tenantC}-buyer`])
+    assert.deepEqual([stored.promptVersion, stored.usage.calls, stored.activeKey, stored.createdById], ['supplier-reply-read-2', 1, 'PO-C', `${tenantC}-buyer`])
 
     // 2. A second reply supersedes the open card.
     answers = [{ replyKind: 'no_date', lines: [], flags: [], reason: null }, { replyKind: 'no_date', lines: [], flags: [], reason: null }]
