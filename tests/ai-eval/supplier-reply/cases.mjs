@@ -12,7 +12,9 @@
 //   out is not scored. Lines not listed must not be proposed. Added for the
 //   scorer: quoteIncludes (a phrase the line's quote must contain), injection
 //   (the reply holds text addressed to the system), mustNotPropose (values no
-//   proposal may carry) and alsoAccept (other states that are not a miss).
+//   proposal may carry), alsoAccept (other states that are not a miss) and,
+//   on a line, acceptNeedsYou (an issue that leaves the line for the person
+//   without counting as a miss).
 import { ORDER_SNAPSHOTS } from './orders.mjs'
 
 export const WRITTEN_BY = 'FlowChain team, synthetic reply text'
@@ -66,6 +68,12 @@ const SIG = '-- '
 
 const proposed = (ref, date, quoteIncludes, extra = {}) => ({ ref, outcome: 'proposed', proposedDate: date, dateKind: 'stated', quoteIncludes, ...extra })
 const relative = (ref, date, phrase, from, quoteIncludes) => ({ ref, outcome: 'proposed', proposedDate: date, dateKind: 'relative', readAs: { phrase, from, date }, quoteIncludes })
+// A day of the month with no month: a stated date, read as its next
+// occurrence from the reply date and shown "read as".
+const dayOnly = (ref, date, phrase, from, quoteIncludes) => ({ ref, outcome: 'proposed', proposedDate: date, dateKind: 'stated', readAs: { phrase, from, date }, quoteIncludes })
+// The committed date next to a refused one. A reading that takes the refused
+// date leaves the line for the person (several_dates): not a miss.
+const committed = (ref, date, quoteIncludes) => proposed(ref, date, quoteIncludes, { acceptNeedsYou: 'several_dates' })
 const confirmed = (ref, date) => ({ ref, outcome: 'confirmed', proposedDate: date, dateKind: 'stated' })
 const vague = (ref) => ({ ref, outcome: 'needs_you', proposedDate: null, dateKind: 'vague', issue: 'vague' })
 const ambiguous = (ref, readings) => ({ ref, outcome: 'needs_you', proposedDate: null, dateKind: 'stated', issue: 'ambiguous_numeric', readings })
@@ -402,7 +410,7 @@ export const SUPPLIER_REPLY_CASES = [
     id: 'en-uci-0030-split-incomplete',
     lang: 'en', workspace: 'uci',
     about: 'A split that does not complete the line: 150 of 330 have a date, the rest has none, so nothing is proposed.',
-    covers: ['split', 'vague'],
+    covers: ['split'],
     replyDate: '2026-11-19', today: '2026-11-19',
     order: order('uci', 'PO-202610-0030'),
     replyText: email(`
@@ -415,7 +423,7 @@ export const SUPPLIER_REPLY_CASES = [
     `),
     expected: {
       state: 'needs_you', replyKind: 'dates',
-      lines: [{ ref: 'L1', outcome: 'needs_you', proposedDate: null, issue: 'vague' }],
+      lines: [{ ref: 'L1', outcome: 'needs_you', proposedDate: null, issue: 'split_incomplete' }],
       mustNotPropose: [{ ref: 'L1', date: '2026-11-25', why: 'only 150 of 330 come then; the rest has no date, so the line is not complete' }],
     },
   }),
@@ -541,7 +549,7 @@ export const SUPPLIER_REPLY_CASES = [
   kase({
     id: 'en-uci-0028-wrong-order-number',
     lang: 'en', workspace: 'uci',
-    about: 'Pasted on PO-202610-0028, but the reply is about PO-202610-0030 (same supplier, same item): its date must not land on this order.',
+    about: 'Pasted on PO-202610-0028, but the reply is about PO-202610-0030 (same supplier, same item): its date must not land on this order. Needs you, or nothing to record here with the flag linking to the other order.',
     covers: ['wrong-order-number', 'other-order'],
     replyDate: '2026-11-19', today: '2026-11-19',
     order: order('uci', 'PO-202610-0028'),
@@ -556,7 +564,7 @@ export const SUPPLIER_REPLY_CASES = [
       Acme Home Goods
     `),
     expected: {
-      state: 'needs_you', replyKind: 'dates',
+      state: 'needs_you', replyKind: 'dates', alsoAccept: ['nothing_to_record'],
       lines: [],
       flags: [{ kind: 'other_order', orderNumber: 'PO-202610-0030' }],
       mustNotPropose: [{ ref: 'L1', date: '2026-12-01', why: 'the date is for PO-202610-0030, not the order it was pasted on' }],
@@ -707,8 +715,8 @@ export const SUPPLIER_REPLY_CASES = [
       Globex Party Supplies
     `),
     expected: {
-      state: 'proposed', replyKind: 'dates',
-      lines: [proposed('L1', '2026-12-04', 'the earliest we can ship is 4 December')],
+      state: 'proposed', replyKind: 'dates', alsoAccept: ['needs_you'],
+      lines: [committed('L1', '2026-12-04', 'the earliest we can ship is 4 December')],
       mustNotPropose: [{ date: '2026-11-28', why: 'the date the supplier says it cannot make' }],
     },
   }),
@@ -728,8 +736,8 @@ export const SUPPLIER_REPLY_CASES = [
       Sales administration
     `),
     expected: {
-      state: 'proposed', replyKind: 'dates',
-      lines: refsOf('uci', 'PO-202611-0020').map((ref) => proposed(ref, '2026-12-03', 'moved from 30 Nov to 3 Dec')),
+      state: 'proposed', replyKind: 'dates', alsoAccept: ['needs_you'],
+      lines: refsOf('uci', 'PO-202611-0020').map((ref) => committed(ref, '2026-12-03', 'moved from 30 Nov to 3 Dec')),
       mustNotPropose: [{ date: '2026-11-30', why: 'the date it moved from' }],
     },
   }),
@@ -750,7 +758,7 @@ export const SUPPLIER_REPLY_CASES = [
     `),
     expected: {
       state: 'proposed', replyKind: 'dates',
-      lines: [relative('L1', '2026-11-28', 'the 28th', '2026-11-19', 'the balance ships on the 28th')],
+      lines: [dayOnly('L1', '2026-11-28', 'the 28th', '2026-11-19', 'the balance ships on the 28th')],
     },
   }),
 
@@ -1015,7 +1023,7 @@ export const SUPPLIER_REPLY_CASES = [
     `),
     expected: {
       state: 'proposed', replyKind: 'dates',
-      lines: [relative('L1', '2026-11-28', '二十八号', '2026-11-19', '二十八号发货')],
+      lines: [dayOnly('L1', '2026-11-28', '二十八号', '2026-11-19', '二十八号发货')],
     },
   }),
   kase({
@@ -1034,8 +1042,8 @@ export const SUPPLIER_REPLY_CASES = [
       Acme Home Goods
     `),
     expected: {
-      state: 'proposed', replyKind: 'dates',
-      lines: [proposed('L1', '2026-12-05', '最早12月5日发货')],
+      state: 'proposed', replyKind: 'dates', alsoAccept: ['needs_you'],
+      lines: [committed('L1', '2026-12-05', '最早12月5日发货')],
       mustNotPropose: [{ date: '2026-11-28', why: '供应商说 28号发不了' }],
     },
   }),

@@ -5,20 +5,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { z } from 'zod'
 import {
   SUPPLIER_REPLY_DATE_KINDS, SUPPLIER_REPLY_FLAG_KINDS, SUPPLIER_REPLY_KINDS, SUPPLIER_REPLY_LIMITS, SUPPLIER_REPLY_LINE_ISSUES, SUPPLIER_REPLY_LINE_OUTCOMES,
-  supplierReplyCheckSchema, supplierReplyOrderLineSchema, supplierReplyOrderSchema,
+  supplierReplyCheckSchema, supplierReplyOrderSchema as orderSchema,
 } from '../../../shared/supplier-reply-contract.mjs'
 import { EXTRA_TAGS, SUPPLIER_REPLY_CASES, SUPPLIER_REPLY_REQUIREMENTS, WRITTEN_BY } from './cases.mjs'
 import { ORDER_SNAPSHOTS, SNAPSHOT_SEED_DAY } from './orders.mjs'
-
-// TODO(supplier-reply contract): the contract's order line is getting
-// supplierSku (nullable, #363 §4.4). Once supplierReplyOrderLineSchema has it,
-// this falls through to the contract's own schema; then drop the fallback.
-const orderSchema = 'supplierSku' in supplierReplyOrderLineSchema.shape
-  ? supplierReplyOrderSchema
-  : supplierReplyOrderSchema.extend({ lines: z.array(supplierReplyOrderLineSchema.extend({ supplierSku: z.string().max(120).nullable() })).max(200) })
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/
 const isDay = (value) => typeof value === 'string' && DAY.test(value) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value
@@ -144,13 +136,19 @@ for (const kase of SUPPLIER_REPLY_CASES) {
         assert.ok(kase.replyText.includes(line.quoteIncludes), `${line.ref} quote "${line.quoteIncludes}" is in the reply`)
         assert.ok(newPartOf(kase.replyText).includes(line.quoteIncludes), `${line.ref} quote is in the supplier's new text, not a quoted part`)
       }
-      if (line.dateKind === 'relative' && line.outcome === 'proposed') {
-        assert.ok(line.readAs, `${line.ref} a relative date says how it was read`)
+      // readAs: a proposed relative date, or a stated day without a month.
+      if (line.dateKind === 'relative' && line.outcome === 'proposed') assert.ok(line.readAs, `${line.ref} a relative date says how it was read`)
+      if (line.readAs !== undefined) {
+        assert.equal(line.outcome, 'proposed', `${line.ref} readAs only on a proposed line`)
+        assert.ok(line.dateKind === 'relative' || kase.covers.includes('day-only'), `${line.ref} readAs only for a relative or day-only date`)
         assert.equal(line.readAs.from, kase.replyDate, `${line.ref} counted from the reply date`)
         assert.equal(line.readAs.date, line.proposedDate, `${line.ref} read as the proposed date`)
         assert.ok(kase.replyText.includes(line.readAs.phrase), `${line.ref} the phrase is in the reply`)
-      } else {
-        assert.equal(line.readAs, undefined, `${line.ref} readAs only for a proposed relative date`)
+      }
+      if (line.acceptNeedsYou !== undefined) {
+        assert.equal(line.outcome, 'proposed', `${line.ref} acceptNeedsYou only on a proposed line`)
+        assert.ok(SUPPLIER_REPLY_LINE_ISSUES.includes(line.acceptNeedsYou), `${line.ref} acceptNeedsYou is an issue code`)
+        assert.ok((expected.alsoAccept || []).includes('needs_you'), `${line.ref} the case accepts needs_you when the line is held`)
       }
       if (line.issue === 'ambiguous_numeric') {
         assert.equal(line.readings?.length, 2, `${line.ref} both readings`)
@@ -200,11 +198,11 @@ for (const kase of SUPPLIER_REPLY_CASES) {
     if (kase.covers.includes('quoted-chase') || kase.covers.includes('long-thread')) assert.ok(hasQuotedPart(kase.replyText), 'has a quoted earlier message')
     if (kase.covers.includes('split')) assert.ok(expected.lines.some((line) => line.parts) || expected.state === 'needs_you', 'a split shows its parts or goes to the person')
     if (kase.covers.includes('relative')) assert.ok(expected.lines.some((line) => line.readAs))
-    // A day of the month with no month is read from the reply date, as a
-    // relative date is: the first such day on or after it, with readAs.
+    // A day of the month with no month is a stated date read from the reply
+    // date: the first such day on or after it, with readAs.
     if (kase.covers.includes('day-only')) {
       const day = expected.lines.find((line) => line.readAs)
-      assert.ok(day && day.dateKind === 'relative', 'a day-only date is proposed with readAs')
+      assert.ok(day && day.dateKind === 'stated', 'a day-only date is proposed as stated, with readAs')
       const first = Array.from({ length: 62 }, (_, offset) => new Date(Date.parse(`${kase.replyDate}T00:00:00Z`) + offset * 86400000).toISOString().slice(0, 10))
         .find((candidate) => candidate.slice(8) === day.proposedDate.slice(8))
       assert.equal(day.proposedDate, first, 'the first such day on or after the reply date')
@@ -216,6 +214,7 @@ for (const kase of SUPPLIER_REPLY_CASES) {
       const refused = expected.mustNotPropose.filter((entry) => entry.date && !entry.ref)
       assert.ok(refused.length > 0, 'the refused date is listed')
       assert.ok(refused.every((entry) => expected.lines.every((line) => line.proposedDate !== entry.date)))
+      assert.ok(expected.lines.every((line) => line.acceptNeedsYou === 'several_dates'), 'a held line (several_dates) is not a miss')
     }
     if (kase.covers.includes('ambiguous-numeric')) assert.ok(expected.lines.some((line) => line.issue === 'ambiguous_numeric'))
     if (kase.covers.includes('vague')) assert.ok(expected.lines.some((line) => line.issue === 'vague'))

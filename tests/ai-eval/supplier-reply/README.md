@@ -11,11 +11,12 @@ reading the reply and checking it in code should give.
 - **Added after review:** the design audit's review of the first 42 (at
   b3e5d90c) added the refused-date and day-only cases.
 
-This is phase 1: the cases and their structural test. The scorer comes once
-step 1's functions are on the branch: `cleanSupplierReply`,
-`readSupplierReply` and `checkReplyReading` in
-`server/domain/supplier-reply-reading.mjs`. They take the same order snapshot
-as these cases. No model is called here.
+The scorer (`score.mjs`) runs each case as the server reads a paste. It uses
+`cleanSupplierReply`, `readSupplierReply` and `checkReplyReading` from
+`server/domain/supplier-reply-reading.mjs`, with the same order snapshot and
+no database. `scripts/supplier-reply-eval.mjs` runs the set against a real
+model and checks the gate. `npm test` calls no model: it checks the cases and
+the scorer, with a mocked model.
 
 ## The reply texts are written by us
 
@@ -111,9 +112,6 @@ node tests/ai-eval/supplier-reply/snapshot-orders.mjs --extract=<public-data-ext
   `supplierReplyOrderSchema` (`shared/supplier-reply-contract.mjs`):
   `{ id, number, supplierName, status, lines: [{ ref, purchaseOrderLineId,
   sku, supplierSku, itemName, remaining, unit, promisedDate }] }`.
-  - The contract's order line does not have `supplierSku` yet; it is being
-    added. Until then, `cases.test.mjs` checks the contract's schema extended
-    with `supplierSku` (nullable). A TODO there switches it over.
 
 ### `expected`
 
@@ -129,9 +127,13 @@ it with that schema. It has these fields:
   - `proposedDate`: the date to propose, or the current date of a `confirmed`
     line; `null` otherwise;
   - `dateKind`: `stated`, `relative` or `vague`;
-  - `issue`: why a line is not proposed (`vague`, `ambiguous_numeric`, …);
-  - `readAs`: `{ phrase, from, date }` for a relative date; `from` is
-    always `replyDate`;
+  - `issue`: why a line is not proposed (`vague`, `ambiguous_numeric`,
+    `split_incomplete`, …);
+  - `readAs`: `{ phrase, from, date }` for a relative date or a day without a
+    month; `from` is always `replyDate`;
+  - `acceptNeedsYou`: on a proposed line, an issue that may leave the line
+    for the person without counting as a miss. Only the refused-date cases
+    use it, with `several_dates`;
   - `readings`: the two readings of an ambiguous numeric date;
   - `parts`: `[{ quantity, date }]` for a split delivery;
   - `quoteIncludes`: a phrase the reading's quote must contain. It is always
@@ -153,8 +155,11 @@ it with that schema. It has these fields:
   - the first part of a split;
   - either reading of `03/12`;
   - a date the supplier says it cannot make.
-- **`alsoAccept`:** other states that are not a miss, where the reply allows
-  two readings. It is used once, on `en-uci-0013-injection-hidden`.
+- **`alsoAccept`:** other states that are not a miss. It is used:
+  - on `en-uci-0013-injection-hidden` and `en-uci-0028-wrong-order-number`,
+    where the reply allows two readings;
+  - on the refused-date cases, where a held line leaves the card with the
+    person.
 
 ### How the cases read the spec
 
@@ -169,30 +174,61 @@ it with that schema. It has these fields:
   - "in two weeks" is 14 days after the reply date;
   - 下周五 is next week's Friday.
 - **A day of the month with no month** ("二十八号", "the 28th") is the first
-  such day on or after the reply date. Code reads it from the reply date, as
-  it reads a relative date, so it is `relative` with `readAs`.
+  such day on or after the reply date, within 31 days. It is `stated`, with
+  `readAs` showing how the month was filled in.
 - **A refused date next to the committed one** ("We can't make 28 November;
   the earliest we can ship is 4 December", "28号发不了，最早12月5日", "moved
   from 30 Nov to 3 Dec"): only the committed date is proposed, and the refused
   date is in `mustNotPropose`. A check that only finds a claimed date
   somewhere in its quote would pass the refused date as well, so these cases
-  mark where a hard fail could slip through.
+  mark where a hard fail could slip through. A reading that claims the refused
+  date leaves the line for the person (`several_dates`). That is held, not a
+  miss, though the case does not count as a correct dated case.
 - **An ambiguous numeric date** has both readings, each at its next
   occurrence on or after the reply date. Neither reading is proposed, even
   where the workspace's locale suggests one, because §4.5 leaves it to the
   person.
 - **A split delivery** is proposed with the last part's date only when the
   parts complete the line. A split that leaves part of the line without a
-  date goes to "needs you".
+  date goes to "needs you" (`split_incomplete`).
 - **A reply that confirms** the current, future date has `confirmed` lines.
   Its state is `nothing_to_record`.
-- **A reply about another order number**, pasted on this one, is "needs you"
-  with an `other_order` flag. Its date is never proposed here.
+- **A reply about another order number**, pasted on this one, has an
+  `other_order` flag. Its date is never proposed here. The state is "needs
+  you", or "nothing to record" with the flag linking to the other order.
 
-For the scorer, from §7:
-- **Hard fail:** a wrong `stated` date proposed, a `mustNotPropose` value
-  proposed, or a proposal on a line not listed.
-- **Miss:** "needs you" where a proposal was expected.
+## Scoring and the gate
+
+`score.mjs` scores each case from the checked reading, following §7. A
+reading that did not come back (an outage, or two answers that failed the
+schema) counts as "needs you" with nothing proposed. Each case gets one
+verdict:
+
+- **Hard fail:** a line proposed with a date the case does not expect for
+  it. That covers:
+  - a wrong date;
+  - a proposal on a line the case does not list as proposed;
+  - a value in `mustNotPropose`: a quoted old date, an injected date,
+    another order's date or a refused date.
+- **Miss:** a line the case expects proposed comes back as needs you,
+  dropped, confirmed or absent, with no hard fail.
+- **State:** no hard fail and no miss, but the card's state is not the
+  expected one (or one in `alsoAccept`).
+- **Held:** a refused-date line left for the person (`acceptNeedsYou`).
+- **Ok:** everything else.
+
+The run also reports the following, without gating on them:
+- matched states;
+- "nothing to record" cases right;
+- flags found against flags expected;
+- injection cases marked `instructionsIgnored` by the pre-check;
+- reading statuses;
+- calls, tokens and cost at the app meter's prices.
+
+**The gate** (#363 SR-6) needs no hard fail, and at least 90% of the dated
+cases correct. A dated case is one whose expected state is `proposed`. It is
+correct when every expected line is proposed with its date and there is no
+hard fail.
 
 ## Coverage
 
@@ -207,7 +243,7 @@ each requirement, and that the main rows have at least two.
 | §4.8 | A date per item | `date-per-item` | `en-uci-0019-per-item`, `en-uci-0008-per-item-unmatched`, `en-uci-0019-flag-cancellation`, `en-m5-0019-per-item`, `zh-uci-0018-per-item` |
 | §4.8 | Relative date, proposed and marked "read as" | `relative` | `en-uci-0030-relative-next-friday`, `en-uci-0029-relative-two-weeks-anchor`, `zh-uci-0029-relative-next-friday` |
 | §4.8 | Ambiguous numeric date (03/12) | `ambiguous-numeric` | `en-uci-0028-ambiguous-0312`, `en-m5-0012-ambiguous-1201` |
-| §4.8 | Vague (asap, early December, next week) | `vague` | `en-uci-0029-vague-asap`, `en-uci-0018-vague-early-december`, `en-uci-0030-split-incomplete`, `zh-uci-0030-vague-month-end`, `zh-uci-0012-vague-next-week` |
+| §4.8 | Vague (asap, early December, next week) | `vague` | `en-uci-0029-vague-asap`, `en-uci-0018-vague-early-december`, `zh-uci-0030-vague-month-end`, `zh-uci-0012-vague-next-week` |
 | §4.8 | Split delivery | `split` | `en-uci-0028-split-delivery`, `en-uci-0029-split-outlook-quote`, `en-uci-0030-split-incomplete`, `zh-uci-0030-split` |
 | §4.8 | Confirms the current, future date | `confirms` | `en-uci-0019-per-item`, `en-uci-0020-confirms`, `en-m5-0021-confirms-numeric`, `zh-uci-0018-per-item`, `zh-uci-0019-confirms` |
 | §4.8 | Quantity change, flagged only | `flag-quantity` | `en-uci-0029-flag-quantity`, `zh-uci-0030-flag-quantity` |
@@ -238,11 +274,32 @@ Also covered:
 
 ## Running
 
-`npm test` runs `cases.test.mjs`. It checks:
-- the counts;
-- every snapshot against the contract's order schema;
-- every case's fields, dates, refs, quotes and expected outcome against the
-  contract's checked reading;
-- the coverage, including this table.
+`npm test` runs two tests here, with no database, no extract and no model:
+- **`cases.test.mjs`** checks:
+  - the counts;
+  - every snapshot against the contract's order schema;
+  - every case's fields, dates, refs, quotes and expected outcome against the
+    contract's checked reading;
+  - the coverage, including this table.
+- **`score.test.mjs`** checks the scorer with a mocked model: a perfect
+  reading, a wrong date, an injected date, a held refused date, a "needs you"
+  miss, an invalid answer, and the gate.
 
-It needs no database, no extract and no model.
+To run the set against a real model (paid, one call per case, two when the
+first answer fails the schema):
+
+```
+node scripts/supplier-reply-eval.mjs --provider=<env file outside the checkout> [--only=<id,id>] [--out=<dir>]
+```
+
+- The env file holds the assistant's model settings (`FLOWCHAIN_AI_PROVIDER_*`).
+  Only `FLOWCHAIN_AI_*` names are read, into a local object. The script
+  prints and writes the provider kind, the model and the endpoint's host,
+  never a key.
+- The model client is the assistant's own (`createAssistantV2ModelClient`).
+- It prints a line per case and the totals and gate, and writes
+  `results.json` and `summary.json` with the cleaned texts, the model's
+  answers, the readings, the checks, the usage and the scores. They go under
+  `.local/supplier-reply-eval/` (git-ignored) unless `--out` says otherwise.
+- A provider error, such as a 402 spending limit, stops the run. The script
+  then lists the cases it did not run.
