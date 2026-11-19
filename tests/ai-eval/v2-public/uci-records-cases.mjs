@@ -67,5 +67,21 @@ export function buildUciRecordsCases(facts, { manager }) {
     add({ id: 'tier-one-en', kind: 'supplier', language: 'en-US', turns: ['Which of our suppliers are Tier 1?'],
       expect: { mentions: tierOne.map((row) => ({ label: row.name, any: [row.name] })) } })
   }
+
+  // One document's chain in one read (trace_document_chain, 2026-11-18): an
+  // invoice left unpaid past its due date, and one still held at the match.
+  const overdue = facts.supplierInvoices?.overdue?.invoices?.[0]
+  if (overdue) {
+    add({ id: 'chain-overdue-invoice-en', kind: 'payables', language: 'en-US', turns: [`What happened to ${overdue.number}?`],
+      expect: { mentions: [{ label: overdue.number, any: [overdue.number] }], dates: [{ label: 'due', date: overdue.due }], matches: [{ label: 'says it is overdue', pattern: String.raw`overdue|past (?:its )?due|not (?:yet )?paid|unpaid` }], calls: ['trace_document_chain'] } })
+  }
+  const held = facts.supplierInvoices?.differences?.[0]
+  if (held) {
+    add({ id: 'chain-held-invoice-zh', kind: 'payables', language: 'zh-CN', turns: [`${held.number} 这张发票为什么卡住了？`],
+      expect: {
+        mentions: [{ label: held.number, any: [held.number] }],
+        matches: [held.kind === 'price' ? { label: '说到价格高于订单', pattern: '单价|价格|价差|高于订单' } : { label: '说到开票数量多于收货', pattern: '数量|少送|短缺|多于收货|超出收货|未收到' }],
+      } })
+  }
   return cases
 }

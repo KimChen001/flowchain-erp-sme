@@ -15,6 +15,7 @@ import { scopedBusiness } from './ai-read-service-tools.mjs'
 import { itemSources, preferredSource, storedItems, unitPriceOf } from './ai-item-prices.mjs'
 import { AI_ASSISTANT_V2_MONEY_TOOLS } from './ai-assistant-v2-money-tools.mjs'
 import { AI_ASSISTANT_V2_HISTORY_TOOLS } from './ai-assistant-v2-history-tools.mjs'
+import { AI_ASSISTANT_V2_CHAIN_TOOLS } from './ai-assistant-v2-chain-tools.mjs'
 import { buildRuntimeInventoryAllocation } from './runtime-inventory-allocation-read-model.mjs'
 import { REPLENISHMENT_SOLVER_DEFAULTS, ReplenishmentInputError, logReplenishmentCall, planReplenishment } from './replenishment-solver.mjs'
 import { addCalendarDays, planPurchaseRequestPrefill } from '../../shared/purchase-request-prefill.mjs'
@@ -35,7 +36,9 @@ const text = (value) => String(value ?? '').trim()
 const array = (value) => (Array.isArray(value) ? value : [])
 const fold = (value) => text(value).toLowerCase()
 const isObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
-const limitParam = { type: 'integer', minimum: 1, maximum: AI_TOOL_LIMITS.maxRows, description: `How many rows to return, ${AI_TOOL_LIMITS.rows} by default.` }
+// How many rows a result holds, said as the other limits say it: every
+// request carries it (2026-11-18: room for trace_document_chain).
+const limitParam = { type: 'integer', minimum: 1, maximum: AI_TOOL_LIMITS.maxRows, description: `${AI_TOOL_LIMITS.rows} by default.` }
 // A rate as the model reads it: one decimal; calculations keep the exact one.
 const rate1 = (value) => (value === null || value === undefined || !Number.isFinite(Number(value)) ? null : Math.round(Number(value) * 10) / 10)
 const stockRow = (facts, sku) => array(facts.inventory?.rows).find((row) => fold(row.sku) === fold(sku)) || null
@@ -694,7 +697,7 @@ export const DEFAULT_HOLDING_RATE_PERCENT = 25
 const EOQ_EXAMPLE_ORDER_COSTS = [25, 50, 100]
 const VALUE_ITEMS_MAX = 200
 const round = (value, places = 2) => (value === null || value === undefined || !Number.isFinite(value) ? null : Math.round(value * 10 ** places) / 10 ** places)
-const holdingRateParam = { type: 'number', minimum: 1, maximum: 100, description: `The yearly holding (carrying) cost as a percent of the item's value, when the user gives one. Without it, ${DEFAULT_HOLDING_RATE_PERCENT} (a common planning value, returned as an assumption).` }
+const holdingRateParam = { type: 'number', minimum: 1, maximum: 100, description: `Yearly holding (carrying) cost as a percent of the item's value, when the user gives one; else ${DEFAULT_HOLDING_RATE_PERCENT} (a common planning value, returned as an assumption).` }
 const holdingAssumption = (args) => ({
   holdingRatePercent: args.holdingRatePercent ?? DEFAULT_HOLDING_RATE_PERCENT,
   holdingRateSource: args.holdingRatePercent === undefined || args.holdingRatePercent === null ? 'assumed_planning_value' : 'user',
@@ -706,7 +709,7 @@ const orderQuantityCosts = defineAiTool({
   description: `Compares order quantities for one item over a year: for each quantity the days of demand it covers, orders a year, average cycle stock, the order's value, the yearly holding cost and, when the user gives a cost per order, the yearly ordering cost and the total. For each pair, the extra holding cost of the larger one, the orders it saves and the break-even cost per order (the larger is cheaper overall when placing and receiving one order costs more than that), and, at the user's cost per order, how much less the larger costs a year in all (negative when it costs more). Also the economic order quantity (EOQ) at the user's cost per order, or at example costs per order of ${EOQ_EXAMPLE_ORDER_COSTS.join(', ')}. Demand is the item's recorded average daily demand (posted shipments over the last ${DEMAND_WINDOW_DAYS} days); price is the approved supplier's reference price. FlowChain records no price breaks and no cost per order, so the result says what it assumed. Use it for "order 100 instead of 50?", "is a bigger order cheaper?", "what quantity should I order?".`,
   parameters: {
     sku: { type: 'string', description: 'The item\'s SKU.' },
-    quantities: { type: 'array', items: { type: 'integer', minimum: 1, maximum: 10000000 }, maxItems: 5, description: 'The order quantities to compare, in the item\'s stock unit (for example [50, 100]).' },
+    quantities: { type: 'array', items: { type: 'integer', minimum: 1, maximum: 10000000 }, maxItems: 5, description: 'The order quantities to compare, in the item\'s stock unit (e.g. [50, 100]).' },
     supplier: { type: 'string', description: 'An approved supplier\'s name; the preferred one by default.' },
     holdingRatePercent: holdingRateParam,
     costPerOrder: { type: 'number', minimum: 0, maximum: 1000000, description: 'What placing and receiving one order costs, when the user gives it (admin time, freight, receiving).' },
@@ -1150,4 +1153,4 @@ const stockProjection = defineAiTool({
   },
 })
 
-export const AI_ASSISTANT_V2_TOOLS = Object.freeze([attentionList, recordsMissingData, suggestPurchaseLines, listOpenPurchaseRequests, setupStatus, itemSuppliers, rfqQuotes, orderQuantityCosts, inventoryValue, optimizeOrderPlan, stockProjection, decisionItemsTool, decisionHistoryTool, ...AI_ASSISTANT_V2_MONEY_TOOLS, ...AI_ASSISTANT_V2_HISTORY_TOOLS])
+export const AI_ASSISTANT_V2_TOOLS = Object.freeze([attentionList, recordsMissingData, suggestPurchaseLines, listOpenPurchaseRequests, setupStatus, itemSuppliers, rfqQuotes, orderQuantityCosts, inventoryValue, optimizeOrderPlan, stockProjection, decisionItemsTool, decisionHistoryTool, ...AI_ASSISTANT_V2_MONEY_TOOLS, ...AI_ASSISTANT_V2_HISTORY_TOOLS, ...AI_ASSISTANT_V2_CHAIN_TOOLS])

@@ -756,6 +756,7 @@ test('every data tool declares its columns, and each declared column is in its r
     stock_movements: [{ sku: 'LDM-001' }],
     list_shipments: [{ order: 'SO-001' }],
     record_history: [{ record: 'PO-001' }],
+    trace_document_chain: [{ document: 'INV-001' }],
     gross_profit: [{ from: '2026-01-01', to: '2026-12-31' }, { by: 'month', from: '2026-01-01', to: '2026-12-31' }, { by: 'item', from: '2026-01-01', to: '2026-12-31' }, { by: 'customer', from: '2026-01-01', to: '2026-12-31' }],
   }
   // A nested column under a null value (a rate with too few deliveries) is
