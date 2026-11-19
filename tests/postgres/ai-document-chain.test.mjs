@@ -112,7 +112,7 @@ test('trace_document_chain follows PR, RFQ, PO, receipts, a held invoice and a p
     assert.deepEqual([invoice.status, invoice.matchStatus, invoice.nextStep, invoice.preparedStep], ['exception', 'exception', 'bill_exception', 'review_price'])
     assert.deepEqual(invoice.differences, [{ kind: 'price', sku: '85123A', unit: 'pcs', cause: 'price_changed', expected: 2.5, actual: 2.58, variance: 0.08, percent: 3.2, evidenceOrder: 'PO-202611-0003' }])
     assert.deepEqual(nodeOf(result, 'INV-SUP-22-0031').payable, { number: 'AP-202611-0001', status: 'approved', outstanding: 500, currency: 'GBP', dueDate: '2026-11-16', overdueDays: 2 })
-    assert.deepEqual(result.openPoints.map((point) => [point.document, point.kind, point.text]), [
+    assert.deepEqual(result.openPoints.map((point) => [point.number, point.kind, point.text]), [
       ['INV-SUP-22-0049', 'held_at_match', 'Held by a match exception: price +3.2% on 85123A'],
       ['PO-202611-0001', 'late_to_receive', '220 pcs of 85123A still to receive, 5 days past the promised date 2026-11-13'],
       ['GRN-202611-0002', 'rejected', '5 pcs of 85123A rejected'],

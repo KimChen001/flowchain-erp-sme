@@ -1,3 +1,4 @@
+import { DOCUMENT_NUMBER_TYPES } from '../../shared/document-numbering.mjs'
 import { aiToolRef, defineAiTool } from './ai-read-tool-contract.mjs'
 import { scopedBusiness } from './ai-read-service-tools.mjs'
 import { receiptsNotInvoiced } from './ai-assistant-v2-money-tools.mjs'
@@ -59,7 +60,10 @@ const day = (value) => {
 const daysLate = (due, today) => (due && today && due < today ? Math.floor((Date.parse(today) - Date.parse(due)) / 86400000) : 0)
 const can = (context, permission) => Boolean(context?.actor?.permissionCodes?.has?.(permission))
 
-export const CHAIN_LIMITS = Object.freeze({ depth: 4, nodes: 25, lines: 10, openPoints: 15, differences: 5 })
+// chars: the result's budget, under the assistant's 24,000-character cap on
+// a tool result (resultChars), which this tool has no limit argument to meet.
+export const CHAIN_LIMITS = Object.freeze({ depth: 4, nodes: 25, lines: 10, openPoints: 15, differences: 5, chars: 20000 })
+const CANDIDATES = 5
 
 // The documents of a chain, in process order: the evidence graph's type, the
 // business read context's collection, the type the result names and the
@@ -86,16 +90,18 @@ const numberOf = (kind, row) => text(({
 
 const keyOf = (kind, id) => `${kind}:${fold(id)}`
 
-// A record number without zero padding or separators, as aiToolPurchaseOrder
-// reads one ("PO-12" for PO-202611-0012 is not one: only the end matters).
+// A record number as its prefix (letters and digits before the sequence,
+// without separators) and its sequence without zero padding: PO-202611-0012
+// is { prefix: 'po202611', number: 12 }.
 function numbered(value) {
   const match = fold(value).match(/^(.*?)(\d+)$/)
   return match ? { prefix: match[1].replace(/[\s_-]+/g, ''), number: Number(match[2]) } : null
 }
 
 // The documents the reader may see that the asked number names: by number or
-// id, else by the number's end ("0049" or "PO-0049"), else by its number
-// without zero padding; each step only when it finds any.
+// id, else by the number's end ("0049"), else by its type prefix and sequence
+// without the period or zero padding ("PO-0001" or "PO-1" for PO-202611-0001);
+// each step only when it finds any.
 function documentsNamed(documents, query) {
   const wanted = fold(query)
   if (!wanted) return []
@@ -106,11 +112,27 @@ function documentsNamed(documents, query) {
   const ending = documents.filter((entry) => fold(entry.number).endsWith(`-${wanted}`))
   if (ending.length) return ending
   const asked = numbered(wanted)
-  if (!asked) return []
+  if (!asked || !asked.prefix) return []
   return documents.filter((entry) => {
     const own = numbered(entry.number)
-    return own && own.number === asked.number && own.prefix.endsWith(asked.prefix) && asked.prefix.length > 0
+    return own && own.number === asked.number && own.prefix.startsWith(asked.prefix)
   })
+}
+
+// The numbering prefixes of documents this tool does not cover
+// (shared/document-numbering.mjs), and AP-, the payable number it prints with
+// a supplier invoice: a number with one of them is another kind of document,
+// not a missing one.
+const COVERED_TYPES = new Set(['purchase_request', 'rfq', 'purchase_order', 'receiving_document'])
+const COVERS = 'This tool reads purchase requests, RFQs, purchase orders, receipts and supplier invoices.'
+const OTHER_PREFIXES = new Map([
+  ...DOCUMENT_NUMBER_TYPES.filter((row) => !COVERED_TYPES.has(row.type)).map((row) => [fold(row.prefix), `${row.prefix}- is a ${row.document.toLowerCase()} number. ${COVERS}`]),
+  ['ap', 'AP- is the number of a supplier invoice\'s payable: trace that invoice.'],
+])
+// The detail for a number of another kind of document, or null.
+function otherDocumentDetail(query) {
+  const prefix = fold(query).match(/^([a-z]+)[\s_-]*\d/)?.[1]
+  return prefix ? OTHER_PREFIXES.get(prefix) || null : null
 }
 
 // The documents within `depth` links of the starts, following `adjacency`;
@@ -138,15 +160,21 @@ export function walkDocumentChain(business, { document, limits = CHAIN_LIMITS } 
   })
   const documents = index.nodes.filter((node) => KINDS[node.entityType]).map((node) => ({ node, row: index.rowOf(node), number: numberOf(node.entityType, index.rowOf(node)) }))
   const named = documentsNamed(documents, document)
-  if (!named.length) return { error: 'not_found' }
+  if (!named.length) {
+    // Another kind of document's number (a sales order, a shipment, a
+    // payable): said as such, so the answer does not call it missing.
+    const other = otherDocumentDetail(document)
+    return other ? { error: 'not_supported', details: [other] } : { error: 'not_found' }
+  }
   if (named.length > 1) {
     return {
       error: 'ambiguous',
-      candidates: named.slice(0, 5).map((entry) => ({
+      candidates: named.slice(0, CANDIDATES).map((entry) => ({
         type: KINDS[entry.node.entityType].type, number: entry.number, status: text(entry.row.status) || null,
         supplier: text(entry.row.supplierName || entry.row.supplierSnapshot?.supplierName) || null,
         ref: aiToolRef(entry.node.entityType, entry.node.entityId, entry.number),
       })),
+      ...(named.length > CANDIDATES ? { details: [`${named.length} documents have this number; ${named.length - CANDIDATES} more are not listed. Ask for the full number.`] } : {}),
     }
   }
   const byKey = new Map(documents.map((entry) => [keyOf(entry.node.entityType, entry.node.entityId), entry]))
@@ -227,14 +255,16 @@ function rfqNode(entry) {
 
 // A purchase order as the open purchase orders report reads it (its row) and
 // its lines by the report's line rules, with the price only when the reader
-// sees prices (the scoped row has none otherwise).
+// sees prices (the scoped row has none otherwise). A line is late only on an
+// order the report counts as open: a closed or cancelled order's unreceived
+// quantity is not coming.
 function orderNode(entry, report, today) {
   const row = entry.row
   const lines = array(row.lines).map((line) => {
     const read = purchaseOrderReportLine(line, row)
     return present({
       sku: read.sku || null, itemName: text(line.itemName || line.itemNameSnapshot) || null, ordered: read.ordered, received: read.received, remaining: read.remaining,
-      unit: read.unit || null, promisedDate: read.due || null, ...(read.open && read.remaining > 0 ? { overdueDays: daysLate(read.due, today) } : {}), unitPrice: num(line.unitPrice),
+      unit: read.unit || null, promisedDate: read.due || null, ...(report?.isOpen && read.open && read.remaining > 0 ? { overdueDays: daysLate(read.due, today) } : {}), unitPrice: num(line.unitPrice),
     })
   })
   return present({
@@ -260,9 +290,22 @@ function receiptNode(entry) {
 // A held invoice's differences as Today's prepared step gives them, without
 // their ids: each with its figures and likely cause, both left out when the
 // reader may not see amounts (a price difference is then named, not valued).
-const differenceOf = ({ exceptionId, ...row }) => present(row)
+// The order's price, and what it can be worked out from (a price
+// difference's variance and percent, a line amount's expected value and
+// variance), only for a reader of prices; the order the invoice's price was
+// found on only for a reader of purchase orders.
+function differenceOf({ exceptionId, ...row }, access) {
+  const out = { ...row }
+  if (!access?.prices && ['price', 'amount'].includes(row.kind)) for (const key of ['expected', 'variance', 'percent']) delete out[key]
+  if (!access?.collections?.purchaseOrders) delete out.evidenceOrder
+  return present(out)
+}
+// The prepared step only when every difference's cause was read: without
+// amounts a price difference's cause is not, and the step would differ by
+// who asks.
+const preparedStepOf = (draft) => (draft.differences.every((row) => row.cause) ? draft.step : null)
 
-function invoiceNode(entry, { payable, draft, amountsVisible, today }) {
+function invoiceNode(entry, { payable, draft, amountsVisible, access, today }) {
   const row = entry.row
   const payment = payable ? present({
     number: text(payable.obligationNumber) || null, status: text(payable.status) || null,
@@ -278,7 +321,7 @@ function invoiceNode(entry, { payable, draft, amountsVisible, today }) {
     supplier: text(row.supplierName) || null, invoiceDate: day(row.invoiceDate), dueDate: day(row.dueDate),
     amount: num(row.totalAmount ?? row.amount), variance: num(row.varianceAmount), currency: text(row.currency) || null,
     ...capped(array(row.lines).map((line) => present({ sku: text(line.sku) || null, quantity: num(line.quantity), unit: text(line.unit) || null, unitPrice: num(line.unitPrice), amount: num(line.amount) }))),
-    ...(draft ? { differences: draft.differences.slice(0, CHAIN_LIMITS.differences).map(differenceOf), preparedStep: draft.step } : {}),
+    ...(draft ? present({ differences: draft.differences.slice(0, CHAIN_LIMITS.differences).map((row) => differenceOf(row, access)), preparedStep: preparedStepOf(draft) }) : {}),
     ...(payment ? { payable: payment } : {}),
     ref: aiToolRef('supplier_invoice', entry.node.entityId, entry.number),
   })
@@ -293,11 +336,15 @@ function differenceText(row) {
 }
 
 // The open points of each document, by the app's own rules. Each names its
-// document and kind, says it in a few words and carries its figures in their
-// own fields, so an answer can cite them.
+// document by number (never a prose field: the grounding check reads any
+// figure in prose as given, and a document number holds digits) and kind,
+// says it in a few words and carries its figures in their own fields, so an
+// answer can cite them. "Nothing came of it" is said only when the walk and
+// the reads it rests on were whole (truncated: the subjects cut at the
+// repository's limit).
 function openPointsOf(member, node, context) {
-  const { linksFrom, today, access, walkCut, chainInvoices } = context
-  const point = (kind, words, figures = {}) => ({ document: member.number, kind, text: words, ...present(figures) })
+  const { linksFrom, today, access, walkCut, chainInvoices, truncated } = context
+  const point = (kind, words, figures = {}) => ({ number: member.number, kind, text: words, ...present(figures) })
   const status = text(member.row.status)
   const points = []
   if (member.kind === 'purchase_request') {
@@ -306,7 +353,8 @@ function openPointsOf(member, node, context) {
     // Approved with nothing after it: said only when the reader sees orders
     // and the walk read the whole chain.
     const followed = linksFrom.has(member.key) || text(member.row.linkedPo) || text(member.row.linkedRfq) || array(member.row.linkedPurchaseOrderIds).length
-    if (status === PURCHASE_REQUEST_STATUS.APPROVED && !followed && access.collections.purchaseOrders && !walkCut) points.push(point('no_order_yet', 'Approved, no purchase order or RFQ yet'))
+    const whole = !walkCut && !truncated.has('purchase_orders') && !truncated.has('rfqs')
+    if (status === PURCHASE_REQUEST_STATUS.APPROVED && !followed && access.collections.purchaseOrders && whole) points.push(point('no_order_yet', 'Approved, no purchase order or RFQ yet'))
   }
   // An RFQ out for quotes with no order awarded from it yet.
   if (member.kind === 'rfq' && !linksFrom.has(member.key)) {
@@ -331,11 +379,14 @@ function openPointsOf(member, node, context) {
   }
   if (member.kind === 'receiving_doc') {
     const posting = text(member.row.postingStatus)
+    // A reversed receipt's stock was taken back out: that is its one point,
+    // not what was rejected at the door or what is still to invoice.
+    if (posting === 'reversed' || member.row.reversedAt) return [point('reversed', day(member.row.reversedAt) ? `Reversed on ${day(member.row.reversedAt)}: its stock was taken back out` : 'Reversed: its stock was taken back out')]
     if (posting === 'unposted') points.push(point('not_posted', 'Not yet posted to stock'))
     for (const line of array(node.lines).filter((entry) => entry.rejected > 0)) points.push(point('rejected', `${line.rejected}${line.unit ? ` ${line.unit}` : ''}${line.sku ? ` of ${line.sku}` : ''} rejected`, { sku: line.sku, rejected: line.rejected, unit: line.unit }))
     // A posted receipt no supplier invoice covers (the payables rule,
     // receiptsNotInvoiced), said only when every invoice of the chain was read.
-    if (posting === 'posted' && access.collections.supplierInvoices && !walkCut && text(member.row.poId)) {
+    if (posting === 'posted' && access.collections.supplierInvoices && !walkCut && !truncated.has('supplier_invoices') && text(member.row.poId)) {
       const linkedReceipts = new Set(chainInvoices.filter((row) => text(row.status) !== 'cancelled').map((row) => text(row.receiptId || row.relatedGrn)).filter(Boolean))
       const linkedLines = new Set(chainInvoices.filter((row) => text(row.status) !== 'cancelled').flatMap((row) => array(row.lines).map((line) => text(line.receivingLineId))).filter(Boolean))
       if (receiptsNotInvoiced([member.row], { linkedReceipts, linkedLines, orderLines: new Map(), orders: new Map(), amountsVisible: false, namesVisible: false }).length) points.push(point('not_invoiced', 'Received, no supplier invoice yet'))
@@ -365,7 +416,9 @@ function openPointsOf(member, node, context) {
 // by document number, the open points (the anchor's first), and what the
 // reader cannot see. payables: invoice id to its payable; held: the
 // readHeldInvoiceDifferences result, or null.
-export function describeDocumentChain(walk, { business = {}, access, today, now = new Date(), timeZone, payables = new Map(), held = null, payablesReadable = true } = {}) {
+// unread: the parts whose read failed ('payables', 'invoice_differences'),
+// said so the answer does not read their absence as a fact.
+export function describeDocumentChain(walk, { business = {}, access, today, now = new Date(), timeZone, payables = new Map(), held = null, payablesReadable = true, unread = [], chars = CHAIN_LIMITS.chars } = {}) {
   const amountsVisible = Boolean(access?.amounts)
   const orders = walk.members.filter((member) => member.kind === 'purchase_order').map((member) => member.row)
   const report = orders.length ? buildOpenPurchaseOrdersReport(orders, { scope: 'all', export: 'true' }, now, { timeZone }) : { exportRows: [] }
@@ -387,23 +440,24 @@ export function describeDocumentChain(walk, { business = {}, access, today, now 
     if (member.kind === 'rfq') return rfqNode(member)
     if (member.kind === 'purchase_order') return orderNode(member, reportRows.get(text(member.row.id)), asOf)
     if (member.kind === 'receiving_doc') return receiptNode(member)
-    return invoiceNode(member, { payable: payables.get(text(member.row.id)), draft: drafts.get(text(member.row.id)), amountsVisible, today: asOf })
+    return invoiceNode(member, { payable: payables.get(text(member.row.id)), draft: drafts.get(text(member.row.id)), amountsVisible, access, today: asOf })
   })
   const numberByKey = new Map(walk.members.map((member) => [member.key, member.number]))
   const linksFrom = new Set(walk.links.map((link) => link.from))
   const chainInvoices = walk.members.filter((member) => member.kind === 'supplier_invoice').map((member) => member.row)
-  const shared = { linksFrom, today: asOf, access, walkCut: Boolean(walk.cut), chainInvoices }
+  const truncated = array(business.truncatedSubjects).filter((row) => Object.values(KINDS).some((kind) => kind.subject === row?.subject))
+  const shared = { linksFrom, today: asOf, access, walkCut: Boolean(walk.cut), chainInvoices, truncated: new Set(truncated.map((row) => row.subject)) }
   const anchorKey = keyOf(walk.anchor.node.entityType, walk.anchor.node.entityId)
   const points = walk.members.flatMap((member, at) => openPointsOf(member, nodes[at], shared).map((point) => ({ point, first: member.key === anchorKey })))
   const openPoints = [...points.filter((entry) => entry.first), ...points.filter((entry) => !entry.first)].map((entry) => entry.point)
   const notShown = Object.values(KINDS).filter((kind) => !access?.collections?.[kind.collection]).map((kind) => kind.subject)
   if (!payablesReadable && access?.collections?.supplierInvoices) notShown.push('payables')
   const hidden = present({ prices: access?.prices ? null : true, invoiceAmounts: amountsVisible ? null : true, invoiceSuppliers: access?.partner ? null : true })
-  const truncated = array(business.truncatedSubjects).filter((row) => Object.values(KINDS).some((kind) => kind.subject === row?.subject))
-  return {
+  // The anchor by its number and type (not "document": see openPointsOf).
+  return fitChain({
     asOf,
-    document: walk.anchor.number,
-    documentType: KINDS[walk.anchor.node.entityType].type,
+    anchor: walk.anchor.number,
+    anchorType: KINDS[walk.anchor.node.entityType].type,
     nodes,
     links: walk.links.map((link) => ({ from: numberByKey.get(link.from), to: numberByKey.get(link.to), relation: link.relation })),
     openPoints: openPoints.slice(0, CHAIN_LIMITS.openPoints),
@@ -413,7 +467,34 @@ export function describeDocumentChain(walk, { business = {}, access, today, now 
     ...(Object.keys(hidden).length ? { hidden } : {}),
     ...(Array.isArray(access?.warehouseIds) ? { receiptsInYourWarehousesOnly: true } : {}),
     ...(truncated.length ? { partial: { sources: [...new Set(truncated.map((row) => row.subject))], note: PARTIAL_NOTE } } : {}),
+    ...(unread.length ? { unread } : {}),
+  }, { anchorId: text(walk.anchor.node.entityId), chars })
+}
+
+// The result within its budget: lines are dropped first from the documents
+// other than the one asked about, then from it, each keeping moreLines, so a
+// long chain answers instead of exceeding the assistant's result cap. The
+// open points were read from every line before.
+const LINE_STEPS = [5, 2, 0]
+export function fitChain(result, { anchorId, chars = CHAIN_LIMITS.chars } = {}) {
+  const size = () => JSON.stringify(result).length
+  if (size() <= chars) return result
+  const trim = (node, keep) => {
+    const lines = array(node.lines)
+    if (lines.length <= keep) return
+    node.moreLines = (node.moreLines || 0) + lines.length - keep
+    if (keep) node.lines = lines.slice(0, keep)
+    else delete node.lines
   }
+  const isAnchor = (node) => text(node.ref?.id) === anchorId
+  result.linesTrimmed = true
+  for (const anchor of [false, true]) {
+    for (const keep of LINE_STEPS) {
+      for (const node of result.nodes) if (isAnchor(node) === anchor) trim(node, keep)
+      if (size() <= chars) return result
+    }
+  }
+  return result
 }
 
 // The receipts the reader's warehouses cover, header and lines, as the
@@ -445,14 +526,16 @@ const traceDocumentChain = defineAiTool({
     const walk = walkDocumentChain(scoped, { document: args.document })
     if (walk.error) {
       const truncated = array(business.truncatedSubjects).some((row) => Object.values(KINDS).some((kind) => kind.subject === row?.subject))
-      return { error: walk.error, ...(walk.candidates ? { candidates: walk.candidates } : {}), ...(walk.error === 'not_found' && truncated ? { details: PARTIAL_NOTE } : {}) }
+      return { ...walk, ...(walk.error === 'not_found' && truncated ? { details: PARTIAL_NOTE } : {}) }
     }
     const invoices = walk.members.filter((member) => member.kind === 'supplier_invoice').map((member) => member.row)
     const prisma = context.prisma
     const payablesReadable = can(context, 'finance.payable.read')
     // Each invoice's payable, and a held invoice's differences as Today reads
-    // them. Either read failing leaves its part out; the chain still answers.
+    // them. Either read failing leaves its part out and says so (unread); the
+    // chain still answers.
     const payables = new Map()
+    const unread = []
     const ids = new Set(invoices.map((row) => text(row.id)))
     if (payablesReadable && ids.size && typeof prisma?.payableObligation?.findMany === 'function') {
       try {
@@ -461,14 +544,14 @@ const traceDocumentChain = defineAiTool({
           select: { supplierInvoiceId: true, obligationNumber: true, status: true, outstandingAmount: true, currency: true, dueDate: true },
         }))
         for (const row of rows) if (ids.has(text(row.supplierInvoiceId))) payables.set(text(row.supplierInvoiceId), { ...row, open: PAYABLE_OPEN.has(text(row.status)) && Number(row.outstandingAmount) > 0 })
-      } catch { payables.clear() }
+      } catch { payables.clear(); unread.push('payables') }
     }
     const heldIds = invoices.filter((row) => billNextStep(row) === 'bill_exception').map((row) => text(row.id))
     let held = null
     if (heldIds.length && typeof prisma?.financeMatchException?.findMany === 'function' && typeof prisma?.threeWayMatchLine?.findMany === 'function') {
-      try { held = await readHeldInvoiceDifferences(prisma, { tenantId: context.tenantId, invoiceIds: heldIds.slice(0, CHAIN_LIMITS.nodes), amountsVisible: access.amounts }) } catch { held = null }
+      try { held = await readHeldInvoiceDifferences(prisma, { tenantId: context.tenantId, invoiceIds: heldIds.slice(0, CHAIN_LIMITS.nodes), amountsVisible: access.amounts }) } catch { held = null; unread.push('invoice_differences') }
     }
-    return describeDocumentChain(walk, { business, access, today: context.today || facts?.today || facts?.asOf, now: context.now, timeZone: context.tenant?.timezone, payables, held, payablesReadable })
+    return describeDocumentChain(walk, { business, access, today: context.today || facts?.today || facts?.asOf, now: context.now, timeZone: context.tenant?.timezone, payables, held, payablesReadable, unread })
   },
 })
 
