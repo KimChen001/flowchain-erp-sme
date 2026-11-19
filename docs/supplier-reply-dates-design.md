@@ -1,6 +1,6 @@
 # Supplier replies: reading the new delivery date, a person records it
 
-Status: proposal of 2026-11-17, for the owner's decisions SR-1 to SR-8 (§10). Nothing is built by this document; the build follows §9.
+Status: proposal of 2026-11-17. SR-1, 2, 3, 4, 6 and 8 decided 2026-11-19 as recommended (§10); steps 1 and 1e are being built. SR-5 waits for a deployment.
 
 **Where it comes from.** On 2026-11-17 the owner compared FlowChain's assistant with the agents in large ERP products. They asked how FlowChain could do what the Dynamics 365 Supplier Communications Agent does: follow the supplier emails about a purchase order, read the new delivery date from the reply, and propose the change for a person to confirm. They chose to have the design written first ("先写设计文档").
 
@@ -14,14 +14,14 @@ It extends the drafted decisions design (`docs/drafted-decisions-design.md`, #31
   - 采购员要自己读信、找到新交期、打开采购单、逐行改日期、写原因。回信里的日期常常没录进系统，库存推演和逾期提醒就一直用旧日期。
 - **做法：** 先粘贴，后收信。
   1. **粘贴（第 1 步）：** 在逾期卡片和已下发的采购单页面上加一个"粘贴供应商回信"的框。
-  2. **读信：** 一次单独的模型调用，只做抽取：哪一行、新日期、原句。不加进聊天助手的工具里（聊天的固定提示只剩约 45–50 个 token 的余量）。
+  2. **读信：** 一次单独的模型调用，只做抽取：哪一行、新日期、原句。不加进聊天助手的工具里（聊天的固定提示在冷缓存下只剩约 108 个 token 的余量，2026-11-19 实测）。
   3. **代码核对：** 每个值都必须能在回信原文里找到原句；明确写出的日期要能从原句解析成同一天；行必须是这张单上还没收完的行。核对不过、日期含糊（"尽快""12 月初"）、数字日期有歧义（03/12）时，不出提议，改为"需要你看"，并给出手动填日期的表单。
   4. **提议卡片：** 逐行显示"现在的日期 → 回信说的 → 建议的日期"，附原句，并显示新日期对库存的影响。用户点"记录新日期"才写入。
   5. **写入：** 走现有的改交期命令（`POST /api/procurement/orders/:id/promised-dates`），原因写供应商的原句。最初承诺日期不变，供应商评分照旧按它算。
 - **只记日期：** 回信里改数量、改价格、取消、换货，只标出来，不改单。等 #236 的改单命令做好后再预填。FlowChain 不会自己回复供应商。
 - **收信（第 3 步，部署以后）：** 催货邮件的 Reply-To 同时写采购员和一个每封信专用的 FlowChain 地址，通过 Postmark Inbound 收回信，匹配到采购单，在今天页出提议。不连接用户的 Gmail/Outlook 邮箱。研究和课程只需要第 1–2 步。
 - **评测：** 写一套约 40 封的供应商回信（中英文），用在 UCI 演练数据的逾期采购单上。明确日期读错、或按回信里的"指令"做了写入，都算硬失败。0 个硬失败、有日期的回信 90% 以上读对，才上演练环境。
-- **决定：** §10 共 8 项（SR-1 到 SR-8）。
+- **决定：** §10 共 8 项（SR-1 到 SR-8）。2026-11-19 已定（"方案C开始吧"）：SR-1、2、3、4、6、8 按建议，第 1 步和 1e 开工；SR-5 等部署。
 
 ## 1. The problem in FlowChain terms
 
@@ -46,7 +46,7 @@ It extends the drafted decisions design (`docs/drafted-decisions-design.md`, #31
 | Supplier scorecard | `server/domain/supplier-scorecard.mjs` | On-time delivery measured against the original promise | No measure of how often a supplier moves its date |
 | Universal intake | `InboundArtifact`, `IntakeSourceType` (`manual_upload`, `manual_paste`, `email_attachment`, `api`, `system_export`) | One governed boundary for outside content; never writes operational tables | Preview only; `email_attachment` has no provider |
 | Injection pre-check | `server/domain/ai-injection-guard.mjs` | A first filter on text that tries to steer the model; structural defences do the rest | Built for questions, not for an outsider's email |
-| Assistant v2 | `server/domain/ai-assistant-v2.mjs` | A user can paste up to 8,000 characters; `suggest_setup_records` already turns pasted text into a card the user checks | The fixed prompt is about 28.9k tokens with about 45–50 tokens of cold-cache room for earlier turns, so a new chat tool must be offset |
+| Assistant v2 | `server/domain/ai-assistant-v2.mjs` | A user can paste up to 8,000 characters; `suggest_setup_records` already turns pasted text into a card the user checks | The fixed prompt is about 28.9k tokens with about 108 tokens of cold-cache room for earlier turns (measured 2026-11-19), so a new chat tool must be offset |
 | Order changes | `docs/order-changes-history-reverse-design.md` §2.2 (#236) | The revise command for quantities, prices, lines | Designed, not built |
 
 ## 3. What Dynamics 365 does, and what we take
@@ -180,7 +180,7 @@ Also mentioned: a price change ("unit price rises 4% from December") — not rec
 
 ### 4.10 In the assistant
 
-- **No new chat tool in v1.** Every tool's text is sent with every chat request, and the fixed prompt has about 45–50 tokens of cold-cache room left (#361). A separate call costs nothing when no reply is read.
+- **No new chat tool in v1.** Every tool's text is sent with every chat request, and the fixed prompt has about 108 tokens of cold-cache room left (#361; measured 2026-11-19). A separate call costs nothing when no reply is read.
 - **Reading back:** once `record_history` (#361) is on `main`, "What did Acme say about PO-0012?" is answered from the order's history with no new tool.
 - **Pasting a reply into chat:** the assistant points to the order's card ("Paste it on PO-202611-0012's card to record the new dates"). A chat tool can come later if the 👎 log shows people expect it.
 
@@ -284,6 +284,22 @@ Sizes are rough, in working days.
 - **For the research and the course report**, steps 1 to 2 are enough. Step 3 is only for real users.
 
 ## 10. Decisions for the owner
+
+**Decided 2026-11-19.** The owner said "方案C开始吧" ("start option C") on the
+Pallet study, whose option C is this flow built on its own first
+(`docs/workflow-automation-design.md`, WA-1). SR-1, 2, 3, 4, 6 and 8 are taken
+as recommended below, and steps 1 and 1e start. SR-5 waits for a deployment.
+For SR-7, step 1 stores the reply and its outcome codes; the reliability measure
+comes with step 2.
+
+Build notes from the workflow review (#392 §3), which tighten §4.5:
+- a relative date is proposed only when code computes it from the quoted phrase
+  and the reply date, never from the model's date alone;
+- the regex injection pre-check is not a defence and is not relied on; the
+  defences are structural (no tools, line references from a given list, quotes
+  checked, invisible characters stripped);
+- each reading is estimated and reserved in the assistant's cost ledger before
+  the call, with at most two calls per reply.
 
 | # | Decision | Recommendation |
 | --- | --- | --- |
