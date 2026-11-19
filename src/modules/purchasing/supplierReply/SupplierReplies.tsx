@@ -55,8 +55,12 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
   const [showEarlier, setShowEarlier] = useState(false);
   // Today: the box opens again over an open card only on request.
   const [pasteAgain, setPasteAgain] = useState(false);
-  // Today: the card just decided stays in view with what became of it.
-  const [decidedId, setDecidedId] = useState<string | null>(null);
+  // Today: the reply just pasted or decided stays in view with what became
+  // of it, a "nothing to record" one included.
+  const [shownId, setShownId] = useState<string | null>(null);
+  // The sentence a refusal left on a reply (a stale card, a reply no longer
+  // open), kept here so the card's reload does not lose it.
+  const [notices, setNotices] = useState<Record<string, string>>({});
   // The order's replies (SUPPLIER_REPLY_ROUTES.list and .paste), written out
   // so the write-route caller test reads them.
   const replies_ = `/api/procurement/orders/${encodeURIComponent(orderId)}/supplier-replies`;
@@ -85,7 +89,8 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
       setReceivedOn("");
       if (entry === "order") setOpen(false);
       setPasteAgain(false);
-      setDecidedId(null);
+      setShownId(result.reply.id);
+      setNotices({});
       // A new reply replaces an open one; the list says so on reload.
       await load();
       if (!supplierReplyCardSchema.safeParse(result.reply).success) return;
@@ -96,9 +101,15 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
       setBusy(false);
     }
   };
+  const refused = (id: string) => async (kind: "stale" | "closed") => {
+    setNotices((current) => ({ ...current, [id]: t(kind) }));
+    setShownId(id);
+    await load();
+  };
   const changed = (next: SupplierReplyCardData, recorded: boolean) => {
     setReplies((current) => (current || []).map((card) => (card.id === next.id ? next : card)));
-    setDecidedId(next.id);
+    setShownId(next.id);
+    setNotices((current) => { const { [next.id]: _done, ...rest } = current; return rest; });
     if (recorded) onRecorded?.();
   };
 
@@ -128,7 +139,7 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
 
   if (entry === "today") {
     if (!canPaste) return null;
-    const current = list.find(isOpenReply) || list.find((card) => card.id === decidedId) || null;
+    const current = list.find((card) => card.id === shownId) || list.find(isOpenReply) || null;
     return (
       <div className="w-full" data-testid="supplier-reply-today">
         <button type="button" className="flex items-center gap-1 text-xs font-medium text-blue-600" aria-expanded={open} data-testid="supplier-reply-open" onClick={() => setOpen(!open)}>
@@ -136,7 +147,7 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
         </button>
         {pasteForm(current)}
         {open && loadFailed ? <p className="mt-1 text-xs" style={{ color: A.sub }}>{t("loadFailed")}</p> : null}
-        {open && current ? <div className="mt-2"><SupplierReplyCard key={`${current.id}:${current.orderVersion}:${current.state}`} card={current} onChanged={changed} refresh={load} /></div> : null}
+        {open && current ? <div className="mt-2"><SupplierReplyCard key={`${current.id}:${current.orderVersion}:${current.state}`} card={current} onChanged={changed} onRefused={refused(current.id)} notice={notices[current.id] || null} /></div> : null}
         {open && current && !pasteAgain ? <button type="button" className="mt-1 text-xs font-medium text-blue-600" data-testid="supplier-reply-paste-again" onClick={() => setPasteAgain(true)}>{t("pasteAnother")}</button> : null}
       </div>
     );
@@ -158,13 +169,13 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
       {pasteForm(latest || null)}
       {loadFailed ? <p className="mt-2 text-xs" style={{ color: A.sub }}>{t("loadFailed")}</p> : null}
       {replies && !list.length && !open ? <p className="mt-2 text-xs" style={{ color: A.sub }}>{t("none")}</p> : null}
-      {latest ? <div className="mt-3"><SupplierReplyCard key={`${latest.id}:${latest.orderVersion}:${latest.state}`} card={latest} onChanged={changed} refresh={load} /></div> : null}
+      {latest ? <div className="mt-3"><SupplierReplyCard key={`${latest.id}:${latest.orderVersion}:${latest.state}`} card={latest} onChanged={changed} onRefused={refused(latest.id)} notice={notices[latest.id] || null} /></div> : null}
       {earlier.length ? (
         <div className="mt-3">
           <button type="button" className="flex items-center gap-1 text-xs font-medium" style={{ color: A.gray1 }} aria-expanded={showEarlier} onClick={() => setShowEarlier(!showEarlier)}>
             {showEarlier ? <ChevronDown size={13} aria-hidden /> : <ChevronRight size={13} aria-hidden />}{t("earlier", { n: earlier.length })}
           </button>
-          {showEarlier ? <div className="mt-2 space-y-2">{earlier.map((card) => <SupplierReplyCard key={`${card.id}:${card.orderVersion}:${card.state}`} card={card} onChanged={changed} refresh={load} />)}</div> : null}
+          {showEarlier ? <div className="mt-2 space-y-2">{earlier.map((card) => <SupplierReplyCard key={`${card.id}:${card.orderVersion}:${card.state}`} card={card} onChanged={changed} onRefused={refused(card.id)} notice={notices[card.id] || null} />)}</div> : null}
         </div>
       ) : null}
     </section>

@@ -117,7 +117,7 @@ test.describe("supplier replies on an issued order", () => {
     try {
       // An overdue order waiting on Today, chased.
       const overview = await (await request.get("/api/home/overview", auth)).json();
-      const item = (overview.decisions?.waiting || []).find((entry: { row: { kind: string } }) => entry.row.kind === "purchase_order_overdue");
+      const item = (overview.decisions?.waiting || []).find((entry: { row: { kind: string; detail?: { notIssued?: boolean } } }) => entry.row.kind === "purchase_order_overdue" && !entry.row.detail?.notIssued);
       test.skip(!item, "no overdue order waits on Today in this data");
       expect((await request.post("/api/decision-items/decide", { ...auth, data: { key: item.key, option: "chased" } })).status()).toBe(200);
       const detail = await (await request.get(`/api/procurement/orders/${encodeURIComponent(item.row.recordId)}`, auth)).json();
@@ -191,4 +191,33 @@ test.describe("supplier replies on an issued order", () => {
     await chinese.getByTestId("supplier-reply-toggle").first().click();
     await expect(chinese.getByTestId("supplier-reply-text").first()).toContainText(said);
   });
+});
+
+// A chased overdue order whose reply is an out-of-office: Today shows the
+// reply just pasted, "nothing to record", instead of clearing the box
+// (review finding 4).
+test("Today shows an auto-reply pasted on a chased order as nothing to record", async ({ page, request }) => {
+  test.skip(!SCRIPTED, "needs FLOWCHAIN_SUPPLIER_REPLY_SCRIPTED (run-product-recovery-playwright.mjs)");
+  const auth = await signIn(page, request);
+  await useLanguage(page, "en-US");
+  await setAi(request, auth, true);
+  try {
+    const overview = await (await request.get("/api/home/overview", auth)).json();
+    const item = (overview.decisions?.waiting || []).filter((entry: { row: { kind: string; detail?: { notIssued?: boolean } } }) => entry.row.kind === "purchase_order_overdue" && !entry.row.detail?.notIssued).at(-1);
+    test.skip(!item, "no overdue order waits on Today in this data");
+    expect((await request.post("/api/decision-items/decide", { ...auth, data: { key: item.key, option: "chased" } })).status()).toBe(200);
+    writeFileSync(SCRIPTED, JSON.stringify({ readings: [{ match: "out of the office", reading: { replyKind: "auto_reply", lines: [], flags: [], reason: null } }] }));
+    await page.goto("/app/overview");
+    const aside = page.getByTestId("today-set-aside");
+    await aside.getByRole("button").first().click();
+    const entry = aside.getByTestId("today-set-aside-item").filter({ hasText: item.row.label });
+    await entry.getByTestId("supplier-reply-open").click();
+    await entry.getByTestId("supplier-reply-paste-text").fill("I am out of the office until Monday and will reply then.");
+    await entry.getByTestId("supplier-reply-read").click();
+    await expect(entry.getByTestId("supplier-reply-card")).toHaveAttribute("data-state", "nothing_to_record");
+    await expect(entry.getByTestId("supplier-reply-nothing")).toBeVisible();
+    await expect(entry.getByTestId("supplier-reply-paste")).toHaveCount(0);
+  } finally {
+    await setAi(request, auth, false);
+  }
 });

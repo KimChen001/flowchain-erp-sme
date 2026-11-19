@@ -6,8 +6,8 @@ import {
   SUPPLIER_REPLY_ERROR_CODES, SUPPLIER_REPLY_LINE_ISSUES, SUPPLIER_REPLY_READING_STATUSES, SUPPLIER_REPLY_ROUTES, supplierReplyCardSchema,
 } from '../../shared/supplier-reply-contract.mjs'
 import {
-  SUPPLIER_REPLY_NOTE_LIMIT, SUPPLIER_REPLY_TEXT_LIMIT, dismissReady, formStart, isOutage, markQuotes, needsManualForm,
-  recordKey, recordLines, replyErrorKind,
+  SUPPLIER_REPLY_NOTE_LIMIT, SUPPLIER_REPLY_TEXT_LIMIT, dismissReady, formStart, isOutage, lineNow, markQuotes, needsManualForm,
+  openQuestions, pickableReadings, proposalRecord, recordKey, recordLines, replyErrorKind,
 } from '../../src/modules/purchasing/supplierReply/supplierReplyLogic.ts'
 import { SUPPLIER_REPLY_COPY, SUPPLIER_REPLY_ERROR_TEXT, supplierReplyText } from '../../src/modules/purchasing/supplierReply/supplierReplyCopy.ts'
 
@@ -69,6 +69,36 @@ test('the manual form and Edit start from the proposal and send only real change
   assert.ok(recordKey(card, Array.from({ length: 200 }, (_, index) => ({ purchaseOrderLineId: `pol-${index}`, promisedDate: '2026-12-01' }))).length <= 200)
 })
 
+test('a proposal with lines that need the person waits for each, then sends them with the proposal (review finding 1)', () => {
+  // "Brackets ship 28 November; hinges 03/12": the bracket line is proposed, the hinge line needs its reading.
+  const hinge = line({ ref: 'L2', purchaseOrderLineId: 'pol-2', sku: 'SKU-2210', outcome: 'needs_you', issue: 'ambiguous_numeric', proposedDate: null, quote: 'hinges 03/12', readings: ['2026-12-03', '2027-03-12'] })
+  const card = cardFixture({ lines: [line(), hinge] })
+  assert.ok(supplierReplyCardSchema.safeParse(card).success)
+  assert.deepEqual(openQuestions(card).map((entry) => entry.purchaseOrderLineId), ['pol-2'])
+  assert.deepEqual(proposalRecord(card, formStart(card), new Set()), { ready: false, lines: undefined })
+  // Picked: the proposal and the picked date go together.
+  assert.deepEqual(proposalRecord(card, { ...formStart(card), 'pol-2': '2026-12-03' }, new Set()), { ready: true, lines: [{ purchaseOrderLineId: 'pol-1', promisedDate: '2026-11-28' }, { purchaseOrderLineId: 'pol-2', promisedDate: '2026-12-03' }] })
+  // Left unchanged: the proposal alone, as the server proposes it.
+  assert.deepEqual(proposalRecord(card, formStart(card), new Set(['pol-2'])), { ready: true, lines: undefined })
+  // A card with no open question records as proposed; a needs-you card has none (its form is the manual one).
+  assert.deepEqual(proposalRecord(cardFixture(), formStart(cardFixture()), new Set()), { ready: true, lines: undefined })
+  assert.deepEqual(openQuestions(cardFixture({ state: 'needs_you', lines: [hinge] })), [])
+})
+
+test('one click picks only a 03/12 reading or one of two dates in a sentence; a date mismatch is typed (finding 5)', () => {
+  const readings = ['2026-12-03', '2027-03-12']
+  assert.deepEqual(pickableReadings({ issue: 'ambiguous_numeric', readings }), readings)
+  assert.deepEqual(pickableReadings({ issue: 'several_dates', readings }), readings)
+  assert.equal(pickableReadings({ issue: 'date_mismatch', readings }), null)
+  assert.equal(pickableReadings({ issue: 'ambiguous_numeric', readings: null }), null)
+})
+
+test('Now is the order date as the card was rendered, and a date moved since the reading is marked (finding 2)', () => {
+  const card = cardFixture({ formLines: [{ ...formLine('pol-1', '2026-12-05'), overdueDays: null }, formLine('pol-2')] })
+  assert.deepEqual(lineNow(card, card.lines[0]), { now: '2026-12-05', overdueDays: null, movedFrom: '2026-11-12' })
+  assert.deepEqual(lineNow(card, card.lines[1]), { now: '2026-11-12', overdueDays: 5, movedFrom: undefined })
+})
+
 test('needs you and every outage show the manual form; a proposal does not', () => {
   assert.equal(needsManualForm(cardFixture()), false)
   assert.equal(needsManualForm(cardFixture({ state: 'needs_you' })), true)
@@ -125,7 +155,7 @@ test('every code the card shows has English and Chinese words', () => {
 
 test('the paste box sits on a chased overdue item and on the order page; buttons need the revise permission', () => {
   const today = read('src/modules/overview/DecisionCards.tsx')
-  assert.match(today, /entry\.row\.kind === "purchase_order_overdue" && entry\.decision === "chased" \? <SupplierReplies orderId=\{entry\.row\.recordId\} entry="today" onRecorded=\{onChanged\} \/> : null/)
+  assert.match(today, /entry\.row\.kind === "purchase_order_overdue" && entry\.decision === "chased" && !entry\.row\.detail\?\.notIssued \? <SupplierReplies orderId=\{entry\.row\.recordId\} entry="today" onRecorded=\{onChanged\} \/> : null/)
   const page = read('src/modules/purchasing/Page.tsx')
   assert.match(page, /<SupplierReplies orderId=\{selectedPO\.po\} orderStatus=\{String\(selectedPO\.status \|\| ""\)\} entry="order" onRecorded=\{loadWorkbench\} \/>/)
   // The promised dates are read again after a recording changes the order.

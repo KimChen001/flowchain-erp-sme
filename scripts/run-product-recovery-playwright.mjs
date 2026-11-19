@@ -61,7 +61,7 @@ await phase("supplier performance", ["tests/browser/supplier-performance-english
 // paste, the card, record. The reading is scripted on the server from a file
 // the spec writes, so no model is called; the workspace's AI switch decides
 // whether a reply is read.
-await phase("supplier replies", "tests/browser/supplier-replies.spec.ts", {
+await phase("supplier replies", ["tests/browser/supplier-replies.spec.ts", "tests/browser/supplier-reply-card-states.spec.ts"], {
   FLOWCHAIN_SUPPLIER_REPLY_SCRIPTED: join(tmpdir(), `flowchain-supplier-reply-${process.pid}.json`),
   FLOWCHAIN_AI_WORKSPACE_OPT_IN: "required",
 });

@@ -66,6 +66,45 @@ export function recordLines(card: SupplierReplyCardData, values: Record<string, 
     .map(([purchaseOrderLineId, promisedDate]) => ({ purchaseOrderLineId, promisedDate }));
 }
 
+// Which of a line's readings the person may pick with one click: the two
+// readings of a 03/12-style date, or the two dates one sentence names. A
+// date_mismatch with readings offers none (one may be the model's own date,
+// not the supplier's), so the person types the day.
+const PICKABLE = new Set(["ambiguous_numeric", "several_dates"]);
+export const pickableReadings = (line: { issue: string | null; readings: string[] | null }) =>
+  PICKABLE.has(String(line.issue)) && line.readings?.length === 2 ? line.readings : null;
+
+// The lines of a proposed card that still need the person: a reading that did
+// not pass, on a line of the order (#363 §4.8, "unmatched items go to needs
+// you"). Recording the proposal waits until each has a date or is left as is.
+export const openQuestions = (card: SupplierReplyCardData) =>
+  card.state === "proposed" ? card.lines.filter((line) => line.outcome === "needs_you" && line.purchaseOrderLineId) : [];
+
+// The order's date for a line now (formLines, read when the card was
+// rendered), and whether it moved since the reply was read: someone changed
+// it in between, and recording would overwrite that change.
+export function lineNow(card: SupplierReplyCardData, line: { purchaseOrderLineId: string | null; currentDate: string | null }) {
+  const form = card.formLines.find((entry) => entry.purchaseOrderLineId === line.purchaseOrderLineId);
+  const now = form ? form.currentDate : line.currentDate;
+  return { now, overdueDays: form ? form.overdueDays : null, movedFrom: form && now !== line.currentDate ? line.currentDate : undefined };
+}
+
+// What Record sends on a proposed card. Without open questions, nothing but
+// the version: the server records the proposal. With them, each must have a
+// date (in `values`) or be left as is (`skipped`) first; the lines sent are
+// the proposed dates plus the dates given for the questions.
+export function proposalRecord(card: SupplierReplyCardData, values: Record<string, string>, skipped: Set<string>) {
+  const questions = openQuestions(card);
+  const answered = (lineId: string) => DAY.test(values[lineId] || "");
+  const ready = questions.every((line) => skipped.has(line.purchaseOrderLineId!) || answered(line.purchaseOrderLineId!));
+  const given = questions.filter((line) => !skipped.has(line.purchaseOrderLineId!) && answered(line.purchaseOrderLineId!));
+  if (!ready) return { ready, lines: undefined };
+  if (!given.length) return { ready, lines: undefined };
+  const proposed = card.lines.filter((line) => line.outcome === "proposed" && line.purchaseOrderLineId && line.proposedDate).map((line) => ({ purchaseOrderLineId: line.purchaseOrderLineId!, promisedDate: line.proposedDate! }));
+  const answers = recordLines(card, Object.fromEntries(given.map((line) => [line.purchaseOrderLineId!, values[line.purchaseOrderLineId!]])));
+  return { ready, lines: [...proposed, ...answers] };
+}
+
 // One key per card, order version and set of dates, so a double click records
 // once and a new choice is a new command.
 export function recordKey(card: SupplierReplyCardData, lines?: Array<{ purchaseOrderLineId: string; promisedDate: string }>) {

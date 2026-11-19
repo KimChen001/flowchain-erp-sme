@@ -806,8 +806,9 @@ function SetAsideList({ entries, canDecide, day, kindLabel, labelOf, onChanged }
                 <span style={{ color: A.sub }}>{status(entry)}</span>
                 {entry.decidedBy ? <span style={{ color: A.gray2 }}>{t("by", { name: entry.decidedBy.name, date: entry.decidedOn ? day(entry.decidedOn) : "" })}</span> : null}
                 {canDecide ? <button type="button" disabled={busyKey === entry.key} className={`${BUTTON.secondary} ml-auto`} onClick={() => reopen(entry.key)}>{t("reopen")}</button> : null}
-                {/* A chased order: the supplier's answer is pasted here (docs/supplier-reply-dates-design.md §4.2). */}
-                {entry.row.kind === "purchase_order_overdue" && entry.decision === "chased" ? <SupplierReplies orderId={entry.row.recordId} entry="today" onRecorded={onChanged} /> : null}
+                {/* A chased order: the supplier's answer is pasted here (docs/supplier-reply-dates-design.md §4.2).
+                    Only on an order the supplier has (issued): replies are recorded on no other. */}
+                {entry.row.kind === "purchase_order_overdue" && entry.decision === "chased" && !entry.row.detail?.notIssued ? <SupplierReplies orderId={entry.row.recordId} entry="today" onRecorded={onChanged} /> : null}
               </li>
             ))}
           </ul>

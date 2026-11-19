@@ -106,6 +106,10 @@ export const SUPPLIER_REPLY_COPY = {
   dismiss_other: ["Other", "其他"],
   notePlaceholder: ["Note, required for Other (up to 200 characters)", "备注，选择“其他”时必填（最多 200 字）"],
   enterADate: ["Enter at least one date that differs from the current one.", "请至少填写一个与当前不同的交期。"],
+  openQuestions: ["These lines need you before the dates are recorded:", "以下订单行需要你确认后才能记录交期："],
+  leaveUnchanged: ["Leave this line unchanged", "此行保持不变"],
+  resolveFirst: ["Give each line that needs you a date, or leave it unchanged.", "请为需要确认的每一行填写交期，或选择保持不变。"],
+  moved: ["Moved to {now} since the reply was read (was {was}). Check before recording.", "读取回复后已改为 {now}（原为 {was}），记录前请核对。"],
   viewOnly: ["Only people who may change this order can record its dates.", "只有可以修改该订单的人才能记录交期。"],
 
   // After a decision.

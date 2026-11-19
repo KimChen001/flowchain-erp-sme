@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { A } from "../../../components/ui";
@@ -6,10 +7,10 @@ import { listButtonClass } from "../../../components/ui/listLayout";
 import { useI18n } from "../../../i18n/I18n";
 import { unitLabel } from "../../../i18n/unitLabels";
 import { apiJson } from "../../../lib/api-client";
-import { formatCalendarDay, formatQuantity } from "../../../lib/format";
+import { formatCalendarDay, formatQuantity, instantDayInTimeZone } from "../../../lib/format";
 import { procurementErrorCode, procurementErrorText } from "../../procurement/procurementErrors";
 import { SUPPLIER_REPLY_ERROR_TEXT, supplierReplyText, type SupplierReplyCopyKey } from "./supplierReplyCopy";
-import { SUPPLIER_REPLY_NOTE_LIMIT, dismissReady, formStart, isOpenReply, isOutage, markQuotes, needsManualForm, recordKey, recordLines, replyErrorKind } from "./supplierReplyLogic";
+import { SUPPLIER_REPLY_NOTE_LIMIT, dismissReady, formStart, isOpenReply, isOutage, lineNow, markQuotes, needsManualForm, openQuestions, pickableReadings, proposalRecord, recordKey, recordLines, replyErrorKind } from "./supplierReplyLogic";
 import type { SupplierReplyCardData, SupplierReplyDismissReason, SupplierReplyLine } from "./supplierReplyTypes";
 
 // One supplier reply on an order (docs/supplier-reply-dates-design.md §4.5–4.9):
@@ -23,14 +24,16 @@ const DISMISS_REASONS: SupplierReplyDismissReason[] = ["wrong_reading", "supplie
 // A reading of an ambiguous date, on the grey form line: white, and blue once picked.
 const readingClass = (picked: boolean) => `inline-flex h-7 items-center rounded-lg border px-2 text-[12px] font-medium disabled:opacity-60 ${picked ? "border-blue-500 bg-blue-50 text-blue-700" : "border-slate-200 bg-white text-slate-800 hover:bg-slate-100"}`;
 
-export function SupplierReplyCard({ card, onChanged, refresh }: {
+export function SupplierReplyCard({ card, onChanged, onRefused, notice = null }: {
   card: SupplierReplyCardData;
   // The card after a decision, as the server answered it.
   onChanged: (next: SupplierReplyCardData, recorded: boolean) => void;
-  // Reload the order's replies (after a stale or closed refusal).
-  refresh: () => Promise<void> | void;
+  // A stale card or a reply no longer open: the list keeps the sentence for
+  // this reply (`notice`) across the reload it then makes.
+  onRefused: (kind: "stale" | "closed") => void;
+  notice?: string | null;
 }) {
-  const { language, locale } = useI18n();
+  const { language, locale, timezone } = useI18n();
   const t = (key: SupplierReplyCopyKey, values?: Record<string, string | number>) => supplierReplyText(language, key, values);
   const day = (value: string | null | undefined) => (value ? formatCalendarDay(value, locale) : t("noDate"));
   const qty = (value: number | null, unit: string | null) => (value === null ? "—" : `${formatQuantity(value)}${unit ? ` ${unitLabel(unit, language, value)}` : ""}`);
@@ -50,10 +53,17 @@ export function SupplierReplyCard({ card, onChanged, refresh }: {
   const [message, setMessage] = useState<string | null>(null);
   const [showReply, setShowReply] = useState(manual || card.state === "nothing_to_record");
   const [showQuoted, setShowQuoted] = useState(false);
+  // Open questions on a proposal the person chose to leave as they are.
+  const [skipped, setSkipped] = useState<Set<string>>(() => new Set());
 
   const byLine = useMemo(() => new Map(card.lines.filter((line) => line.purchaseOrderLineId).map((line) => [line.purchaseOrderLineId as string, line])), [card.lines]);
   const proposedLines = card.lines.filter((line) => line.outcome === "proposed" || line.outcome === "confirmed");
   const droppedLines = card.lines.filter((line) => line.outcome === "dropped" || (line.outcome === "needs_you" && !line.purchaseOrderLineId));
+  // Lines of a proposed card that still need the person (#363 §4.8).
+  const questions = openQuestions(card);
+  const proposal = proposalRecord(card, values, skipped);
+  // A day the server stamped (an instant) as the workspace's calendar day.
+  const decidedDay = card.decision ? instantDayInTimeZone(card.decision.decidedAt, timezone) : "";
   // The sentences the card points at, marked on the reply.
   const segments = useMemo(() => markQuotes(card.text, [...card.lines.map((line) => line.quote), ...card.lines.flatMap((line) => (line.parts || []).map((part) => part.quote)), card.reason]), [card.text, card.lines, card.reason]);
   const formOpen = open && (manual || editing);
@@ -70,8 +80,7 @@ export function SupplierReplyCard({ card, onChanged, refresh }: {
     } catch (error) {
       const kind = replyErrorKind(error);
       if (kind !== "other") {
-        setMessage(t(kind));
-        await refresh();
+        onRefused(kind);
       } else {
         toast.error(t("failed"), { description: <span title={procurementErrorCode(error)}>{procurementErrorText(error, language, [t("retry"), t("retry")], SUPPLIER_REPLY_ERROR_TEXT)}</span> });
       }
@@ -83,7 +92,12 @@ export function SupplierReplyCard({ card, onChanged, refresh }: {
   // written out so the write-route caller test reads them.
   const reply = `/api/procurement/orders/${encodeURIComponent(card.purchaseOrderId)}/supplier-replies/${encodeURIComponent(card.id)}`;
   const send = <T,>(url: string, body: unknown) => apiJson<T>(url, { method: "POST", body: JSON.stringify(body) });
-  const recordProposal = () => act(() => send(`${reply}/record`, { expectedVersion: card.orderVersion, idempotencyKey: recordKey(card) }), () => t("recordedToast", { po: card.purchaseOrderNumber }), true);
+  // The proposal as it stands, or with the open questions' dates added.
+  const recordProposal = () => {
+    if (!proposal.ready) { setMessage(t("resolveFirst")); return; }
+    const lines = proposal.lines;
+    return act(() => send(`${reply}/record`, { expectedVersion: card.orderVersion, ...(lines ? { lines } : {}), idempotencyKey: recordKey(card, lines) }), () => t("recordedToast", { po: card.purchaseOrderNumber }), true);
+  };
   const recordForm = () => {
     const lines = recordLines(card, values);
     if (!lines.length) { setMessage(t("enterADate")); return; }
@@ -92,6 +106,27 @@ export function SupplierReplyCard({ card, onChanged, refresh }: {
   const notNow = () => act(() => send(`${reply}/not-now`, {}), () => t("notNowToast", { po: card.purchaseOrderNumber }));
   const dismiss = () => act(() => send(`${reply}/dismiss`, { reason, ...(note.trim() ? { note: note.trim() } : {}) }), () => t("dismissedToast", { po: card.purchaseOrderNumber }));
 
+  const nowCell = (line: { purchaseOrderLineId: string | null; currentDate: string | null; overdueDays: number | null }) => {
+    const { now, overdueDays, movedFrom } = lineNow(card, line);
+    return (
+      <>
+        {day(now)}
+        {late(overdueDays ?? line.overdueDays) ? <span className="text-red-700"> · {late(overdueDays ?? line.overdueDays)}</span> : null}
+        {movedFrom !== undefined ? <div className="text-amber-800" data-testid="supplier-reply-moved">{t("moved", { now: day(now), was: day(movedFrom) })}</div> : null}
+      </>
+    );
+  };
+  // The two readings to pick from, where one click may pick (pickableReadings).
+  const readingButtons = (line: SupplierReplyLine, lineId: string) => {
+    const readings = pickableReadings(line);
+    if (!readings) return null;
+    return (
+      <div className="mt-1 flex flex-wrap items-center gap-1.5" data-testid="supplier-reply-readings">
+        <span className="w-full">{t(line.issue === "several_dates" ? "severalDates" : "ambiguous")}</span>
+        {readings.map((reading) => <button key={reading} type="button" disabled={!card.canDecide} className={readingClass(values[lineId] === reading)} aria-pressed={values[lineId] === reading} onClick={() => { setValues({ ...values, [lineId]: reading }); setSkipped(new Set([...skipped].filter((id) => id !== lineId))); }}>{t("useReading", { date: day(reading) })}</button>)}
+      </div>
+    );
+  };
   const lineExtras = (line: SupplierReplyLine | undefined) => {
     if (!line) return null;
     return (
@@ -115,8 +150,8 @@ export function SupplierReplyCard({ card, onChanged, refresh }: {
       {open && isOutage(card) ? <p className="mt-2 rounded-md bg-slate-50 px-2 py-1" data-testid="supplier-reply-outage">{t(`outage_${card.readingStatus}` as SupplierReplyCopyKey)}</p> : null}
       {open && !isOutage(card) && card.state === "needs_you" ? <p className="mt-2 rounded-md bg-amber-50 px-2 py-1 text-amber-800" data-testid="supplier-reply-needs-you">{t("needsYou")}</p> : null}
       {card.state === "nothing_to_record" ? <p className="mt-2" style={{ color: A.sub }} data-testid="supplier-reply-nothing">{t("nothing")}</p> : null}
-      {card.state === "recorded" && card.decision ? <p className="mt-2 text-emerald-700" data-testid="supplier-reply-recorded">{card.decision.editedLines ? t("recordedEdited", { date: day(card.decision.decidedAt.slice(0, 10)), n: card.decision.editedLines }) : t("recorded", { date: day(card.decision.decidedAt.slice(0, 10)) })}</p> : null}
-      {card.state === "not_recorded" && card.decision ? <p className="mt-2" style={{ color: A.sub }} data-testid="supplier-reply-not-recorded">{t("notRecorded", { date: day(card.decision.decidedAt.slice(0, 10)), reason: card.decision.reason ? t(`dismiss_${card.decision.reason}` as SupplierReplyCopyKey) : "—" })}{card.decision.note ? ` ${card.decision.note}` : ""}</p> : null}
+      {card.state === "recorded" && card.decision ? <p className="mt-2 text-emerald-700" data-testid="supplier-reply-recorded">{card.decision.editedLines ? t("recordedEdited", { date: day(decidedDay), n: card.decision.editedLines }) : t("recorded", { date: day(decidedDay) })}</p> : null}
+      {card.state === "not_recorded" && card.decision ? <p className="mt-2" style={{ color: A.sub }} data-testid="supplier-reply-not-recorded">{t("notRecorded", { date: day(decidedDay), reason: card.decision.reason ? t(`dismiss_${card.decision.reason}` as SupplierReplyCopyKey) : "—" })}{card.decision.note ? ` ${card.decision.note}` : ""}</p> : null}
       {card.state === "superseded" ? <p className="mt-2" style={{ color: A.sub }} data-testid="supplier-reply-superseded">{t("superseded")}</p> : null}
       {open && card.notNowUntil ? <p className="mt-2" style={{ color: A.sub }} data-testid="supplier-reply-set-aside">{t("setAside", { date: day(card.notNowUntil) })}</p> : null}
 
@@ -129,7 +164,7 @@ export function SupplierReplyCard({ card, onChanged, refresh }: {
               {proposedLines.map((line, index) => (
                 <tr key={line.purchaseOrderLineId || index} className="border-t align-top" data-testid="supplier-reply-line" data-outcome={line.outcome}>
                   <td className="py-1.5 pr-3"><div className="font-medium">{lineName(line)}</div><div style={{ color: A.sub }}>{t("left", { qty: qty(line.remaining, line.unit) })}</div></td>
-                  <td className="whitespace-nowrap py-1.5 pr-3">{day(line.currentDate)}{late(line.overdueDays) ? <div className="text-red-700">{late(line.overdueDays)}</div> : null}</td>
+                  <td className="py-1.5 pr-3">{nowCell(line)}</td>
                   <td className="py-1.5">
                     {line.outcome === "confirmed" ? <span style={{ color: A.sub }}>{t("confirms")}</span> : <span className="font-semibold" data-testid="supplier-reply-proposed-date">{day(line.proposedDate)}</span>}
                     {line.quote ? <div className="mt-0.5 italic" style={{ color: A.gray1 }}>“{line.quote}”</div> : null}
@@ -139,6 +174,37 @@ export function SupplierReplyCard({ card, onChanged, refresh }: {
               ))}
             </tbody>
           </table>
+          {questions.length ? (
+            <div className="mt-2 space-y-2" data-testid="supplier-reply-questions">
+              <p className="font-medium text-amber-800">{t("openQuestions")}</p>
+              {questions.map((line) => {
+                const lineId = line.purchaseOrderLineId!;
+                const leave = skipped.has(lineId);
+                return (
+                  <div key={lineId} className="rounded-md bg-amber-50/60 p-2" data-testid="supplier-reply-question" data-line={lineId}>
+                    <div className="font-medium">{lineName(line)} <span className="font-normal" style={{ color: A.sub }}>· {t("left", { qty: qty(line.remaining, line.unit) })}</span></div>
+                    <div style={{ color: A.sub }}>{t("now")}: {nowCell(line)}</div>
+                    {line.issue && !pickableReadings(line) ? <div className="text-amber-800">{t(`issue_${line.issue}` as SupplierReplyCopyKey)}</div> : null}
+                    {line.quote ? <div className="italic" style={{ color: A.gray1 }}>{t("vagueSaid", { quote: line.quote })}</div> : null}
+                    {readingButtons(line, lineId)}
+                    {lineExtras(line)}
+                    {card.canDecide ? (
+                      <div className="mt-1 flex flex-wrap items-center gap-3">
+                        <label className="flex items-center gap-2 text-xs font-normal">
+                          <span>{t("promisedDate")}</span>
+                          <input type="date" disabled={leave} aria-label={`${t("promisedDate")} · ${lineName(line)}`} className="rounded border bg-white px-1 py-0.5 text-xs" value={values[lineId] || ""} onChange={(event) => setValues({ ...values, [lineId]: event.target.value })} />
+                        </label>
+                        <label className="flex items-center gap-1.5 text-xs font-normal">
+                          <input type="checkbox" checked={leave} data-testid="supplier-reply-leave" onChange={(event) => setSkipped(event.target.checked ? new Set([...skipped, lineId]) : new Set([...skipped].filter((id) => id !== lineId)))} />
+                          <span>{t("leaveUnchanged")}</span>
+                        </label>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
           {card.reason ? <p className="mt-1" data-testid="supplier-reply-reason"><span style={{ color: A.sub }}>{t("reasonGiven")}</span><span className="italic">“{card.reason}”</span></p> : null}
           <p className="mt-1 text-[11px]" style={{ color: A.sub }}>{t("reasonNote")}</p>
         </div>
@@ -154,15 +220,10 @@ export function SupplierReplyCard({ card, onChanged, refresh }: {
               return (
                 <div key={lineId} className="rounded-md bg-slate-50 p-2" data-testid="supplier-reply-form-line" data-line={lineId}>
                   <div className="font-medium">{lineName(formLine)} <span className="font-normal" style={{ color: A.sub }}>· {t("left", { qty: qty(formLine.remaining, formLine.unit) })}</span></div>
-                  <div style={{ color: A.sub }}>{t("now")}: {day(formLine.currentDate)}{late(formLine.overdueDays) ? <span className="text-red-700"> · {late(formLine.overdueDays)}</span> : null}</div>
-                  {line?.issue && line.outcome === "needs_you" && !(line.readings?.length === 2) ? <div className="text-amber-800">{t(`issue_${line.issue}` as SupplierReplyCopyKey)}</div> : null}
+                  <div style={{ color: A.sub }}>{t("now")}: {nowCell({ purchaseOrderLineId: lineId, currentDate: line ? line.currentDate : formLine.currentDate, overdueDays: formLine.overdueDays })}</div>
+                  {line?.issue && line.outcome === "needs_you" && !pickableReadings(line) ? <div className="text-amber-800">{t(`issue_${line.issue}` as SupplierReplyCopyKey)}</div> : null}
                   {line?.quote ? <div className="italic" style={{ color: A.gray1 }} data-testid="supplier-reply-form-quote">{t("vagueSaid", { quote: line.quote })}</div> : null}
-                  {line?.readings?.length === 2 ? (
-                    <div className="mt-1 flex flex-wrap items-center gap-1.5" data-testid="supplier-reply-readings">
-                      <span className="w-full">{t(line.issue === "several_dates" ? "severalDates" : "ambiguous")}</span>
-                      {line.readings.map((reading) => <button key={reading} type="button" disabled={!card.canDecide} className={readingClass(values[lineId] === reading)} aria-pressed={values[lineId] === reading} onClick={() => setValues({ ...values, [lineId]: reading })}>{t("useReading", { date: day(reading) })}</button>)}
-                    </div>
-                  ) : null}
+                  {line ? readingButtons(line, lineId) : null}
                   {lineExtras(line)}
                   {card.canDecide ? (
                     <label className="mt-1 flex items-center gap-2 text-xs font-normal">
@@ -188,7 +249,7 @@ export function SupplierReplyCard({ card, onChanged, refresh }: {
       {card.flags.length ? (
         <div className="mt-2" data-testid="supplier-reply-flags">
           <span style={{ color: A.sub }}>{t("alsoMentioned")}</span>
-          <ul className="ml-4 list-disc">{card.flags.map((flag, index) => <li key={index} data-flag={flag.kind}><span className="font-medium">{t(`flag_${flag.kind}` as SupplierReplyCopyKey)}</span> (“{flag.quote}”){flag.orderNumber ? ` · ${flag.orderNumber}` : ""}</li>)}</ul>
+          <ul className="ml-4 list-disc">{card.flags.map((flag, index) => <li key={index} data-flag={flag.kind}><span className="font-medium">{t(`flag_${flag.kind}` as SupplierReplyCopyKey)}</span> (“{flag.quote}”){flag.orderNumber ? <> · <Link className="font-medium text-blue-600 hover:underline" to={`/app/procurement/orders/${encodeURIComponent(flag.orderNumber)}`} data-testid="supplier-reply-other-order">{t("openOrder", { po: flag.orderNumber })}</Link></> : ""}</li>)}</ul>
         </div>
       ) : null}
 
@@ -205,7 +266,8 @@ export function SupplierReplyCard({ card, onChanged, refresh }: {
       {/* The buttons: only for someone who may change the order (card.canDecide). */}
       {open && card.canDecide ? (
         <div className="mt-3 flex flex-wrap items-center gap-2" data-testid="supplier-reply-actions">
-          {card.state === "proposed" && !editing && proposedLines.some((line) => line.outcome === "proposed") ? <button type="button" disabled={busy} className={BUTTON.primary} data-testid="supplier-reply-record" onClick={() => void recordProposal()}>{t("record")}</button> : null}
+          {card.state === "proposed" && !editing && proposedLines.some((line) => line.outcome === "proposed") ? <button type="button" disabled={busy || !proposal.ready} className={BUTTON.primary} data-testid="supplier-reply-record" onClick={() => void recordProposal()}>{t("record")}</button> : null}
+          {card.state === "proposed" && !editing && !proposal.ready ? <span className="text-amber-800" data-testid="supplier-reply-resolve-first">{t("resolveFirst")}</span> : null}
           {formOpen ? <button type="button" disabled={busy} className={BUTTON.primary} data-testid="supplier-reply-record-form" onClick={() => void recordForm()}>{t("recordThese")}</button> : null}
           {card.state === "proposed" && !manual ? <button type="button" disabled={busy} className={BUTTON.secondary} data-testid="supplier-reply-edit" aria-pressed={editing} onClick={() => { setEditing(!editing); setValues(formStart(card)); setMessage(null); }}>{t(editing ? "cancel" : "edit")}</button> : null}
           <div className="flex gap-2 sm:ml-auto">
@@ -228,6 +290,7 @@ export function SupplierReplyCard({ card, onChanged, refresh }: {
           <button type="button" className={BUTTON.secondary} onClick={() => setDismissing(false)}>{t("cancel")}</button>
         </div>
       ) : null}
+      {notice ? <p className="mt-2 rounded-md bg-amber-50 px-2 py-1 text-amber-800" role="status" data-testid="supplier-reply-notice">{notice}</p> : null}
       {message ? <p className="mt-2" style={{ color: A.sub }} role="status" data-testid="supplier-reply-message">{message}</p> : null}
     </section>
   );
