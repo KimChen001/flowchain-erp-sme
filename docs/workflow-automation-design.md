@@ -1,122 +1,137 @@
-# Workflow automation: triggers, fixed steps, confirmed outcomes
+# Workflow automation: the supplier reply flow first, or a framework first
 
-Status: proposal of 2026-11-19, for the owner's decisions WA-1 to WA-12 (§7.2).
-Nothing is built by this document. Code references are to `main` at 8b89b1f1.
+Status: proposal of 2026-11-19, revised the same day after a review, for the
+owner's decisions WA-1 to WA-4 (§5). Nothing is built by this document. Code
+references are to `main` at 465da8a0; the appendix holds the detail.
 
-On 2026-11-19 the owner asked how Pallet, a logistics AI company, builds its
-agent platform. The study's recommendation C, workflow automation, is designed
-here. It is the "L3 standing instructions" of `docs/ai-model-first-design.md`
-§13 (#225) and `docs/ai-onboarding-and-automation-design.md` (#229, A1–A8
-approved 2026-10-29), widened in two ways: a workflow may also start from an
-event or an incoming message, and one step may be a tool-less model call that
-reads outside text. Where this changes a #229 decision, §7.2 says so.
+The 2026-11-19 study of Pallet's agent platform (vendor claims, not verified)
+recommended workflow automation: a trigger runs fixed steps, read → decide →
+draft, that end in a card a person confirms or a message a person sends.
+Nothing is written without a person's confirmation.
+
+This is not L3 as `docs/ai-model-first-design.md` §13 (#225) and
+`docs/ai-onboarding-and-automation-design.md` (#229) define it: there, a user
+states a rule in chat and the model maps it onto a template. Here, workflows
+are written in code and switched on per workspace.
 
 ## 中文摘要
 
-- **做法：** 触发 → 固定步骤（读取 → 判断 → 起草）→ 今天页上的待确认卡片，或由人发出的消息。没有人确认，不写任何业务记录。
-- **触发：** 新邮件（需要部署，见 #363 SR-5）、到期日、库存低于再订货点、每周一、手动。推荐在应用进程里跑：一张运行表，用 `FOR UPDATE SKIP LOCKED` 保证每次只跑一遍；不引入 pg-boss、graphile-worker 或 Trigger.dev。
-- **步骤：** 复用现有只读工具（`runAiReadTool`）；读外来文字时只用一次不带工具的模型调用做抽取，每个值由代码核对。步骤的输入输出用 Zod 定义。
-- **记录：** 每次运行一条记录；"原样确认率"和"更正率"按 §4.2 的公式算。更正变成评测用例草稿，不做会自动改变行为的"记忆"。
-- **第一个流程：** 供应商回信 → 新交期（#363）。动手前要定 SR-1、2、3、4、6、8；SR-5、SR-7 可以等。
-- **决定：** §7.2 共 12 项（WA-1 到 WA-12）。
+- **核心取舍：** 如果运行不经人确认什么都不写、只留卡片，能带来新东西的流程其实只有"供应商回信 → 新交期"，而 #363 已经把它设计完了。补货草稿和三个只提醒的模板，今天页已经有对应的行和卡片。
+- **两条路：** (A) 先单独做 #363，约 8–9 天，带运行记录和 Zod 步骤约定，以后可以并入框架；(B) 先做通用框架，约 15–19 天才到同一个结果，其中定时和到期触发暂时没有流程用。
+- **推荐 A。** 等第二个流程需要应用里没有的触发方式（收信、定时）时再做框架，最早随首次部署，或按 #225 §13 在 2027 年第一季度和 L3 一起做。
+- **要定的 4 件事：** 单独做还是先做框架、费用上限、身份与可见范围、时间。
 
-## 1. Goal and scope
+## 1. The choice
 
-A workflow is a trigger, a fixed list of steps in code, and an ending.
-- **Steps** read through the existing read tools, decide by rules, and draft. The model never picks a step or a tool, unlike the loop in `answerAssistantV2` (`ai-assistant-v2.mjs`).
-- **The ending** is a pending card on Today that a person confirms, edits or dismisses; a message a person sends under the existing rules (`sendSupplierFollowUp`); or nothing to do.
-- **Nothing is written without a person's confirmation.** A run writes only its run record and its card. The change itself goes through the existing command as the person who confirmed, as decisions already do (`server/routes/decision-items.routes.mjs`: "A decision records only").
+If a run may write nothing, it ends in a card. (#229's A2 let its reorder template write draft requests; appendix B.) Then:
+- **Reorder drafts,** #229's first template, become the `reorder_now` card Today already raises with a drafted request (`buildDecisionDrafts`, `decision-drafts.mjs`).
+- **The three notify-only templates** match rows Today already shows: `purchase_order_overdue`, `bill_exception`, `contract_notice_due` (`TODAY_WORK_KINDS`, `today-work.mjs`).
+- **No workflow needs the weekly or due-date triggers yet.**
+- **The one new workflow** is supplier reply → promised date, which #363 (`docs/supplier-reply-dates-design.md`, open) designs in full.
 
-Out of scope: browser automation of third-party sites; connectors to other ERPs; external MCP access to FlowChain (a separate design); a learned memory (§4.3); L4, acting without a person (#225 §13).
-
-### 1.1 What we take from Pallet
-
-Pallet's descriptions are vendor marketing and are not verified.
-
-| Pallet, as described | Here |
-| --- | --- |
-| Agents on the customer's TMS/ERP, email and portals | Workflows on FlowChain's own records |
-| A Zod contract per action | Zod per step (§3.1) |
-| A judge model and field confidence; about 5% to a person | Code checks per value; a failed check goes to a person (§3.2) |
-| Exception reasons become Memory; backtests before rollout | Reasons become eval cases; a version passes them before rollout. No Memory (§4.3) |
-| Money, customer, compliance and irreversible actions need a person | Every write needs a person (§6.6) |
-| Every run logged; Trigger.dev, Encore queues, GCP PostgreSQL | Every run logged (§4); a run table in our PostgreSQL (§2.2) |
-
-### 1.2 What exists on `main`
-
-| Piece | Where (server/domain unless named) | Gap |
+| | A. #363 standalone, framework-ready | B. Framework first |
 | --- | --- | --- |
-| Tools | `defineAiTool` (`ai-read-tool-contract.mjs`): strict JSON Schema, `available`, `run` with `{ type, id, label }` refs; "a tool never writes". `runAiReadTool` (`ai-read-tool-runner.mjs`) over 40 data tools; 11 display and card tools (`ai-assistant-v2-ui-tools.mjs`) | `facts` and `context` are built per request from a signed-in identity (`loadAiSkillContext`, `readAiSkillFacts`) |
-| Spend | `ASSISTANT_V2_LIMITS`: $0.20 per answer. `runWithAiUsageScope`, `aiUsageRecorder` (`ai-usage-meter.mjs`); opt-in and monthly cap, `AI_MONTHLY_CAP_DEFAULT_USD` = 20 (`ai-workspace-access.mjs`) | A scope opens per assistant request only |
-| Output checks | `checkAiModelFirstGrounding`; action claims (`ai-answer-claims.mjs`); `aiInjectionDetected` (`ai-injection-guard.mjs`) | Built for answers |
-| Decision items | `decision-items.mjs`: open → decided (`not_now`, `not_needed`, `chased`, `accepted`, `covered`) → resolved or expired; `comesBack`. Rule drafts in `decision-drafts.mjs`; raised and closed on read by `syncTodayDecisions` (`server/services/decision-item-service.mjs`) | Four kinds; an item lives only while its Today row does (`planDecisionSync`) |
-| Today | `buildTodayWork` (`today-work.mjs`), per reader, on read | Nothing reads it without a reader |
-| Supplier email | `sendSupplierFollowUp`: workspace switch, daily caps, idempotent, an `AuditLog` row; `server/mail/` | No inbound route |
-| Change feed | `DomainChangeFeed`, written by command services, read by `mobile-sync-service.mjs` | Not used for triggers |
-| Background work | Only the solver's worker thread (`replenishment-solver.mjs`). No queue, cron, timer loop, outbox table or inbound webhook. `render.yaml`: one instance, stopped before each deploy | All of §2 |
-| Identity | Session tokens (`server/auth/workspace-sessions.mjs`); no machine tokens | §6.4 |
+| Builds | #363 steps 1 and 1e, as step functions with Zod contracts and a run record per reply | Run table, step runner, workflow cards, metrics; #363 on top; a scheduler |
+| Working days to first use | 8–9 | 15–19, plus 3 for the scheduler |
+| Background runs | None: a paste runs in the person's request | Yes, with the runner rules of appendix B |
 
-## 2. Triggers
+**Recommendation (WA-1): A.** Lift its steps into B when a second workflow needs a trigger the app lacks: inbound mail with the first deploy (#363 SR-5), or rules stated in chat, which #225 §13 places in Q1 2027.
 
-### 2.1 Trigger types
+## 2. What A builds
 
-| Trigger | Condition on `main` | Locally | After a deploy |
-| --- | --- | --- | --- |
-| New email | None | Paste on the card or the order page: a manual run (#363 step 1) | A Postmark Inbound webhook inserts a due run (#363 SR-5) |
-| A due date | `purchase_order_due`, `purchase_order_overdue`, `contract_notice_due` rows (`today-work.mjs`) | Read hourly by the runner | Same |
-| Stock below reorder point | `reorder_now` rows with `stockSignal` (`reorderWork`) | Read hourly | Same |
-| Every Monday | None | A due time in the workspace timezone (`tenantCalendarDay`) | Same |
-| Manual | None | A button, or `node scripts/run-workflows.mjs --once` | The button |
+- **Steps** (appendix D): read the order, clean the reply, one tool-less model call, checks in code, the card. Each is a function with a Zod input and output; Zod 4 already checks the assistant's parts (`shared/assistant-protocol.mjs`).
+- **Domain reads, not chat tools.** `get_purchase_order` returns no line ids (`lineOf`, `ai-read-tools.mjs`), and `revisePromisedDates` needs `purchaseOrderLineId`. The order comes from `readPurchaseOrder` (`procurement-db-command-service.mjs`) as the person who pasted.
+- **The run record** is #363's `SupplierReply` row: step timings, prompt version, tokens, cost and each check's result. The reply text is kept there (#363 §4.12); the step log holds codes only.
+- **The card is its own record.** A decision item is decidable only while its row is on the reader's own Today (`arrangeToday`, `decision-items.routes.mjs`); `accepted` needs a created document; `NOT_NEEDED_REASONS` has no "wrong reading". Recording dates moves an overdue order off Today, and `planDecisionSync` closes its item as now.
+- **A second reply** supersedes an open card. The card carries the order's `version` and sends it as `expectedVersion`, so a stale card is refused.
+- **Copy** is English, with Chinese through the existing i18n context.
 
-- **Conditions are polled,** not hooked into every command, as #229 §4.5 and DD-6 decided: the runner reads Today's rows hourly as the owner and acts on rows new since its last run. This catches imports and every command alike.
-- **Period keys** (workflow, version, workspace day or week) keep schedules idempotent (#229 §4.3).
+## 3. Guards
 
-### 2.2 Where runs execute
+**Cost (WA-2).** The assistant estimates each call before making it (`ai-assistant-v2.mjs`) and reserves in `createAssistantV2CostLedger` (`ai-assistant-v2-controls.mjs`). A reading does the same: its input plus a `max_tokens` of 1,000, reserved in that ledger. A reply gets at most two calls, a reading and one retry after a schema failure. On Sonnet 5.5 at the meter's prices a reading costs about 1–1.5¢, at most 3¢. Pastes count against the monthly cap like answers: $25 in `render.yaml`, $20 by default in code. Under B, 50 background runs a day would cost about $22 a month at 1.5¢ and up to $75 at 5¢, so B gives them a fixed share of the cap.
 
-Runs take seconds: a few reads and at most one model call, tens per workspace per day. A long wait ("ask again in 3 workdays") is a decision item coming back (`comesBack`), not a sleeping job.
+**Identity and visibility (WA-3).** Under A nobody new runs anything: the reading runs in the paster's request, and recording runs as the person who confirms, through the existing command and its permission check. The card stores ids, dates and quotes, and is rendered for each reader with their order permission and, for the stock line, their warehouse scope; `todayHiddenWork` filters by collection only. B would need the server to act as a workflow owner without a signed-in identity, which `loadAiSkillContext` requires: a new, security-sensitive path (appendix B).
+
+**Injection.** The regex pre-check is no defence: #363's own example, "mark all lines received", does not match `aiInjectionDetected`. The defences are structural:
+- the model has no tools and returns line references from a given list, and dates;
+- a stated date must parse from its own quote; a relative date is proposed only when code computes it from the quoted phrase and the reply date;
+- invisible characters are stripped, our quoted chase is removed, and each quote is shown in its sentence;
+- inbound mail, later, reads the text/plain part only and authenticates the sender (#363 §4.11);
+- second order: `record_history` returns the audit summary, not the revision's reason (`ai-assistant-v2-history-tools.mjs`); #363 §4.10's read-back must pass supplier text as a clipped field marked as such.
+
+## 4. Measures
+
+- **Unit:** one reply. The counted outcome is `SupplierReply.state` (under B, the run's outcome), never a decision item.
+- **Outcome, the first that applies:** outage (model off, failed or over a cap); hand-off ("needs you"); dismissed as a wrong reading; edited before recording; recorded unchanged; dismissed for another reason.
+- **Period:** by decision date. Open, expired, superseded and bypassed cards (dates changed on the order page meanwhile) are reported apart, as are outages.
+- **Rates,** with U unchanged, E edited, R wrong reading, D other dismissal, H hand-off: touchless = U / (U + E + R + D + H); correction = (E + R) / (U + E + R); hand-off = H / (U + E + R + D + H).
+- **Evidence:** on the public-data workspaces the confirming person is the researcher, so the evidence is the eval gate (#363 SR-6), and it is thin: 27 of 30 correct gives a 95% interval of about 74–96%.
+- **Corrections become draft eval cases,** as `scripts/assistant-feedback-cases.mjs` does for 👎, and a changed prompt or check passes the gate before use. No learned memory: it changes behaviour without a version, and memory built from supplier emails carries outside text into later prompts.
+
+## 5. Decisions for the owner
+
+| # | Decision | Recommendation |
+| --- | --- | --- |
+| WA-1 | #363 standalone (A) or framework first (B) | A, framework-ready |
+| WA-2 | Cost guard | Estimate and reserve before each call; two calls per reply at most; pastes count against the monthly cap; under B, background runs get 20% of it |
+| WA-3 | Identity and visibility | The paster reads, the confirmer writes; cards hold ids and dates and are rendered per reader. No server-made identity under A |
+| WA-4 | Timing | A once SR-1, 2, 3, 4, 6 and 8 are decided (#363 SR-8); B not before the first deploy with inbound mail, or with L3 in Q1 2027 |
+
+Engineering defaults, not decisions: Zod step contracts, the card as its own record, and under B the runner rules of appendix B.
+
+## Appendix
+
+### A. What exists on `main`
+
+| Piece | Where |
+| --- | --- |
+| Tool contract | `defineAiTool` (`ai-read-tool-contract.mjs`): strict JSON Schema, `available`, refs; "a tool never writes" |
+| Tool runner | `runAiReadTool` (`ai-read-tool-runner.mjs`): 40 data tools; 11 display and card tools (`ai-assistant-v2-ui-tools.mjs`) |
+| Spend | `ASSISTANT_V2_LIMITS` ($0.20 per answer); `createAssistantV2CostLedger`, in memory per process; `ai-usage-meter.mjs`; `withAiWorkspaceAccess` and `AI_MONTHLY_CAP_DEFAULT_USD` (`ai-workspace-access.mjs`); `FLOWCHAIN_AI_MONTHLY_CAP_USD` = 25 (`render.yaml`) |
+| Decision items | `decision-items.mjs`, `decision-drafts.mjs`, `syncTodayDecisions` (`server/services/decision-item-service.mjs`), `decision-items.routes.mjs` |
+| Supplier email | `sendSupplierFollowUp` (`server/services/supplier-follow-up-email-service.mjs`); `server/mail/` |
+| Promised dates | `revisePromisedDates` (`procurement-db-command-service.mjs`) → `applyPromisedDateChanges` (`purchase-order-promise-dates.mjs`), with `expectedVersion` |
+| Change feed | `DomainChangeFeed`, read by `mobile-sync-service.mjs` |
+| Background work | Only the solver's worker thread. No queue, cron, timer loop or inbound webhook; nothing uses `SKIP LOCKED`. `render.yaml`: one instance |
+| Shutdown | `registerShutdownSignals` (`server/bootstrap/server-lifecycle.mjs`): on SIGTERM, drains HTTP for up to 10 s, then disconnects Prisma |
+| Identity | Session tokens (`server/auth/workspace-sessions.mjs`); `resolveProvisionedActor` refuses a disabled user (`USER_DISABLED`, `pilot-identity.mjs`); no machine tokens |
+| Rate limit | `createAssistantV2RateLimiter`: 30 questions per user per 10 minutes, in memory |
+
+### B. Option B: the framework
+
+**Triggers.** New email (needs a deploy, #363 SR-5); due dates and stock below its reorder point, by reading Today's rows hourly (#229 §4.5, DD-6); a weekly time in the workspace timezone; manual.
+
+**Where runs execute.**
 
 | Option | For | Against |
 | --- | --- | --- |
-| A. In-process: a timer each minute claims due `WorkflowRun` rows with `FOR UPDATE SKIP LOCKED` | No new service, bill or dependency; same locally and deployed; missed runs found on start | Shares the web process; a deploy cuts runs in flight, so steps must be safe to repeat; the row lock, not the timer, keeps one execution |
-| B1. The same runner as its own process | Isolated from web traffic | A second service to deploy and pay for |
-| B2. pg-boss or graphile-worker on our PostgreSQL | Retries, backoff and cron ready-made | A new dependency with its own schema outside Prisma migrations; its rows duplicate the run record |
-| C. Trigger.dev (Pallet's choice) | Durable long runs, waits, a dashboard | A second deploy target and account; code, secrets and data leave the process; local research needs its tooling; a bill or a self-hosted stack |
+| B0. A timer in the web process over a run table | No new service | Shares the web process; see the rules below |
+| B1. The same runner as its own process | Isolated from web traffic | A second service; the in-memory ledger and limiter no longer hold |
+| B2. pg-boss or graphile-worker | Retries, backoff, cron ready-made | A dependency with its own schema outside Prisma migrations |
+| C. Trigger.dev (Pallet's choice) | Durable long runs, a dashboard | A second deploy target; code, secrets and data leave the process; local research needs its service |
 
-- **Cost and dependencies:** A adds none; B1 a service; B2 a library to keep up; C an account and a bill.
-- **Local-first research:** A and B run on the public-data workspaces' local PostgreSQL alone; C does not.
-- **Recommendation (WA-4):** A, which is #229's A5 with row locks for the claim (`email-link-sign-in.mjs` already locks through Prisma raw SQL). Keep the runner a module B1 can start unchanged. Revisit B2 or C only if runs grow long or numerous.
+**Runner rules,** whichever host:
+- **At least once, not exactly once.** Claim a row in a short transaction, setting a lease and an attempt count; never hold a lock through a run, since command transactions time out at 30 s (`timeout: 30_000`) and a model call may take 75 s.
+- **Recovery.** A `running` row past its lease is due again. The SIGTERM handler knows nothing of runs, so a deploy cuts runs in flight; every step must be safe to repeat.
+- **Uniqueness in the database:** a unique index on workspace, workflow and period key, without the version; the "rows since last run" mark in a table; the daily run limit counted under `pg_advisory_xact_lock`, the pattern of `email-link-sign-in.mjs:115`.
+- **More than one process** doubles the in-memory ledger and rate limiter; both move to the database first.
+- **Run as an owner.** Per-workspace workflow state: who switched it on, the owner, on or paused, the reason, and reassignment. A disabled owner (`USER_DISABLED`) pauses it. Manual pastes still run as the person who pastes.
+- **Limits.** 50 background runs per workflow per day; manual pastes are limited per user instead.
+- **#229 decisions that return:** A2 (the reorder template writes drafts) conflicts with "nothing written without confirmation"; A4 (no model call during runs) would need an exception for extraction.
 
-## 3. Workflow definition
+**Build steps (working days).** W1 run table, step runner, a run as a user: 4–5. W2 workflow cards: 3–4. W3 #363 on W1–W2: 7–8. W4 metrics: 1–2. W5 scheduler: 3. W6 inbound mail: 4–5, needs a deploy.
 
-### 3.1 Typed steps
-
-- **Zod for step contracts (WA-6).** Zod 4 is a dependency already and checks the assistant's part props (`safeParsePartProps`, `shared/assistant-protocol.mjs`). It checks what a hand-written schema cannot, such as a real date; `z.toJSONSchema` gives the schema for a model step.
-- **Tools keep their JSON Schema.** A tool step calls `runAiReadTool`, which checks the arguments (`validateAiToolArgs`) and the reader's access.
-- **Four step kinds:** `tool` (one read tool, as the run's identity; its refs go to the run record), `code` (a pure function: cleaning, rules, checks), `model` (one provider call with no tools, always followed by a `code` check) and the end, which builds the card, the message draft or "nothing to do". Each output is checked against its Zod schema.
+### C. Step failures
 
 | Failure | Handling |
 | --- | --- |
-| `not_found`, `not_allowed`, `invalid_arguments` from a tool | Stop; the run fails with the code |
-| `tool_failed`, a database timeout | Retry once, then stop |
-| Model off, down, or over a cap | To a person, with the input and the manual form (#363 §4.9) |
-| Model output fails its schema | Retry once, then to a person |
-| A check fails for one value | That value to a person; the rest may be proposed |
-| The owner lost the permission | The workflow pauses with the reason (#229 §4.6) |
+| Order not found or not readable | Stop with the code |
+| Database timeout | Retry once, then stop |
+| Model off, down, or over a cap | Outage: the reply and the manual form (#363 §4.9) |
+| Model output fails its schema | One retry (the second call), then a hand-off |
+| One value fails a check | That value to the person; the rest may be proposed |
 
-### 3.2 Model calls
-
-- **At most one tool-less call per run,** for extraction from outside text (#363 §4.4). It returns one object and cannot read, call or write.
-- **Every value is checked in code** against the source text and the records (#363 §4.5). Confidence is the result of those checks, not a score the model gives. No judge model in v1.
-- **Workflows over FlowChain's own records make no model call;** #229's A4 stands for them (WA-3).
-
-### 3.3 Ending on Today
-
-- **The card is a decision item** of the workflow's own kind (`supplier_reply_dates`), on its subject record, with the run id. Options are reused: `accepted` (confirmed), `not_needed` with a reason (dismissed), `not_now`.
-- **New close rule.** `planDecisionSync` closes an item when its Today row goes away; a workflow card has no row. `syncTodayDecisions` would show open workflow cards as rows of their own and close them when decided or when the subject no longer qualifies (order closed, cancelled or received).
-- **One card per record.** A reply on a chased `purchase_order_overdue` item becomes that item's proposal (#363 §4.2).
-- **Who sees and decides:** the kind's permission (`DECISION_PERMISSIONS`) and Today's area rules (`todayHiddenWork`).
-
-### 3.4 Example
+### D. Example
 
 ```js
 // Proposed; nothing like it exists on main.
@@ -131,86 +146,15 @@ const ReplyReading = z.strictObject({
   flags: z.array(z.strictObject({ kind: z.enum(FLAG_KINDS), quote: z.string().max(400) })).max(10),
 })
 
-export const supplierReplyDates = defineWorkflow({
-  id: 'supplier_reply_dates',
-  version: 1,
-  trigger: { type: 'manual', input: PastedReply },   // inbound mail later (#363 SR-5)
-  subject: 'purchase_order',
-  permission: 'procurement.purchase_order.revise',
-  limits: { costMicros: 50_000, modelCalls: 1, runsPerDay: 50 },
-  steps: [
-    { id: 'order', tool: 'get_purchase_order', args: (run) => ({ order: run.subject.number }), onError: 'stop' },
-    { id: 'clean', code: cleanReply, output: CleanReply, onError: 'stop' },
-    { id: 'read', model: { prompt: 'supplier_reply_v1', tools: false }, input: readingInput, output: ReplyReading, retries: 1, onError: 'to_person' },
-    { id: 'check', code: checkReading, output: CheckedReading, onError: 'to_person' },
-  ],
-  end: supplierReplyCard,      // proposal, needs you, or nothing to record
-})
+const steps = [
+  step('order', { input: OrderRef, output: OpenLines, run: readOpenLines }),             // readPurchaseOrder, as the person
+  step('clean', { input: PastedReply, output: CleanReply, run: cleanReply }),            // #363 §4.3
+  step('read', { input: ReadingInput, output: ReplyReading, run: readReply, calls: 2 }), // reserve, call, one retry
+  step('check', { input: Reading, output: CheckedReading, run: checkReading }),          // #363 §4.5
+]
 ```
 
-## 4. Run log and metrics
-
-### 4.1 The run record
-
-One `WorkflowRun` row per run, steps as a JSON list:
-- **workflow** id and version; **trigger** type with its period key or source (the pasted reply, the Today row key);
-- **started by**: a person, or `schedule`, `event`, `inbound_mail`; **ran as**: the user whose permissions the reads used (§6.4);
-- **steps**: kind, status, timings; for a tool, its name, an argument hash and refs; for the model, provider, model, prompt version, tokens, cost and the parsed output; for a check, each result;
-- **cost** in micro-dollars, also counted in `AiUsageMonthly`;
-- **outcome**: `proposal` or `needs_you` (a card was raised), `nothing_to_do`, `failed` (code), `skipped` (switch, cap); once a person acts, `confirmed_unchanged`, `confirmed_edited` (which fields), `dismissed` (reason), or `expired`;
-- **links** to the decision item and to what the confirmed command wrote.
-
-Everything else is codes and ids. Free text (an email, a note, the quotes in a parsed output) stays with its record as #363 §4.12 and DD-7 set out.
-
-### 4.2 Touchless and correction rates
-
-Per workflow version and period, over runs whose card a person decided:
-- U: proposals confirmed unchanged; E: confirmed after an edit;
-- R: dismissed as wrong ("Don't record: wrong reading" in #363);
-- D: dismissed for another reason ("supplier will confirm later");
-- H: sent to a person with no proposal ("needs you").
-
-| Rate | Formula |
-| --- | --- |
-| Touchless | U / (U + E + R + D + H) |
-| Correction | (E + R) / (U + E + R) |
-| Hand-off | H / (U + E + R + D + H), the counterpart of Pallet's "about 5%" |
-
-- **Outside every denominator:** runs with nothing to do, failed and skipped runs (counted apart), open cards, and cards that expired undecided.
-- **D is outside the correction rate:** it says nothing about whether the proposal was right.
-
-### 4.3 Corrections, evaluation and memory
-
-| Pallet's loop | FlowChain | In scope |
-| --- | --- | --- |
-| A person handles the exception and gives a reason | A reason code and an optional note (`DECISION_NOTE_MAX`, 200 characters) | Yes |
-| Reasons become cases | A script like `scripts/assistant-feedback-cases.mjs` turns edited and wrong runs into draft cases, on local research instances only | Yes |
-| Backtest before rollout | A new version (prompt, checks, rules) runs over the cases offline and must pass its gate (for the first workflow, #363 SR-6) | Yes |
-| Reasons become Memory that changes later runs | None | No |
-
-Why no learned memory:
-- **No version.** Memory changes output without a new version or an eval run, so a regression cannot be traced.
-- **Lasting injection.** Memory built from supplier emails carries an outsider's text into later prompts.
-- **Little data.** A small workspace makes a few corrections a month.
-- **Research.** A study needs the same treatment across runs.
-- **Later, safer:** a hint per supplier ("dates are day-first") proposed from corrections, as a setting a person confirms.
-
-## 5. First workflow: supplier reply → promised date
-
-The design is `docs/supplier-reply-dates-design.md` (#363, open). On §3's steps:
-
-| # | Step | Kind | Uses | On failure |
-| --- | --- | --- | --- | --- |
-| 0 | Trigger | manual | Paste on the overdue card or the order page; inbound mail later | — |
-| 1 | Read the order | tool | `get_purchase_order`: open lines, promised dates; prices removed before step 4 | Stop |
-| 2 | Clean | code | #363 §4.3: drop the quoted chase and signature | Stop |
-| 3 | Pre-check | code | `aiInjectionDetected`; a hit is shown on the card | — |
-| 4 | Read | model | One tool-less call returning `ReplyReading` | To a person |
-| 5 | Check | code | #363 §4.5: quote in the reply, stated date parses from it, line open, date in range | Per value, to a person |
-| 6 | Stock effect | code | `aiStockProjection` (`ai-read-tools.mjs`) with the proposed dates; the `stock_projection` tool takes no dates | Card without it |
-| 7 | End | — | Proposal, needs you, or nothing to record | — |
-
-Confirming calls `POST /api/procurement/orders/:id/promised-dates` (`revisePromisedDates` in `procurement-db-command-service.mjs`, then `applyPromisedDateChanges`) as the person, with the supplier's sentence as the reason. FlowChain never replies to the supplier.
+### E. #363's decisions for option A
 
 | SR | Question, in short | When |
 | --- | --- | --- |
@@ -218,81 +162,7 @@ Confirming calls `POST /api/procurement/orders/:id/promised-dates` (`revisePromi
 | SR-2 | One tool-less call, values quoted and checked in code, no chat tool? | Before building |
 | SR-3 | A confirmed card writes promised dates only? | Before building |
 | SR-4 | When to propose nothing and ask the person? | Before building |
-| SR-6 | The gate: no hard fails, 90% of dated replies right? | Before building (the §4.3 gate) |
+| SR-6 | The gate: no hard fails, 90% of dated replies right? | Before building |
 | SR-8 | Start steps 1 and 1e on approval? | Before building (the go-ahead) |
 | SR-5 | Inbound mail with a per-message reply address? | Waits for a deploy |
-| SR-7 | What is recorded: reply, outcome codes, a reliability measure? | Mostly waits: step 1 needs only the stored reply and §4.1's outcomes |
-
-## 6. Safety
-
-### 6.1 Prompt injection
-
-- **Email text is data.** It reaches only the tool-less step, which cannot read, call or write. Our own quoted chase is removed first (#363 §4.3).
-- **Values come back, not instructions:** line references from a given list and dates, each checked in code. Text addressed to the system is flagged on the card, never followed.
-- **The server writes the card** from checked values, so it cannot claim an action. Model text shown to a person passes `checkAiModelFirstGrounding` and the action-claim check first.
-
-### 6.2 Cost
-
-- **Per run:** $0.05 by default, a quarter of the assistant's per-answer ceiling. A reading on Sonnet 5.5 at the meter's prices ($2 and $10 per million tokens) costs one to two cents.
-- **Per workspace:** each run opens `runWithAiUsageScope` with `aiUsageRecorder`, so it counts against the same monthly cap, and `readAiWorkspaceAccess` is checked before the model step.
-
-### 6.3 Rate limits
-
-- 50 runs per workflow per workspace per day (as #363 §4.11); beyond that, runs are `skipped` and Today shows one row.
-- Manual runs: a per-user limiter like `createAssistantV2RateLimiter` (30 per 10 minutes).
-- Messages keep `SUPPLIER_EMAIL_LIMITS`. One open card per workflow and record.
-
-### 6.4 Whose identity
-
-| Option | For | Against |
-| --- | --- | --- |
-| The workflow owner | As #229 §4.2; checked each run; audit names a person | Reads use the owner's scope |
-| A service identity with a role | Survives staff changes | Does not exist; audit without a person; a role to keep narrow |
-| The person who confirms | Writes carry their name | Nobody is there when a schedule fires |
-
-**Recommendation (WA-7):** reads run as the owner, resolved again each run (`resolveAuthorizationContext`, `server/auth/authorization-service.mjs`); a lost permission pauses the workflow. Every write runs as the person who confirms, through the existing command and its permission check.
-
-### 6.5 Audit and off switches
-
-- **Audit:** the run record, plus the `AuditLog` rows the confirmed command and any sent message already write.
-- **Switches:** per workflow; per workspace, beside `ai.modelAssistEnabled` and `review.supplierFollowUpEmail` (`workspace-settings-contract.mjs`); and a `FLOWCHAIN_WORKFLOWS` environment flag. With AI off, model steps go to a person.
-- **Auto-pause** after 3 runs in a row whose cards were all dismissed as wrong (#229 A6).
-
-### 6.6 What always needs a person
-
-Pallet's list is covered because every write needs a person. A run never sends to a supplier or customer (a person sends, after DD-9's two confirmations); creates, submits or approves a document; changes dates, quantities, prices, master data or settings; or posts, pays or deletes.
-
-## 7. Build steps and decisions
-
-### 7.1 Build steps
-
-One PR each, green CI. Sizes in working days.
-
-| Step | Delivers | Size | Deploy |
-| --- | --- | --- | --- |
-| W1 | `WorkflowRun` table; `defineWorkflow`; tool, code and model steps; a run as a user via `loadAiSkillContext`; usage scope; `scripts/run-workflows.mjs --once` | M, 4–5 | No |
-| W2 | Workflow cards as decision items: kinds, close rule, Today rows, reasons; outcomes on the run | M, 3–4 | No |
-| W3 | The first workflow: #363 steps 1 and 1e on W1–W2, with the reply cases and gate | L, 7–8 | No |
-| W4 | The §4.2 rates per version; corrections to draft cases | S, 1–2 | No |
-| W5 | The in-process scheduler: claim, catch-up, period keys, switches, caps, auto-pause | M, 3 | No |
-| W6 | Hourly Today-row triggers; #229's notify-only templates as workflows | M, 3–5 | No |
-| W7 | Inbound mail as a trigger (#363 step 3) | M, 4–5 | Yes |
-
-W1–W4 are useful on the public-data workspaces with no scheduler and no deploy.
-
-### 7.2 Decisions for the owner
-
-| # | Decision | Recommendation |
-| --- | --- | --- |
-| WA-1 | Direction: (a) fixed-step workflows ending in a card or a person-sent message; (b) the assistant loop unattended; (c) not now | (a) |
-| WA-2 | #229 A2 lets the reorder template write draft requests | Amend: the run leaves a card; drafts are created when a person confirms |
-| WA-3 | #229 A4: no model call in runs | Keep for workflows over our records; allow one tool-less extraction step where a workflow reads outside text |
-| WA-4 | Where runs execute | The web process, claiming run rows with `FOR UPDATE SKIP LOCKED`; no pg-boss, graphile-worker or Trigger.dev now |
-| WA-5 | Event triggers | Hourly reads of Today's rows, manual runs and pastes; inbound mail with SR-5 |
-| WA-6 | Step contracts | Zod per step; tools keep JSON Schema |
-| WA-7 | Identity | Reads as the owner, checked each run; writes as the confirming person; no service identity |
-| WA-8 | Ending on Today | A decision item of the workflow's kind with its own close rule, joined to a live item on the same record |
-| WA-9 | Metrics | The §4.2 rates; codes only; text for research on public-data workspaces only (DD-7) |
-| WA-10 | Memory | Corrections become eval cases and gate each version; no learned memory |
-| WA-11 | Guards | $0.05 per run, 50 runs per workflow per day, three switches, auto-pause after 3 rejected runs |
-| WA-12 | First workflow and order | Supplier reply → promised date as W1–W4, locally; W5–W6 next; W7 with a deploy |
+| SR-7 | What is recorded: reply, outcome codes, a reliability measure? | Mostly waits; step 1 needs the stored reply and §4's outcomes |
