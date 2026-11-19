@@ -124,7 +124,7 @@ test.describe("supplier replies on an issued order", () => {
       const at = (detail.lines as OrderLine[]).findIndex((line) => Number(line.orderedQuantity || 0) > Number(line.receivedQuantity || 0));
       const { next } = await workspaceDays(request, auth, detail.lines[at].promisedDate);
       const said = `Balance follows on ${written(next)}.`;
-      writeFileSync(SCRIPTED, JSON.stringify({ reading: { replyKind: "dates", lines: [{ line: `L${at + 1}`, date: next, quote: said, dateKind: "stated" }], flags: [], reason: null } }));
+      writeFileSync(SCRIPTED, JSON.stringify({ readings: [{ match: "Balance follows on", reading: { replyKind: "dates", lines: [{ line: `L${at + 1}`, date: next, quote: said, dateKind: "stated" }], flags: [], reason: null } }] }));
 
       await page.goto("/app/overview");
       const aside = page.getByTestId("today-set-aside");
