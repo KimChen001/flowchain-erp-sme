@@ -301,6 +301,23 @@ Build notes from the workflow review (#392 §3), which tighten §4.5:
 - each reading is estimated and reserved in the assistant's cost ledger before
   the call, with at most two calls per reply.
 
+Changed in the build, after the first gate run (2026-11-19, #394):
+- when the reading gives no day or calls it vague, code proposes the one day the
+  quote names, but only when no hedge word is present (around, by, after, from,
+  once, pending, 左右, 之前, 起, …). Such a line is marked `inferred` and always
+  shown as "read as". Otherwise it stays with the person;
+- a quote that names more than one date goes to the person (`several_dates`)
+  when the claimed date is the current promise or follows a refusal or
+  replacement marker (instead of, can't … on, 原定, 而不是, 发不了, …);
+- a day without a month ("the 28th", 二十八号) is read as the first such day on
+  or after the reply date, within 31 days, and shown as "read as";
+- a single part with a quantity below what is open is `split_incomplete`
+  unless the reply flags that the rest will not come.
+
+The step 1 gate runs on the walkthrough model only until the Parley budget
+allows a Sonnet run (owner, 2026-11-19). It also includes a held-out batch
+written after these changes.
+
 | # | Decision | Recommendation |
 | --- | --- | --- |
 | SR-1 | Direction: (a) read supplier replies, pasted first on the card and the order page, inbound mail later; (b) inbound mail first; (c) not now | (a). It works locally today, needs no deployment, and gives the evaluation data before any mail setup |
