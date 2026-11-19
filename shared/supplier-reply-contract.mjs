@@ -210,7 +210,7 @@ export const supplierReplyCardSchema = z.strictObject({
   // The order's version when the card was rendered: sent back as
   // expectedVersion, so a stale card is refused.
   orderVersion: z.number().int().nonnegative(),
-  // Null when the reader may not see the supplier on an order.
+  // The order's supplier as the order shows it; null when none is recorded.
   supplierName: z.string().max(200).nullable(),
   source: z.enum(SUPPLIER_REPLY_SOURCES),
   receivedOn: day,

@@ -385,9 +385,12 @@ const ORDER_NUMBER = /\b([A-Z]{1,6}(?:-[A-Z0-9]{1,8})*-\d{1,8})\b/g
 // November", "can't make 28 Nov", "was 12 Nov", "from 30 Nov to 3 Dec",
 // 原定11月30日, 而不是11月30日, 30号发不了 (after). Up to three words may stand
 // between the marker and the date in English.
-const REPLACED_BEFORE = /(?:\binstead\s+of|\brather\s+than|\bnot|\bcan(?:'|no)?t\s+make|\bcannot\s+make|\bwon'?t\s+make|\bunable\s+to\s+make|\bwas|\bwere|\boriginally|\bpreviously|\bno\s+longer|\bfrom)(?:\s+[\w']+){0,3}\s*$/i
+// A refusal counts with any verb after it, within five words: "cannot ship
+// on", "can't deliver by", "won't be able to deliver on", "unable to ship".
+// "not later than" and "no later than" are deadlines, not refusals.
+const REPLACED_BEFORE = /(?:\binstead\s+of|\brather\s+than|\bcan['’]?t|\bcan\s+not|\bcannot|\bwon['’]?t|\bwill\s+not|\bunable\s+to|\bnot\s+able\s+to|\bnot(?!\s+later\s+than)|\bwas|\bwere|\boriginally|\bpreviously|\bno\s+longer|\bfrom)(?:\s+[\w'’]+){0,5}\s*$/i
 const REPLACED_BEFORE_ZH = /(?:原定|原来|原计划|原先|而不是|不是|赶不上|来不及|无法|不能)[^。，,.;；!?！？]{0,6}$/
-const REPLACED_AFTER_ZH = /^[^。，,.;；!?！？]{0,4}(?:发不了|做不到|来不及|赶不上|不行)/
+const REPLACED_AFTER_ZH = /^[^。，,.;；!?！？]{0,4}(?:发不了|做不到|来不及|赶不上|不行|不能|无法|没法)/
 
 // One value's date, as code reads it from its quote: { date, kind, readAs? }
 // or { issue, readings? }. A stated date must parse from its quote to the
