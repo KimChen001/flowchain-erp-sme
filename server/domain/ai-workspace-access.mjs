@@ -9,8 +9,8 @@ import { mergeOperationalSettings } from './workspace-settings-contract.mjs'
 // 2026-10-05, agent mode decision 6). Where the workspace opt-in is required
 // (production, or FLOWCHAIN_AI_WORKSPACE_OPT_IN=required), a workspace calls a
 // model only when its administrator has switched on "AI features" in
-// Settings › AI and its spend this month is under the cap; every other
-// workspace answers exactly as without a provider. The decision is made once
+// System administration › AI governance and its spend this month is under
+// the cap; every other workspace answers exactly as without a provider. The decision is made once
 // per assistant request, before any path runs, by handing the request a
 // model-free environment, so knowledge, intent routing, the business query
 // planner and agent planning are all covered. Local development keeps the

@@ -146,8 +146,8 @@ projects:
               # The assistant (assistant v2) on MIT Parley with Claude Sonnet 5.5
               # (owner decision, 2026-11-04; replaces V4, "the trial calls no
               # model"). Only a workspace whose administrator switches on
-              # Settings > AI calls the model; every other workspace keeps the
-              # rules' answers. See docs/ai-workspace-access.md.
+              # System administration › AI governance calls the model; every other
+              # workspace gets a notice and no answer. See docs/ai-workspace-access.md.
               - key: FLOWCHAIN_AI_ASSISTANT_MODE
                 value: "assistant_v2"
               - key: FLOWCHAIN_AI_WORKSPACE_OPT_IN
@@ -294,8 +294,8 @@ projects:
               # The assistant (assistant v2) on MIT Parley with Claude Sonnet 5.5
               # (owner decision, 2026-11-04; replaces V4, "the trial calls no
               # model"). Only a workspace whose administrator switches on
-              # Settings > AI calls the model; every other workspace keeps the
-              # rules' answers. See docs/ai-workspace-access.md.
+              # System administration › AI governance calls the model; every other
+              # workspace gets a notice and no answer. See docs/ai-workspace-access.md.
               - key: FLOWCHAIN_AI_ASSISTANT_MODE
                 value: "assistant_v2"
               - key: FLOWCHAIN_AI_WORKSPACE_OPT_IN

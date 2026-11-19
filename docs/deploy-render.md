@@ -72,7 +72,7 @@ Enter these for both `flowchain-staging` and `flowchain-production`.
 | `FLOWCHAIN_MAIL_FROM` | No | The sender address, for example `FlowChain <no-reply@getflowchain.com>`. It sends sign-in links and approval emails, so a `no-reply@` address suits both. Its domain must be verified with the mail provider. Required. |
 | `POSTMARK_SERVER_TOKEN` | **Yes** | Your Postmark server API token. Required if the provider is `postmark`; otherwise leave it empty. |
 | `RESEND_API_KEY` | **Yes** | Your Resend API key. Required if the provider is `resend`; otherwise leave it empty. |
-| `FLOWCHAIN_AI_PROVIDER_API_KEY` | **Yes** | The MIT Parley key for the assistant. While it is empty the server calls no model and every workspace gets the rules' answers. With it, only workspaces whose administrator switches on Settings > AI call the model (`docs/ai-workspace-access.md`). |
+| `FLOWCHAIN_AI_PROVIDER_API_KEY` | **Yes** | The MIT Parley key for the assistant. While it is empty the server calls no model and the assistant answers no questions. With it, only workspaces whose administrator switches on System administration › AI governance call the model (`docs/ai-workspace-access.md`). |
 
 **UNVERIFIED:** whether Render's Blueprint form accepts an empty value. If it
 insists on one, enter the real value if you have it. Otherwise enter any text,
