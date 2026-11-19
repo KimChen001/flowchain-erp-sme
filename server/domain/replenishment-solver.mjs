@@ -127,8 +127,12 @@ export function resolveReplenishmentParameters(options = {}) {
 // onHand, reserved, openLines [{ remaining, dueInDays }], dailyDemand (the
 // same number of days, oldest first, for every item), and optionally name,
 // unit, supplier, reorderPoint, openRequests (quantity on open purchase
-// requests, counted in the position) and extraDemand (units on top of every
-// scenario: a known order the history does not show).
+// requests, counted in the position), pendingOrders (on draft and
+// pending-approval purchase orders, counted in the position), backorders
+// (open sales demand no reservation covers, taken out of it; design audit
+// C2), reorderListQuantity (what the reorder list asks for, when the caller
+// knows it) and extraDemand (units on top of every scenario: a known order
+// the history does not show).
 export function normalizeReplenishmentItems(items) {
   if (!Array.isArray(items) || !items.length) fail('At least one item is required.')
   if (items.length > REPLENISHMENT_SOLVER_LIMITS.items) fail(`At most ${REPLENISHMENT_SOLVER_LIMITS.items} items can be planned at once.`)
@@ -165,10 +169,16 @@ export function normalizeReplenishmentItems(items) {
     const reorderPoint = item.reorderPoint === null || item.reorderPoint === undefined ? null : Number(item.reorderPoint)
     const openRequests = item.openRequests === null || item.openRequests === undefined ? 0 : Number(item.openRequests)
     if (!finite(openRequests) || openRequests < 0) bad('openRequests must be 0 or more')
+    const pendingOrders = item.pendingOrders === null || item.pendingOrders === undefined ? 0 : Number(item.pendingOrders)
+    const backorders = item.backorders === null || item.backorders === undefined ? 0 : Number(item.backorders)
+    if (!finite(pendingOrders) || pendingOrders < 0 || !finite(backorders) || backorders < 0) bad('pendingOrders and backorders must be 0 or more')
+    const reorderListQuantity = item.reorderListQuantity === null || item.reorderListQuantity === undefined ? null : Number(item.reorderListQuantity)
+    if (reorderListQuantity !== null && (!finite(reorderListQuantity) || reorderListQuantity < 0)) bad('reorderListQuantity must be 0 or more')
     return {
       sku, name: text(item.name) || null, unit: text(item.unit) || null, supplier: text(item.supplier) || null,
-      unitPrice, moq, leadTimeDays, onHand, reserved, openLines, openRequests, dailyDemand, extraDemand,
+      unitPrice, moq, leadTimeDays, onHand, reserved, openLines, openRequests, pendingOrders, backorders, dailyDemand, extraDemand,
       reorderPoint: finite(reorderPoint) && reorderPoint > 0 ? reorderPoint : null,
+      reorderListQuantity,
     }
   })
 }
@@ -178,10 +188,11 @@ export function normalizeReplenishmentItems(items) {
 // due_within_cycle: only lines due within the item's lead time + review days
 // (the prototype's single-cycle position); a line due later cannot serve this
 // cycle's demand. Lines without a due day count in both. Open purchase
-// requests (openRequests) count in both, as the assistant's other order tools
-// count them: ordering on top of a pending request would order twice.
+// requests, draft and pending-approval orders count in both and backorders
+// come out, as the reorder list's position counts them (design audit C2):
+// ordering on top of a pending request or order would order twice.
 export function inventoryPosition(item, cycleDays, rule = 'all_open_lines') {
-  let position = item.onHand - item.reserved + (item.openRequests || 0)
+  let position = item.onHand - item.reserved + (item.openRequests || 0) + (item.pendingOrders || 0) - (item.backorders || 0)
   const counted = []
   const dueAfterCycle = []
   for (const line of item.openLines) {
@@ -311,6 +322,39 @@ export function evaluateReplenishmentPlan(instance, quantities, { budget = insta
     heldOut: heldOut ? { holding: heldOut.holding, shortage: heldOut.shortage, total: heldOut.total } : null,
     perItem: (heldOut || inSample).perItem.map((outcome, index) => ({ sku: instance.items[index].sku, quantity: q[index], ...outcome })),
   }
+}
+
+// A plan's total cost in each sample: holding plus shortage over all items.
+// The same sample index draws the same blocks for every item, so two plans'
+// costs pair sample by sample.
+export function sampleCosts(instance, quantities, samples = instance.heldOut || instance.D) {
+  const n = samples[0]?.length || 0
+  const out = new Float64Array(n)
+  instance.items.forEach((_, index) => {
+    const level = instance.positions[index] + Number(quantities[index] ?? 0)
+    const h = instance.h[index]
+    const pi = instance.pi[index]
+    const row = samples[index]
+    for (let k = 0; k < n; k += 1) out[k] += level >= row[k] ? h * (level - row[k]) : pi * (row[k] - level)
+  })
+  return out
+}
+
+// How a plan's cost compares with another's beyond the cost estimate's own
+// sampling error: the paired difference per sample, its standard error, and
+// withinSamplingError when the mean difference is within 1.96 standard errors
+// of zero (2026-11-08: on the fresh samples a plan could come out a few
+// dollars "cheaper" than the optimum, which is noise, not a saving).
+export function comparePlanCosts(costs, reference) {
+  const n = costs.length
+  if (!n || n !== reference.length) return { difference: null, standardError: null, withinSamplingError: null }
+  let mean = 0
+  for (let k = 0; k < n; k += 1) mean += costs[k] - reference[k]
+  mean /= n
+  let squares = 0
+  for (let k = 0; k < n; k += 1) squares += (costs[k] - reference[k] - mean) ** 2
+  const standardError = n > 1 ? Math.sqrt(squares / (n - 1) / n) : 0
+  return { difference: mean, standardError, withinSamplingError: Math.abs(mean) <= 1.96 * standardError + EPSILON }
 }
 
 // Each item's unconstrained optimum on the N scenarios: the newsvendor
@@ -485,12 +529,16 @@ const quantitiesFrom = (instance, plan) => {
   return instance.items.map((item) => bySku.get(item.sku.toLowerCase()) ?? 0)
 }
 
-// The reorder list's quantities (buildReorderList since #249): the shortfall
-// below the recorded reorder point of on hand - reserved + every open line,
-// raised to the supplier's minimum; 0 at or above it. Items bought in their
-// stock unit only, as the solver's items are.
+// The reorder list's quantities: what the list asks for when the caller gives
+// it (reorderListQuantity; the assistant passes the list's own, reorderSizing
+// in reorder-list.mjs, so the comparison is the page's). Otherwise, for an
+// input without it (an export), the shortfall below the recorded reorder
+// point of on hand - reserved + every open line, raised to the supplier's
+// minimum; 0 at or above it. Items bought in their stock unit only, as the
+// solver's items are.
 export function reorderListQuantities(items) {
   return items.map((item) => {
+    if (item.reorderListQuantity !== null && item.reorderListQuantity !== undefined) return item.reorderListQuantity
     if (!(item.reorderPoint > 0)) return 0
     const position = item.onHand - item.reserved + item.openLines.reduce((sum, line) => sum + line.remaining, 0)
     const shortfall = Math.max(0, item.reorderPoint - position)
@@ -572,14 +620,32 @@ export async function planReplenishment(input, options = {}) {
     plans.push({ id, ...(candidate?.label ? { label: text(candidate.label) } : {}), ...evaluate(quantitiesFrom(instance, candidate?.quantities)) })
   }
   const reference = optimal ? (optimal.heldOut || optimal.inSample).total : null
+  // Sample by sample on the samples the costs come from, so a difference
+  // within the estimate's sampling error is marked as such. The optimum is
+  // proven on the N scenarios only, so another plan can also be clearly
+  // cheaper on the fresh samples; that shows as a negative costAboveOptimal
+  // outside the sampling error.
+  const optimalCosts = optimal ? sampleCosts(instance, optimal.quantities) : null
+  const compared = (quantities) => (optimalCosts ? comparePlanCosts(sampleCosts(instance, quantities), optimalCosts) : null)
   for (const plan of plans) {
     const cost = (plan.heldOut || plan.inSample).total
     plan.costAboveOptimal = reference === null ? null : cost - reference
     plan.regretInSample = optimal ? plan.inSample.total - optimal.inSample.total : null
+    const comparison = compared(plan.quantities)
+    plan.costAboveOptimalStandardError = comparison ? comparison.standardError : null
+    plan.withinSamplingErrorOfOptimal = comparison ? comparison.withinSamplingError : null
+  }
+  const freePlan = binding?.budget?.withoutBudget
+  if (freePlan) {
+    const comparison = compared(freePlan.quantities)
+    Object.assign(freePlan, { costAboveOptimal: comparison.difference, costAboveOptimalStandardError: comparison.standardError, withinSamplingErrorOfOptimal: comparison.withinSamplingError })
   }
   return {
     schema: REPLENISHMENT_PLAN_SCHEMA,
     status: solved.status,
+    // An optimum proven by HiGHS, or the best plan it found before its time
+    // limit (status not_proven_optimal, with solver.mipGap the gap left).
+    optimalityProven: solved.status === 'optimal',
     ...(solved.reason ? { reason: solved.reason } : {}),
     ...(solved.items ? { reasonItems: solved.items } : {}),
     solver: solved.solver || null,

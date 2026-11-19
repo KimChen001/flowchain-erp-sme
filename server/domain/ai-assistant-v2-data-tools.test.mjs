@@ -404,46 +404,50 @@ test('inventory_value values stock at reference prices and states the holding ra
 })
 
 // 2026-11-06: multi-item order trade-offs under a budget, minimum orders and
-// open orders go to an exact solver (replenishment-solver.mjs). LDM-001:
-// 28 on hand + 70 on PO-001 and PO-008 + 50 on PR-001 (submitted) = 148;
+// open orders go to an exact solver (replenishment-solver.mjs). LDM-001, at
+// the reorder list's position (design audit C2): 28 on hand + 70 on PO-001
+// and PO-008 + 120 on PO-006 (pending approval) + 50 on PR-001 (submitted)
+// - 35 backordered on SO-001 = 233;
 // 12 days' lead time + 7 review days; minimum 100 at 95 USD; 50 shipped on
 // each of 18 days.
 test('optimize_order_plan solves the order from the records and costs it beside no order, the reorder list and the user\'s plan', async () => {
   const { run } = await v2({ change: shipping, actor: everyWarehouse })
   const result = (await run('optimize_order_plan')).result
   assert.equal(result.status, 'optimal')
-  assert.deepEqual(result.decision.lines.map((line) => [line.sku, line.quantity, line.unit, line.supplier, line.unitPrice, line.orderValue]), [['LDM-001', 202, 'pcs', 'Acme Components', 95, 19190]])
-  assert.deepEqual([result.decision.spend, result.decision.expectedCost, result.decision.savingVsNoOrder], [19190, 414.37, 328.65])
+  assert.deepEqual(result.decision.lines.map((line) => [line.sku, line.quantity, line.unit, line.supplier, line.unitPrice, line.orderValue]), [['LDM-001', 117, 'pcs', 'Acme Components', 95, 11115]])
+  assert.deepEqual([result.decision.spend, result.decision.expectedCost, result.decision.savingVsNoOrder], [11115, 414.37, 140.13])
   const [item] = result.items
-  assert.deepEqual([item.sku, item.position, item.openRequests, item.cycleDays, item.minimumOrderQuantity, item.minimumOrderValue, item.optimalQuantity, item.reorderListQuantity, item.reason], ['LDM-001', 148, 50, 19, 100, 9500, 202, 0, 'ordered'])
-  assert.deepEqual([item.chanceShortNoOrderPercent, item.chanceShortWithOptimalPercent], [52.1, 13.8])
-  assert.deepEqual(result.plans.map((plan) => [plan.plan, plan.lines, plan.expectedCost, plan.costAboveOptimal]), [['optimal', 'LDM-001 202', 414.37, 0], ['no_order', '', 743.02, 328.65], ['reorder_list', '', 743.02, 328.65]])
+  assert.deepEqual([item.sku, item.position, item.openRequests, item.cycleDays, item.minimumOrderQuantity, item.minimumOrderValue, item.optimalQuantity, item.reorderListQuantity, item.reason], ['LDM-001', 233, 50, 19, 100, 9500, 117, 0, 'ordered'])
+  assert.deepEqual([item.chanceShortNoOrderPercent, item.chanceShortWithOptimalPercent], [44, 13.8])
+  assert.deepEqual(result.plans.map((plan) => [plan.plan, plan.lines, plan.expectedCost, plan.costAboveOptimal]), [['optimal', 'LDM-001 117', 414.37, 0], ['no_order', '', 554.51, 140.13], ['reorder_list', '', 554.51, 140.13]])
   // What it could not plan, and why; never guessed.
   assert.deepEqual(result.notPlanned, [{ sku: 'LDM-002', reason: 'no_lead_time' }, { sku: 'LDM-003', reason: 'no_item_record' }])
   // The assumptions come back as data, as the other cost tools give them.
   assert.deepEqual(result.assumptions, { holdingRatePercent: 25, holdingRateSource: 'assumed_planning_value', shortageCostMultiple: 5, serviceLevelPercent: 83.3, shortageCostSource: 'assumed_planning_value', reviewDays: 7, reviewDaysSource: 'assumed_planning_value', budgetSource: 'none' })
   assert.deepEqual([result.method.solverStatus, result.method.gapPercent, result.method.scenarios, result.method.costSamples, result.method.demandWindowDays], ['optimal', 0, 200, 20000, 90])
   assert.deepEqual(aiReadToolRefs(result), [{ type: 'item', id: 'ITEM-001', label: 'LDM-001' }])
+  // Proven optimal, clearly cheaper than ordering nothing, and nothing to warn about.
+  assert.deepEqual([result.decision.provenOptimal, result.decision.aboutTheSame, result.decision.cheaperOnFreshSamples, result.cautions], [true, [], [], []])
 
   // A budget below the minimum order's 9,500: nothing fits, and the result
   // says what lifting the limit would buy.
   const tight = (await run('optimize_order_plan', { budget: 5000 })).result
   assert.deepEqual([tight.decision.lines, tight.items[0].reason], [[], 'cut_by_budget'])
-  assert.deepEqual(tight.budget, { amount: 5000, spend: 0, left: 5000, binds: true, spendWithoutLimit: 19190, costWithoutLimit: 414.37, costSavedWithoutLimit: 328.65 })
+  assert.deepEqual(tight.budget, { amount: 5000, spend: 0, left: 5000, binds: true, spendWithoutLimit: 11115, costWithoutLimit: 414.37, costSavedWithoutLimit: 140.13 })
   assert.deepEqual(tight.plans.map((plan) => plan.plan), ['optimal', 'without_budget_limit', 'no_order', 'reorder_list'])
   // A plan the user proposes, below the minimum order.
   const yours = (await run('optimize_order_plan', { plan: [{ sku: 'ldm-001', quantity: 50 }] })).result
-  assert.deepEqual(yours.plans.at(-1), { plan: 'your_plan', lines: 'LDM-001 50', spend: 4750, holdingCost: yours.plans.at(-1).holdingCost, shortageCost: yours.plans.at(-1).shortageCost, expectedCost: 626.06, costAboveOptimal: 211.69, withinBudget: true, overBudgetAmount: null, budgetLeft: null, issues: ['LDM-001 below_minimum_order'] })
+  assert.deepEqual(yours.plans.at(-1), { plan: 'your_plan', lines: 'LDM-001 50', spend: 4750, holdingCost: yours.plans.at(-1).holdingCost, shortageCost: yours.plans.at(-1).shortageCost, expectedCost: 480.76, costAboveOptimal: 66.39, withinSamplingError: false, withinBudget: true, overBudgetAmount: null, budgetLeft: null, issues: ['LDM-001 below_minimum_order'] })
   // Over a budget: by how much, so the answer need not work it out.
   assert.equal((await run('optimize_order_plan', { budget: 4000, plan: [{ sku: 'LDM-001', quantity: 100 }] })).result.plans.at(-1).overBudgetAmount, 5500)
   // What is left of a budget is a figure the result gives (2026-11-06).
   const roomy = (await run('optimize_order_plan', { budget: 100000 })).result.plans.find((row) => row.plan === 'optimal')
   assert.equal(roomy.budgetLeft, Math.round((100000 - roomy.spend) * 100) / 100)
   assert.equal(roomy.overBudgetAmount, null)
-  assert.deepEqual([yours.decision.savingVsYourPlan, yours.items[0].planQuantity], [211.69, 50])
+  assert.deepEqual([yours.decision.savingVsYourPlan, yours.items[0].planQuantity], [66.39, 50])
   // A service level the user gives sets the shortage cost: 95% is 19 x holding.
   const strict = (await run('optimize_order_plan', { serviceLevelPercent: 95 })).result
-  assert.deepEqual([strict.assumptions.shortageCostMultiple, strict.assumptions.shortageCostSource, strict.decision.lines[0].quantity], [19, 'service_level', 452])
+  assert.deepEqual([strict.assumptions.shortageCostMultiple, strict.assumptions.shortageCostSource, strict.decision.lines[0].quantity], [19, 'service_level', 367])
   // Lines it cannot plan, and SKUs it does not know.
   assert.deepEqual(await run('optimize_order_plan', { plan: [{ sku: 'LDM-002', quantity: 10 }] }), { ok: false, error: 'cannot_plan_item', details: ['LDM-002: no_lead_time'] })
   assert.equal((await run('optimize_order_plan', { skus: ['NOPE-1'] })).error, 'not_found')
@@ -453,6 +457,54 @@ test('optimize_order_plan solves the order from the records and costs it beside 
   assert.deepEqual([fixed.status, fixed.reason, fixed.decision], ['infeasible', 'fixed_below_minimum_order', null])
   // Only one supplier's items.
   assert.deepEqual((await run('optimize_order_plan', { supplier: 'acme' })).result.notPlanned, [{ sku: 'LDM-002', reason: 'no_lead_time' }])
+})
+
+// 2026-11-08: an open line due after the item's lead time plus review days
+// cannot cover that cycle, so it is listed and not counted in the position.
+test('optimize_order_plan leaves an open line due after the cycle out of the position and says so', async () => {
+  const later = (data) => {
+    shipping(data)
+    const po8 = data.purchaseOrders.find((row) => row.id === 'PO-008')
+    // PO-008 (40 pcs, 2 days late) moved to 30 days out: after LDM-001's 19-day cycle.
+    po8.lines[0].promisedDate = addCalendarDays(po8.lines[0].promisedDate, 32)
+    po8.expectedDate = `${po8.lines[0].promisedDate}T12:00:00.000Z`
+  }
+  const result = (await (await v2({ change: later, actor: everyWarehouse })).run('optimize_order_plan')).result
+  const [item] = result.items
+  // 28 on hand + 30 left on PO-001 (late, still counted) + 120 on PO-006
+  // (pending approval) + 50 on PR-001 - 35 backordered = 193: the reorder
+  // list's position (design audit C2) less the line due after the cycle.
+  assert.deepEqual([item.position, item.openLinesDueAfterCycle], [193, [{ orderNumber: 'PO-008', remaining: 40, dueInDays: 30 }]])
+  assert.ok(item.optimalQuantity > 117, 'without PO-008 the plan orders more than the 117 it orders with it')
+  // Each caution comes with the words the answer gives it.
+  assert.deepEqual(result.cautions.map((row) => row.code), ['lines_due_after_cycle'])
+  assert.match(result.cautions[0].say, /openLinesDueAfterCycle arrive after the lead time plus review days/)
+})
+
+// 2026-11-08: shipments stop when stock runs out, so an item that ran out has
+// a demand history that is too low; the plan says how many days it had none.
+test('optimize_order_plan counts the days an item ended with no stock and says its demand may be understated', async () => {
+  let today = null
+  const ranOut = (data) => {
+    shipping(data)
+    const at = (offset) => new Date(`${addCalendarDays(today, offset)}T12:00:00Z`)
+    // 100 received 60 days ago, all 100 shipped 40 days ago, 28 received 30
+    // days ago and still on hand: the ten days from 40 to 31 days ago ended at 0.
+    data.inventoryMovements = [
+      { itemId: 'ITEM-001', movementDate: at(-60), occurredAt: at(-60), quantityIn: '100', quantityOut: '0' },
+      { itemId: 'ITEM-001', movementDate: at(-40), occurredAt: at(-40), quantityIn: '0', quantityOut: '100' },
+      { itemId: 'ITEM-001', movementDate: at(-30), occurredAt: at(-30), quantityIn: '28', quantityOut: '0' },
+    ]
+  }
+  today = (await v2()).facts.today
+  const result = (await (await v2({ change: ranOut, actor: everyWarehouse })).run('optimize_order_plan')).result
+  const [item] = result.items
+  assert.deepEqual([item.sku, item.stockoutDays, item.stockTrackedDays, item.demandMayBeUnderstated], ['LDM-001', 10, 60, true])
+  assert.deepEqual(result.cautions.map((row) => row.code), ['demand_may_be_understated'])
+  assert.match(result.cautions[0].say, /understates demand/)
+  // Without movements the stock was not tracked, and nothing is claimed.
+  const untracked = (await (await v2({ change: shipping, actor: everyWarehouse })).run('optimize_order_plan')).result.items[0]
+  assert.equal(untracked.stockoutDays, undefined)
 })
 
 test('optimize_order_plan refuses what the role may not see, and logs each call for a study when asked', async () => {
@@ -467,9 +519,9 @@ test('optimize_order_plan refuses what the role may not see, and logs each call 
     const { run } = await v2({ change: shipping, actor: everyWarehouse, ctx: { env: { FLOWCHAIN_REPLENISHMENT_SOLVER_LOG: log } } })
     await run('optimize_order_plan', { budget: 25000 })
     const [line] = readFileSync(log, 'utf8').trim().split('\n').map((entry) => JSON.parse(entry))
-    assert.deepEqual([line.caller, line.args, line.options.budget, line.input.items.map((entry) => [entry.sku, entry.openRequests]), line.result.optimal.quantities], ['assistant_v2', { budget: 25000 }, 25000, [['LDM-001', 50]], [202]])
+    assert.deepEqual([line.caller, line.args, line.options.budget, line.input.items.map((entry) => [entry.sku, entry.openRequests, entry.pendingOrders, entry.backorders, entry.reorderListQuantity]), line.result.optimal.quantities], ['assistant_v2', { budget: 25000 }, 25000, [['LDM-001', 50, 120, 35, 0]], [117]])
     // And what the model was shown, for the study's "plan given to the LLM" arm.
-    assert.deepEqual([line.toolResult.decision.lines.map((entry) => entry.quantity), line.toolResult.budget.binds], [[202], false])
+    assert.deepEqual([line.toolResult.decision.lines.map((entry) => entry.quantity), line.toolResult.budget.binds], [[117], false])
   } finally {
     rmSync(folder, { recursive: true, force: true })
   }
