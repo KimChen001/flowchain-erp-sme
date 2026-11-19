@@ -425,7 +425,13 @@ const UNTIMED_DELIVERY = /\b(?:asap|as soon as (?:possible|we can|it|they|the)|o
 
 // Words that make a day a bound, a guess or a condition rather than the day:
 // a quote the model gave no day for is read by code only without them.
-const HEDGED = /\b(?:around|about|approx(?:imately)?|roughly|circa|week\s+of|early|mid|late|end\s+of|beginning\s+of|start\s+of|before|by|until|till|latest|earliest|no\s+later|not\s+later|hopefully|maybe|perhaps|possibly|probably|might|could|if|unless|tbc|tbd|estimated?|eta|expected?)\b|左右|前后|大概|大约|约|之前|以前|以后|之后|月底|月初|月中|上旬|中旬|下旬|最早|最晚|最迟|可能|也许|预计|争取|尽量|如果|看情况/i
+// Also a day that only opens a window or waits on something: "after 1 Dec",
+// "from 1 Dec", "once the factory reopens on 1 Dec", "following the 1 Dec
+// inspection", "starting 1 Dec", "1 Dec onwards", "pending / subject to
+// approval on 1 Dec", "1 Dec at the earliest", 12月1日起 / 开始 / 后 (#394
+// review). In Chinese 后 counts only right after a day, so 两周后 (in two
+// weeks) stays a relative date.
+const HEDGED = /\b(?:around|about|approx(?:imately)?|roughly|circa|week\s+of|early|mid|late|end\s+of|beginning\s+of|start\s+of|before|by|until|till|latest|earliest|no\s+later|not\s+later|hopefully|maybe|perhaps|possibly|probably|might|could|if|unless|tbc|tbd|estimated?|eta|expected?|after|from|once|following|starting|start(?:s|ing)?\s+on|onwards?|pending|subject\s+to|at\s+the\s+earliest)\b|左右|前后|大概|大约|约|之前|以前|以后|之后|月底|月初|月中|上旬|中旬|下旬|最早|最晚|最迟|可能|也许|预计|争取|尽量|如果|看情况|待|等[^。，,]{0,8}(?:后|再)|(?:[日号]|\d)\s*(?:起|开始|后)/i
 
 // One value's date, as code reads it from its quote: { date, kind, readAs? }
 // or { issue, readings? }. A stated date must parse from its quote to the
@@ -441,6 +447,8 @@ function resolveDate(entry, receivedOn, currentDate = null) {
   const written = datesInQuote(quote, receivedOn)
   const relative = relativeDateInQuote(quote, receivedOn)
   let claimed = entry.date
+  // The day was read by code, not given by the reading: shown as read.
+  let inferred = false
   const pair = written.ambiguous.find((readings) => readings.includes(claimed)) || (written.exact.length || written.dayOnly.length ? null : written.ambiguous[0])
   if (pair) return { issue: 'ambiguous_numeric', readings: pair }
   if (entry.dateKind === 'vague' || !claimed) {
@@ -452,9 +460,11 @@ function resolveDate(entry, receivedOn, currentDate = null) {
     const days = [...new Set([...places.flatMap((row) => row.readings || [row.date]), relative?.date].filter(Boolean))]
     if (days.length !== 1 || HEDGED.test(source)) return { issue: entry.dateKind === 'relative' && !relative ? 'relative_unreadable' : 'vague' }
     claimed = days[0]
+    inferred = true
   }
   const dayOnly = written.dayOnly.find((row) => row.date === claimed)
-  const hit = written.exact.includes(claimed) ? { date: claimed, kind: 'stated', readAs: null }
+  const writtenAs = places.find((row) => row.date === claimed && !row.dayOnly)
+  const hit = written.exact.includes(claimed) ? { date: claimed, kind: 'stated', readAs: inferred && writtenAs ? { phrase: writtenAs.phrase.slice(0, 80), from: receivedOn, date: claimed } : null }
     : dayOnly ? { date: claimed, kind: 'stated', readAs: dayOnly }
       : relative?.date === claimed ? { date: claimed, kind: 'relative', readAs: relative }
         : null
@@ -482,10 +492,10 @@ function resolveDate(entry, receivedOn, currentDate = null) {
     })
     if (replaced) return several
   }
-  return hit
+  return { ...hit, inferred }
 }
 
-const lineRow = (fields) => ({ ref: null, purchaseOrderLineId: null, outcome: 'dropped', issue: null, currentDate: null, proposedDate: null, quote: null, dateKind: null, readAs: null, readings: null, parts: null, ...fields })
+const lineRow = (fields) => ({ ref: null, purchaseOrderLineId: null, outcome: 'dropped', issue: null, currentDate: null, proposedDate: null, quote: null, dateKind: null, readAs: null, readings: null, parts: null, inferred: false, ...fields })
 
 // The reading checked against the reply and the order (supplierReplyOrderSchema):
 // each line proposed, for the person, dropped or confirmed, the flags whose
@@ -532,6 +542,7 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
     let parts = null
     let readAs = resolved[0].readAs || null
     let kind = resolved[0].kind
+    const inferred = resolved.some((row) => row.inferred)
     // One part of what is open ("150 of the 330 on 25 November"): the rest
     // has no day yet, so the line is not complete (2026-11-19 eval hard fail).
     const single = resolved.length === 1 ? resolved[0].entry : null
@@ -551,8 +562,8 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
     }
     if (receivedOn && date < receivedOn) { out.push(lineRow({ ...base, outcome: 'needs_you', issue: 'before_reply', dateKind: kind, parts })); continue }
     if (latest && date > latest) { out.push(lineRow({ ...base, outcome: 'needs_you', issue: 'too_far', dateKind: kind, parts })); continue }
-    if (date === line.promisedDate) { out.push(lineRow({ ...base, outcome: 'confirmed', issue: 'unchanged', proposedDate: date, dateKind: kind, readAs, parts })); continue }
-    out.push(lineRow({ ...base, outcome: 'proposed', proposedDate: date, dateKind: kind, readAs, parts }))
+    if (date === line.promisedDate) { out.push(lineRow({ ...base, outcome: 'confirmed', issue: 'unchanged', proposedDate: date, dateKind: kind, readAs, parts, inferred })); continue }
+    out.push(lineRow({ ...base, outcome: 'proposed', proposedDate: date, dateKind: kind, readAs, parts, inferred }))
   }
   let reason = reading?.reason ?? null
   if (reason && !quoteFound(reply, reason)) { dropped += 1; reason = null }

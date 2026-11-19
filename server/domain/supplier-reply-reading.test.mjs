@@ -321,3 +321,42 @@ test('text addressed to the system is flagged, and an HTML comment is never read
   // A supplier's ordinary words are not.
   for (const plain of ['Our system shows the order as packed; it ships on 28 November.', 'Please mark the change in your records.', 'We cannot ship on 28 Nov; earliest is 5 Dec.', '系统显示已经打包，11月28日发货。']) assert.ok(!supplierReplyInstructionsIgnored(plain), plain)
 })
+
+// Review of 48fcd93a (2026-11-19): a day the reading called vague is read by
+// code only when nothing makes it a bound or a wait, and it is marked so.
+
+test('a day that opens a window or waits on something stays with the person when the reading called it vague', () => {
+  const vague = (quote) => check(quote, reading([{ line: 'L1', date: null, quote, dateKind: 'vague' }])).lines[0]
+  for (const quote of [
+    "We'll ship after 1 Dec.",
+    'Available from 1 Dec.',
+    'Once the factory reopens on 1 Dec we will ship.',
+    'Following the 1 Dec inspection, the goods go out.',
+    'Starting 1 Dec we can deliver.',
+    '1 Dec onwards.',
+    'Pending approval on 1 Dec.',
+    'Subject to approval on 1 Dec.',
+    '1 Dec at the earliest.',
+    '12月1日起发货。',
+    '12月1日开始发货。',
+    '12月1日后发货。',
+  ]) {
+    const line = vague(quote)
+    assert.deepEqual([line.outcome, line.issue, line.proposedDate], ['needs_you', 'vague', null], quote)
+  }
+  // 两周后 is still a relative date, not a hedge.
+  assert.equal(check('两周后发货。', reading([{ line: 'L1', date: null, quote: '两周后发货。', dateKind: 'relative' }])).lines[0].proposedDate, '2026-12-01')
+})
+
+test('a day read by code is marked inferred and shown as read; a day the reading gave is not', () => {
+  const byCode = check('Ships 1 December.', reading([{ line: 'L1', date: null, quote: 'Ships 1 December.', dateKind: 'vague' }])).lines[0]
+  assert.deepEqual([byCode.outcome, byCode.proposedDate, byCode.inferred, byCode.readAs], ['proposed', '2026-12-01', true, { phrase: '1 December', from: RECEIVED, date: '2026-12-01' }])
+  const zh = check('二十八号发货。', reading([{ line: 'L1', date: null, quote: '二十八号发货。', dateKind: 'vague' }])).lines[0]
+  assert.deepEqual([zh.inferred, zh.readAs.phrase], [true, '二十八号'])
+  const relative = check('Ships next Friday.', reading([{ line: 'L1', date: null, quote: 'Ships next Friday.', dateKind: 'relative' }])).lines[0]
+  assert.deepEqual([relative.inferred, relative.readAs.date], [true, '2026-11-27'])
+  // Given by the reading: not inferred; a written day has no "read as".
+  const given = check('Ships 1 December.', reading([{ line: 'L1', date: '2026-12-01', quote: 'Ships 1 December.', dateKind: 'stated' }])).lines[0]
+  assert.deepEqual([given.inferred, given.readAs], [false, null])
+  assert.equal(check('Ships next Friday.', reading([{ line: 'L1', date: '2026-11-27', quote: 'Ships next Friday.', dateKind: 'relative' }])).lines[0].inferred, false)
+})
