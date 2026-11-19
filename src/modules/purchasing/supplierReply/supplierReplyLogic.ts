@@ -76,8 +76,11 @@ export const dismissReady = (reason: SupplierReplyDismissReason, note: string) =
 // was shown (stale), or the reply is no longer open (closed). The code may
 // sit at the top of the answer, as the procurement routes send it, or under
 // `error`.
-const STALE_CODES = new Set(["SYNC_VERSION_CONFLICT", "PURCHASE_ORDER_VERSION_INVALID", "PURCHASE_ORDER_WORKFLOW_CONFLICT", "SUPPLIER_REPLY_STALE", "SUPPLIER_REPLY_VERSION_CONFLICT"]);
-const CLOSED_CODES = new Set(["SUPPLIER_REPLY_NOT_OPEN", "SUPPLIER_REPLY_CLOSED", "SUPPLIER_REPLY_SUPERSEDED", "SUPPLIER_REPLY_ALREADY_DECIDED"]);
+// The routes answer a stale card with SYNC_VERSION_CONFLICT (the
+// promised-dates command's code) and a reply that was recorded, dismissed or
+// replaced with SUPPLIER_REPLY_NOT_OPEN (shared/supplier-reply-contract.mjs).
+const STALE_CODES = new Set(["SYNC_VERSION_CONFLICT", "PURCHASE_ORDER_VERSION_INVALID"]);
+const CLOSED_CODES = new Set(["SUPPLIER_REPLY_NOT_OPEN"]);
 export function replyErrorCode(error: unknown): string {
   const value = (error ?? {}) as { code?: unknown; payload?: { code?: unknown; error?: { code?: unknown } } };
   const code = value.code ?? value.payload?.code ?? value.payload?.error?.code;

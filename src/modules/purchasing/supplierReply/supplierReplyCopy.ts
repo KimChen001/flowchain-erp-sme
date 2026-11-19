@@ -58,7 +58,7 @@ export const SUPPLIER_REPLY_COPY = {
   reply: ["Reply", "回复内容"],
   showReply: ["Show the reply", "查看回复"],
   hideReply: ["Hide the reply", "收起回复"],
-  quotedHidden: ["Quoted earlier messages hidden", "已隐藏引用的往来邮件"],
+  quotedHidden: ["Quoted earlier messages and signature hidden", "已隐藏引用的往来邮件和签名"],
   showQuoted: ["Show", "显示"],
   hideQuoted: ["Hide", "隐藏"],
   quotedNote: ["Shown for reference only; FlowChain did not read it.", "仅供参考，FlowChain 未读取这部分内容。"],
@@ -78,7 +78,9 @@ export const SUPPLIER_REPLY_COPY = {
   issue_unknown_line: ["not a line of this order", "不是本订单的行"],
   issue_not_open: ["nothing left to receive on this line", "该行已无待收数量"],
   issue_unchanged: ["same as the current date", "与当前交期相同"],
+  issue_split_incomplete: ["the parts do not cover what is still open", "分批数量未覆盖剩余待收数量"],
   unnamedLine: ["A line", "某一行"],
+  supplierCode: ["supplier code {code}", "供应商编码 {code}"],
 
   // What the reply mentions that this card does not record (§4.7).
   flag_quantity_change: ["Quantity change", "数量变更"],
@@ -123,3 +125,18 @@ export function supplierReplyText(language: string, key: SupplierReplyCopyKey, v
   const [english, chinese] = SUPPLIER_REPLY_COPY[key];
   return Object.entries(values).reduce((text, [name, value]) => text.split(`{${name}}`).join(String(value)), language === "en-US" ? english : chinese);
 }
+
+// The routes' refusals the card words itself (SUPPLIER_REPLY_ERROR_CODES); a
+// stale card and a reply no longer open have their own sentences above, and
+// the rest fall back to the purchasing words (procurementErrors.ts).
+export const SUPPLIER_REPLY_ERROR_TEXT: Record<string, readonly [string, string]> = {
+  SUPPLIER_REPLY_ORDER_NOT_OPEN: ["Replies are recorded on an issued or partly received order only.", "只能在已下达或部分收货的订单上记录回复。"],
+  SUPPLIER_REPLY_CONFLICT: ["Another reply was pasted on this order at the same moment. Reload and try again.", "另一条回复同时粘贴到了该订单，请刷新后重试。"],
+  SUPPLIER_REPLY_EMPTY: ["Nothing is left to read once the quoted earlier messages are set aside. Paste the supplier's own answer.", "去掉引用的往来邮件后没有可读取的内容，请粘贴供应商本人的回复。"],
+  SUPPLIER_REPLY_RECEIVED_IN_FUTURE: ["The reply date cannot be after today.", "回复收到日期不能晚于今天。"],
+  SUPPLIER_REPLY_NO_DATES: ["There is no date to record. Enter at least one date that differs from the current one.", "没有可记录的交期，请至少填写一个与当前不同的交期。"],
+  PROMISED_DATE_UNCHANGED: ["That date is already the line's promised date.", "该日期已是该行的承诺交期。"],
+  SUPPLIER_REPLY_NOT_FOUND: ["This reply is no longer on the order. Reload the order.", "该回复已不在订单上，请重新加载订单。"],
+  SUPPLIER_REPLY_INVALID: ["Some details are not valid. Check them and try again.", "部分信息无效，请检查后重试。"],
+  SUPPLIER_REPLY_INVALID_BODY: ["Some details are not valid. Check them and try again.", "部分信息无效，请检查后重试。"],
+};

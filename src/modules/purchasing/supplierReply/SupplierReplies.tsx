@@ -9,7 +9,7 @@ import { usePermissionSet } from "../../../lib/usePermissionSet";
 import { procurementErrorCode, procurementErrorText } from "../../procurement/procurementErrors";
 import { SUPPLIER_REPLY_ROUTES, supplierReplyCardSchema } from "../../../../shared/supplier-reply-contract.mjs";
 import { SupplierReplyCard, supplierReplyRoute } from "./SupplierReplyCard";
-import { supplierReplyText, type SupplierReplyCopyKey } from "./supplierReplyCopy";
+import { SUPPLIER_REPLY_ERROR_TEXT, supplierReplyText, type SupplierReplyCopyKey } from "./supplierReplyCopy";
 import { SUPPLIER_REPLY_TEXT_LIMIT, isOpenReply } from "./supplierReplyLogic";
 import type { SupplierReplyCardData } from "./supplierReplyTypes";
 
@@ -82,7 +82,7 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
       if (!supplierReplyCardSchema.safeParse(result.reply).success) return;
       setReplies((current) => [result.reply, ...(current || []).filter((card) => card.id !== result.reply.id)]);
     } catch (error) {
-      toast.error(t("pasteFailed"), { description: <span title={procurementErrorCode(error)}>{procurementErrorText(error, language, [t("retry"), t("retry")])}</span> });
+      toast.error(t("pasteFailed"), { description: <span title={procurementErrorCode(error)}>{procurementErrorText(error, language, [t("retry"), t("retry")], SUPPLIER_REPLY_ERROR_TEXT)}</span> });
     } finally {
       setBusy(false);
     }

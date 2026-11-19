@@ -9,7 +9,7 @@ export type SupplierReplyFlagKind = "quantity_change" | "price_change" | "cancel
 export type SupplierReplyDismissReason = "wrong_reading" | "supplier_will_confirm" | "other";
 export type SupplierReplyLineIssue =
   | "quote_not_found" | "date_mismatch" | "ambiguous_numeric" | "vague" | "relative_unreadable"
-  | "before_reply" | "too_far" | "unknown_line" | "not_open" | "unchanged";
+  | "before_reply" | "too_far" | "unknown_line" | "not_open" | "unchanged" | "split_incomplete";
 
 export type SupplierReplyLine = {
   ref: string | null;
@@ -24,13 +24,15 @@ export type SupplierReplyLine = {
   readings: string[] | null;
   parts: Array<{ quantity: number | null; date: string; quote: string }> | null;
   sku: string | null;
+  // The supplier's own code for the item, which a reply often quotes.
+  supplierSku: string | null;
   itemName: string | null;
   remaining: number | null;
   unit: string | null;
   overdueDays: number | null;
 };
 
-export type SupplierReplyFormLine = Pick<SupplierReplyLine, "purchaseOrderLineId" | "sku" | "itemName" | "remaining" | "unit" | "currentDate" | "overdueDays">;
+export type SupplierReplyFormLine = Pick<SupplierReplyLine, "purchaseOrderLineId" | "sku" | "supplierSku" | "itemName" | "remaining" | "unit" | "currentDate" | "overdueDays">;
 
 export type SupplierReplyCardData = {
   contractVersion: number;
@@ -47,9 +49,9 @@ export type SupplierReplyCardData = {
   replyKind: "dates" | "confirms" | "no_date" | "auto_reply" | "other" | null;
   text: string;
   quotedTextHidden: boolean;
-  // The quoted earlier message, kept for display only; absent from an older
-  // server, which then shows only that it was hidden.
-  quotedText?: string | null;
+  // What was cut before reading (a signature, ">" lines, the earlier
+  // message), kept for display only; null when nothing was cut.
+  quotedText: string | null;
   lines: SupplierReplyLine[];
   flags: Array<{ kind: SupplierReplyFlagKind; quote: string; orderNumber: string | null }>;
   reason: string | null;

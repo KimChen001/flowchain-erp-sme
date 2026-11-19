@@ -3,13 +3,13 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
   SUPPLIER_REPLY_CONTRACT_VERSION, SUPPLIER_REPLY_DISMISS_REASONS, SUPPLIER_REPLY_FLAG_KINDS, SUPPLIER_REPLY_LIMITS,
-  SUPPLIER_REPLY_LINE_ISSUES, SUPPLIER_REPLY_READING_STATUSES, supplierReplyCardSchema,
+  SUPPLIER_REPLY_ERROR_CODES, SUPPLIER_REPLY_LINE_ISSUES, SUPPLIER_REPLY_READING_STATUSES, supplierReplyCardSchema,
 } from '../../shared/supplier-reply-contract.mjs'
 import {
   SUPPLIER_REPLY_NOTE_LIMIT, SUPPLIER_REPLY_TEXT_LIMIT, dismissReady, formStart, isOutage, markQuotes, needsManualForm,
   recordKey, recordLines, replyErrorKind,
 } from '../../src/modules/purchasing/supplierReply/supplierReplyLogic.ts'
-import { SUPPLIER_REPLY_COPY, supplierReplyText } from '../../src/modules/purchasing/supplierReply/supplierReplyCopy.ts'
+import { SUPPLIER_REPLY_COPY, SUPPLIER_REPLY_ERROR_TEXT, supplierReplyText } from '../../src/modules/purchasing/supplierReply/supplierReplyCopy.ts'
 
 // The supplier reply card (step 1b of docs/supplier-reply-dates-design.md,
 // #363 §4.5–4.9): what it decides without React, its words in both
@@ -20,13 +20,13 @@ const read = (file) => readFileSync(new URL(`../../${file}`, import.meta.url), '
 const line = (over = {}) => ({
   ref: 'L1', purchaseOrderLineId: 'pol-1', outcome: 'proposed', issue: null, currentDate: '2026-11-12', proposedDate: '2026-11-28',
   quote: 'We can ship the balance on 28 November.', dateKind: 'stated', readAs: null, readings: null, parts: null,
-  sku: 'SKU-1040', itemName: 'Bracket', remaining: 60, unit: 'pcs', overdueDays: 5, ...over,
+  sku: 'SKU-1040', supplierSku: 'AC-77', itemName: 'Bracket', remaining: 60, unit: 'pcs', overdueDays: 5, ...over,
 })
-const formLine = (id, currentDate = '2026-11-12') => ({ purchaseOrderLineId: id, sku: `SKU-${id}`, itemName: null, remaining: 20, unit: 'pcs', currentDate, overdueDays: 5 })
+const formLine = (id, currentDate = '2026-11-12') => ({ purchaseOrderLineId: id, sku: `SKU-${id}`, supplierSku: null, itemName: null, remaining: 20, unit: 'pcs', currentDate, overdueDays: 5 })
 const cardFixture = (over = {}) => ({
   contractVersion: SUPPLIER_REPLY_CONTRACT_VERSION, id: 'sr-1', purchaseOrderId: 'po-12', purchaseOrderNumber: 'PO-202611-0012', orderVersion: 4, supplierName: 'Acme Ltd',
   source: 'paste', receivedOn: '2026-11-17', createdAt: '2026-11-17T10:00:00.000Z', state: 'proposed', readingStatus: 'read', replyKind: 'dates',
-  text: 'Hello,\nWe can ship the balance on\n28 November. Unit price rises 4% from December.', quotedTextHidden: true,
+  text: 'Hello,\nWe can ship the balance on\n28 November. Unit price rises 4% from December.', quotedTextHidden: true, quotedText: '> When will PO-202611-0012 ship?',
   lines: [line(), line({ ref: 'L2', purchaseOrderLineId: 'pol-2', sku: 'SKU-2210', itemName: 'Hinge', remaining: 20 })],
   flags: [{ kind: 'price_change', quote: 'Unit price rises 4% from December.', orderNumber: null }], reason: null, instructionsIgnored: false,
   formLines: [formLine('pol-1'), formLine('pol-2'), formLine('pol-3', '2026-12-01')],
@@ -86,10 +86,18 @@ test('a dismissal needs a note only for Other, and at most 200 characters', () =
 
 test('a stale card and a closed reply are told apart from other refusals, in either error shape', () => {
   assert.equal(replyErrorKind({ code: 'SYNC_VERSION_CONFLICT', status: 409 }), 'stale')
-  assert.equal(replyErrorKind({ status: 409, payload: { error: { code: 'SUPPLIER_REPLY_STALE' } } }), 'stale')
+  assert.equal(replyErrorKind({ status: 409, payload: { error: { code: 'SYNC_VERSION_CONFLICT' } } }), 'stale')
   assert.equal(replyErrorKind({ code: 'SUPPLIER_REPLY_NOT_OPEN', status: 409 }), 'closed')
   assert.equal(replyErrorKind({ code: 'PURCHASE_ORDER_PROMISE_CLOSED', status: 409 }), 'other')
   assert.equal(replyErrorKind(new Error('offline')), 'other')
+  // Every other code the routes answer with has its own sentence, or the
+  // purchasing words the procurement pages already use.
+  const purchasing = read('src/modules/procurement/procurementErrors.ts')
+  for (const code of SUPPLIER_REPLY_ERROR_CODES) {
+    const handled = ['stale', 'closed'].includes(replyErrorKind({ code })) || code in SUPPLIER_REPLY_ERROR_TEXT || purchasing.includes(`${code}:`) || code === 'TRANSACTION_CONFLICT'
+    assert.ok(handled, code)
+  }
+  for (const [code, [english, chinese]] of Object.entries(SUPPLIER_REPLY_ERROR_TEXT)) assert.ok(english && /[㐀-鿿]/.test(chinese), code)
 })
 
 test('every code the card shows has English and Chinese words', () => {

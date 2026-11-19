@@ -9,7 +9,7 @@ import { apiJson } from "../../../lib/api-client";
 import { formatCalendarDay, formatQuantity } from "../../../lib/format";
 import { procurementErrorCode, procurementErrorText } from "../../procurement/procurementErrors";
 import { SUPPLIER_REPLY_ROUTES } from "../../../../shared/supplier-reply-contract.mjs";
-import { supplierReplyText, type SupplierReplyCopyKey } from "./supplierReplyCopy";
+import { SUPPLIER_REPLY_ERROR_TEXT, supplierReplyText, type SupplierReplyCopyKey } from "./supplierReplyCopy";
 import { SUPPLIER_REPLY_NOTE_LIMIT, dismissReady, formStart, isOpenReply, isOutage, markQuotes, needsManualForm, recordKey, recordLines, replyErrorKind } from "./supplierReplyLogic";
 import type { SupplierReplyCardData, SupplierReplyDismissReason, SupplierReplyLine } from "./supplierReplyTypes";
 
@@ -36,7 +36,9 @@ export function SupplierReplyCard({ card, onChanged, refresh }: {
   const t = (key: SupplierReplyCopyKey, values?: Record<string, string | number>) => supplierReplyText(language, key, values);
   const day = (value: string | null | undefined) => (value ? formatCalendarDay(value, locale) : t("noDate"));
   const qty = (value: number | null, unit: string | null) => (value === null ? "—" : `${formatQuantity(value)}${unit ? ` ${unitLabel(unit, language, value)}` : ""}`);
-  const lineName = (line: { sku: string | null; itemName: string | null }) => [line.sku, line.itemName].filter(Boolean).join(" · ") || t("unnamedLine");
+  // Our SKU and name; the supplier's own code beside them, as a reply may quote it.
+  const lineName = (line: { sku: string | null; supplierSku?: string | null; itemName: string | null }) =>
+    [line.sku, line.supplierSku && line.supplierSku !== line.sku ? `(${t("supplierCode", { code: line.supplierSku })})` : null, line.itemName].filter(Boolean).join(" · ").replace(" · (", " (") || t("unnamedLine");
   const late = (days: number | null) => (days ? (days === 1 ? t("dayLate") : t("daysLate", { n: days })) : null);
 
   const open = isOpenReply(card);
@@ -73,7 +75,7 @@ export function SupplierReplyCard({ card, onChanged, refresh }: {
         setMessage(t(kind));
         await refresh();
       } else {
-        toast.error(t("failed"), { description: <span title={procurementErrorCode(error)}>{procurementErrorText(error, language, [t("retry"), t("retry")])}</span> });
+        toast.error(t("failed"), { description: <span title={procurementErrorCode(error)}>{procurementErrorText(error, language, [t("retry"), t("retry")], SUPPLIER_REPLY_ERROR_TEXT)}</span> });
       }
     } finally {
       setBusy(false);
