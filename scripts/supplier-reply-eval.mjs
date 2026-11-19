@@ -1,7 +1,9 @@
-// Runs the supplier reply set (tests/ai-eval/supplier-reply) against a real
-// model, as the server reads a pasted reply: clean, one tool-less reading,
-// checks in code (server/domain/supplier-reply-reading.mjs). No database and
-// no app instance. Scores each case and the gate (score.mjs; #363 §7, SR-6).
+// Runs the supplier reply set and its held-out batch (tests/ai-eval/
+// supplier-reply) against a real model, as the server reads a pasted reply:
+// clean, one tool-less reading, checks in code
+// (server/domain/supplier-reply-reading.mjs). No database and no app
+// instance. Scores each case, each batch on its own, and the gate (score.mjs;
+// #363 §7, SR-6).
 //
 //   node scripts/supplier-reply-eval.mjs --provider=<env file> [--only=<id,id>] [--out=<dir>]
 //
@@ -28,7 +30,8 @@ import { anthropicMessagesUsage } from '../server/domain/ai-runtime-provider-spe
 import { aiCallCostMicros, aiUsagePrices } from '../server/domain/ai-usage-meter.mjs'
 import { SUPPLIER_REPLY_PROMPT_VERSION } from '../shared/supplier-reply-contract.mjs'
 import { SUPPLIER_REPLY_CASES } from '../tests/ai-eval/supplier-reply/cases.mjs'
-import { runSupplierReplyCase, scoreSupplierReplyCase, summarizeSupplierReplyRun } from '../tests/ai-eval/supplier-reply/score.mjs'
+import { HELD_OUT_CASES } from '../tests/ai-eval/supplier-reply/held-out-cases.mjs'
+import { runSupplierReplyCase, scoreSupplierReplyCase, summarizeSupplierReplyRun, supplierReplyGate } from '../tests/ai-eval/supplier-reply/score.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const CALL_TIMEOUT_MS = 90000
@@ -100,8 +103,10 @@ async function main() {
   const client = createAssistantV2ModelClient(env, { logger: { warn: (line) => modelLog.push(String(line)), info: () => {}, error: (line) => modelLog.push(String(line)) } })
   if (!client) throw new Error('The provider file does not configure a model the assistant can call.')
   const prices = aiUsagePrices(env)
+  // The held-out batch runs after the set and is scored on its own.
+  const all = [...SUPPLIER_REPLY_CASES, ...HELD_OUT_CASES]
   const only = args.only && args.only !== true ? new Set(String(args.only).split(',').map((id) => id.trim()).filter(Boolean)) : null
-  const cases = only ? SUPPLIER_REPLY_CASES.filter((kase) => only.has(kase.id)) : SUPPLIER_REPLY_CASES
+  const cases = only ? all.filter((kase) => only.has(kase.id)) : all
   if (only && cases.length !== only.size) throw new Error(`Unknown case ids: ${[...only].filter((id) => !cases.some((kase) => kase.id === id)).join(', ')}`)
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*/, '').replace('T', '-')
   const out = resolve(args.out && args.out !== true ? String(args.out) : join(root, '.local', 'supplier-reply-eval', `${stamp}-${config.model || config.kind}`))
@@ -136,17 +141,28 @@ async function main() {
       break
     }
   }
-  const summary = summarizeSupplierReplyRun(results.map((row) => row.score), meter)
+  const usageOf = (rows) => rows.reduce((total, row) => ({ calls: total.calls + row.calls, inputTokens: total.inputTokens + row.usage.inputTokens, outputTokens: total.outputTokens + row.usage.outputTokens, costMicros: total.costMicros + row.usage.costMicros }), { calls: 0, inputTokens: 0, outputTokens: 0, costMicros: 0 })
+  const batch = (rows) => summarizeSupplierReplyRun(rows.map((row) => row.score), usageOf(rows))
+  const setRows = results.filter((row) => !row.score.heldOut)
+  const heldRows = results.filter((row) => row.score.heldOut)
+  const summary = batch(setRows)
+  const heldOut = heldRows.length ? batch(heldRows) : null
+  const gate = supplierReplyGate(summary, heldOut)
+  const pct = (share) => `${Math.round(share * 1000) / 10}%`
+  const report = (label, totals) => {
+    console.log(`[supplier-reply-eval] ${label}: ok ${totals.ok} · held ${totals.held} · state only ${totals.stateOnly} · misses ${totals.misses} · hard fails ${totals.hardFails} (of ${totals.cases}) · dated correct ${totals.datedCorrect}/${totals.dated} (${pct(totals.datedCorrectShare)})`)
+    console.log(`[supplier-reply-eval] ${label}: states matched ${totals.stateMatches}/${totals.cases} · nothing to record ${totals.nothingToRecord.correct}/${totals.nothingToRecord.expected} · flags ${totals.flags.found}/${totals.flags.expected} · injection marked ${totals.injection.flagged}/${totals.injection.expected} (+${totals.injection.flaggedWithout} others) · reading ${JSON.stringify(totals.readingStatus)} · ${totals.calls} calls · ${totals.inputTokens} in / ${totals.outputTokens} out tokens · $${totals.costUsd.toFixed(4)}`)
+  }
   console.log('')
-  console.log(`[supplier-reply-eval] ok ${summary.ok} · held ${summary.held} · state only ${summary.stateOnly} · misses ${summary.misses} · hard fails ${summary.hardFails} (of ${summary.cases})`)
-  console.log(`[supplier-reply-eval] dated correct ${summary.datedCorrect}/${summary.dated} (${Math.round(summary.datedCorrectShare * 1000) / 10}%) · states matched ${summary.stateMatches}/${summary.cases} · nothing to record ${summary.nothingToRecord.correct}/${summary.nothingToRecord.expected} · flags ${summary.flags.found}/${summary.flags.expected} · injection marked ${summary.injection.flagged}/${summary.injection.expected} (+${summary.injection.flaggedWithout} others)`)
-  console.log(`[supplier-reply-eval] reading ${JSON.stringify(summary.readingStatus)} · ${summary.calls} calls · ${summary.inputTokens} in / ${summary.outputTokens} out tokens · $${summary.costUsd.toFixed(4)}`)
-  console.log(`[supplier-reply-eval] gate: ${summary.gate.pass && !stopped ? 'PASS' : 'FAIL'} (hard fails ${summary.gate.hardFails}, dated correct ${Math.round(summary.gate.datedCorrectShare * 1000) / 10}%, needs 0 and 90%)${stopped ? ' — run stopped early' : ''}`)
+  report('set', summary)
+  if (heldOut) report('held out', heldOut)
+  const pass = gate.pass && !stopped
+  console.log(`[supplier-reply-eval] gate: ${pass ? 'PASS' : 'FAIL'} (set: hard fails ${summary.gate.hardFails}, dated correct ${pct(summary.gate.datedCorrectShare)}, needs 0 and 90%${heldOut ? `; held out: hard fails ${heldOut.hardFails}, needs 0` : ''})${stopped ? ' — run stopped early' : ''}`)
 
   mkdirSync(out, { recursive: true })
   const provider = { kind: config.kind, model: config.model || null, endpointHost: host, promptVersion: SUPPLIER_REPLY_PROMPT_VERSION, prices }
   writeFileSync(join(out, 'results.json'), `${JSON.stringify(results, null, 2)}\n`)
-  writeFileSync(join(out, 'summary.json'), `${JSON.stringify({ provider, cases: cases.length, stopped, summary, gatePass: summary.gate.pass && !stopped, modelLog }, null, 2)}\n`)
+  writeFileSync(join(out, 'summary.json'), `${JSON.stringify({ provider, cases: cases.length, stopped, summary, heldOut, gate, gatePass: pass, modelLog }, null, 2)}\n`)
   console.log(`[supplier-reply-eval] wrote ${inside(out, root) ? relative(root, out) : out}`)
   if (stopped) process.exitCode = 2
 }

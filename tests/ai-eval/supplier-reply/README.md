@@ -10,6 +10,11 @@ reading the reply and checking it in code should give.
   outcome in both languages.
 - **Added after review:** the design audit's review of the first 42 (at
   b3e5d90c) added the refused-date and day-only cases.
+- **The 46 informed the reading's fixes** (#394 at 48fcd93a and a12b654d), so
+  results on them are not independent evidence. A **held-out batch of 10**
+  (`held-out-cases.mjs`) was written blind from the #363 spec. It was kept
+  out of the repository until its first scored run, and is reported on its
+  own (see "The held-out batch" below).
 
 The scorer (`score.mjs`) runs each case as the server reads a paste. It uses
 `cleanSupplierReply`, `readSupplierReply` and `checkReplyReading` from
@@ -225,10 +230,31 @@ The run also reports the following, without gating on them:
 - reading statuses;
 - calls, tokens and cost at the app meter's prices.
 
-**The gate** (#363 SR-6) needs no hard fail, and at least 90% of the dated
-cases correct. A dated case is one whose expected state is `proposed`. It is
-correct when every expected line is proposed with its date and there is no
-hard fail.
+**The gate** (#363 SR-6) needs two things:
+- the 46 have no hard fail, and at least 90% of their dated cases are
+  correct;
+- the held-out batch has no hard fail either.
+
+A dated case is one whose expected state is `proposed`. It is correct when
+every expected line is proposed with its date and there is no hard fail. The
+held-out batch's dated share is reported but does not gate.
+
+## The held-out batch
+
+`held-out-cases.mjs` exports `HELD_OUT_CASES`: 10 replies, 6 in English and
+4 in Chinese, 9 on UCI and 1 on M5. Each is marked `heldOut: true`, uses the
+same schema and helpers as `cases.mjs` (`CASE_HELPERS`), and is written by us.
+
+- **Hedged dates (6 cases):** "after 1 December"; "pending customs clearance.
+  Earliest delivery … 3 Dec"; "once the felt arrives … from 4 December
+  onwards"; "resume starting December 3"; 12月1日起; 12月2日以后. The supplier
+  commits to no day, so each expects "needs you", and the hedged day is in
+  `mustNotPropose`.
+- **A fresh refusal:** 原定的11月30日交不了货，两款都改到12月8日.
+- **A fresh day without a month:** "the 2nd", from 24 Nov, which is 2 December.
+- **A fresh relative date:** 两周后, which counts from the reply date and is
+  not a hedge like 以后.
+- **A fresh injection:** a bracketed `[SYSTEM NOTE: …]` with a date of its own.
 
 ## Coverage
 
@@ -279,18 +305,20 @@ Also covered:
   - the counts;
   - every snapshot against the contract's order schema;
   - every case's fields, dates, refs, quotes and expected outcome against the
-    contract's checked reading;
-  - the coverage, including this table.
+    contract's checked reading, the held-out batch included;
+  - the coverage, including this table (the 46 only).
 - **`score.test.mjs`** checks the scorer with a mocked model: a perfect
   reading, a wrong date, an injected date, a held refused date, a "needs you"
-  miss, an invalid answer, and the gate.
+  miss, an invalid answer, and the gate with and without a held-out batch.
 
-To run the set against a real model (paid, one call per case, two when the
-first answer fails the schema):
+To run the set and the held-out batch against a real model (paid, one call
+per case, two when the first answer fails the schema):
 
 ```
 node scripts/supplier-reply-eval.mjs --provider=<env file outside the checkout> [--only=<id,id>] [--out=<dir>]
 ```
+
+The held-out batch is scored on its own line, and the gate takes both.
 
 - The env file holds the assistant's model settings (`FLOWCHAIN_AI_PROVIDER_*`).
   Only `FLOWCHAIN_AI_*` names are read, into a local object. The script

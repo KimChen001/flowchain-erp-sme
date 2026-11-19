@@ -5,7 +5,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { SUPPLIER_REPLY_CASES } from './cases.mjs'
-import { runSupplierReplyCase, scoreSupplierReplyCase, summarizeSupplierReplyRun } from './score.mjs'
+import { runSupplierReplyCase, scoreSupplierReplyCase, summarizeSupplierReplyRun, supplierReplyGate } from './score.mjs'
 
 const caseOf = (id) => {
   const found = SUPPLIER_REPLY_CASES.find((row) => row.id === id)
@@ -89,4 +89,9 @@ test('the totals and the gate: one hard fail fails it, as does under 90% of date
   assert.deepEqual(summarizeSupplierReplyRun(twoMissed).gate, { pass: false, hardFails: 0, datedCorrectShare: 0.8 })
   const summary = summarizeSupplierReplyRun([...good.slice(1), row({ verdict: 'miss', datedCorrect: false })], { calls: 11, inputTokens: 22000, outputTokens: 3300, costMicros: 77000 })
   assert.deepEqual([summary.gate.pass, summary.misses, summary.costUsd, summary.calls], [true, 1, 0.077, 11])
+  // A held-out batch must have no hard fail either; its misses do not gate.
+  const set = summarizeSupplierReplyRun(good)
+  assert.equal(supplierReplyGate(set, summarizeSupplierReplyRun([row({ heldOut: true, verdict: 'miss', datedCorrect: false })])).pass, true)
+  assert.deepEqual(supplierReplyGate(set, summarizeSupplierReplyRun([row({ heldOut: true, verdict: 'hard_fail', datedCorrect: false })])), { pass: false, set: set.gate, heldOutHardFails: 1 })
+  assert.equal(supplierReplyGate(set).pass, true)
 })

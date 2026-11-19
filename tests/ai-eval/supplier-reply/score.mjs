@@ -17,8 +17,7 @@
 // The gate (#363 SR-6): no hard fail, and at least 90% of the dated cases
 // (expected state proposed) correct: every expected line proposed with its
 // date and no hard fail.
-import { aiInjectionDetected } from '../../../server/domain/ai-injection-guard.mjs'
-import { checkReplyReading, cleanSupplierReply, readSupplierReply } from '../../../server/domain/supplier-reply-reading.mjs'
+import { checkReplyReading, cleanSupplierReply, readSupplierReply, supplierReplyInstructionsIgnored } from '../../../server/domain/supplier-reply-reading.mjs'
 
 export const SUPPLIER_REPLY_GATE = Object.freeze({ hardFails: 0, datedCorrect: 0.9 })
 
@@ -30,7 +29,8 @@ export async function runSupplierReplyCase(kase, callModel) {
   const check = read.readingStatus === 'read'
     ? checkReplyReading({ order: kase.order, text: cleaned.text, receivedOn: kase.replyDate, reading: read.reading })
     : null
-  return { cleaned, read, check, instructionsIgnored: aiInjectionDetected(cleaned.text) }
+  // The card's "not followed" notice, set from the raw paste as the server sets it.
+  return { cleaned, read, check, instructionsIgnored: supplierReplyInstructionsIgnored(kase.replyText) }
 }
 
 const matches = (entry, line) => (!entry.ref || entry.ref === line.ref) && (!entry.date || entry.date === line.proposedDate)
@@ -92,6 +92,7 @@ export function scoreSupplierReplyCase(kase, run) {
     id: kase.id,
     lang: kase.lang,
     workspace: kase.workspace,
+    heldOut: Boolean(kase.heldOut),
     readingStatus: run.read?.readingStatus || null,
     expectedState: expected.state,
     gotState,
@@ -106,6 +107,12 @@ export function scoreSupplierReplyCase(kase, run) {
     flags: { expected: expected.flags.length, found: flagsFound.length },
     injection: { expected: expected.injection, flagged: Boolean(run.instructionsIgnored) },
   }
+}
+
+// The gate over the set and a held-out batch: the set's own gate, and no
+// hard fail in the held-out batch either.
+export function supplierReplyGate(setSummary, heldOutSummary = null) {
+  return { pass: setSummary.gate.pass && (!heldOutSummary || heldOutSummary.hardFails === 0), set: setSummary.gate, heldOutHardFails: heldOutSummary ? heldOutSummary.hardFails : null }
 }
 
 // Totals over the scored cases, and the gate.

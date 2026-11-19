@@ -10,6 +10,7 @@ import {
   supplierReplyCheckSchema, supplierReplyOrderSchema as orderSchema,
 } from '../../../shared/supplier-reply-contract.mjs'
 import { EXTRA_TAGS, SUPPLIER_REPLY_CASES, SUPPLIER_REPLY_REQUIREMENTS, WRITTEN_BY } from './cases.mjs'
+import { HELD_OUT_CASES, HELD_OUT_TAGS } from './held-out-cases.mjs'
 import { ORDER_SNAPSHOTS, SNAPSHOT_SEED_DAY } from './orders.mjs'
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/
@@ -17,6 +18,11 @@ const isDay = (value) => typeof value === 'string' && DAY.test(value) && new Dat
 const daysBetween = (from, to) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000)
 const STATES = ['proposed', 'needs_you', 'nothing_to_record']
 const CJK = /[㐀-鿿]/
+
+// The held-out batch gets the same per-case checks; the counts and the
+// coverage stay the 46's own.
+const EXTRA_CASES = HELD_OUT_CASES
+const BATCH_TAGS = HELD_OUT_TAGS
 
 // Where the quoted earlier message or the signature starts (§4.3's markers),
 // for checking that a case's quote sits in the supplier's new text. This is
@@ -84,7 +90,16 @@ test('every snapshot parses as the contract\'s order, with refs L1… in order a
   assert.ok(!orderSchema.safeParse({ ...first, lines: [{ ...first.lines[0], unitPrice: 1 }] }).success)
 })
 
-for (const kase of SUPPLIER_REPLY_CASES) {
+test('the held-out batch: 8 to 10 cases in both languages, all held out, with ids of their own', () => {
+  assert.ok(SUPPLIER_REPLY_CASES.every((kase) => kase.heldOut === false))
+  assert.ok(EXTRA_CASES.length >= 8 && EXTRA_CASES.length <= 10, `${EXTRA_CASES.length} held-out cases`)
+  assert.ok(['en', 'zh'].every((lang) => EXTRA_CASES.some((kase) => kase.lang === lang)))
+  assert.ok(EXTRA_CASES.every((kase) => kase.heldOut === true))
+  const ids = [...SUPPLIER_REPLY_CASES, ...EXTRA_CASES].map((kase) => kase.id)
+  assert.equal(new Set(ids).size, ids.length)
+})
+
+for (const kase of [...SUPPLIER_REPLY_CASES, ...EXTRA_CASES]) {
   test(`case ${kase.id}`, () => {
     const { expected, order } = kase
     assert.match(kase.id, /^(en|zh)-(uci|m5)-[a-z0-9-]+$/)
@@ -192,7 +207,7 @@ for (const kase of SUPPLIER_REPLY_CASES) {
     }
 
     // Tags and what they imply.
-    const tags = new Set([...SUPPLIER_REPLY_REQUIREMENTS.map((row) => row.tag), ...EXTRA_TAGS])
+    const tags = new Set([...SUPPLIER_REPLY_REQUIREMENTS.map((row) => row.tag), ...EXTRA_TAGS, ...(kase.heldOut ? BATCH_TAGS : [])])
     assert.ok(kase.covers.length > 0 && kase.covers.every((tag) => tags.has(tag)), `covers ${kase.covers}`)
     assert.equal(kase.covers.includes('injection'), expected.injection, 'injection cases are the ones tagged')
     if (kase.covers.includes('quoted-chase') || kase.covers.includes('long-thread')) assert.ok(hasQuotedPart(kase.replyText), 'has a quoted earlier message')

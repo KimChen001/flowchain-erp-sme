@@ -79,12 +79,17 @@ const vague = (ref) => ({ ref, outcome: 'needs_you', proposedDate: null, dateKin
 const ambiguous = (ref, readings) => ({ ref, outcome: 'needs_you', proposedDate: null, dateKind: 'stated', issue: 'ambiguous_numeric', readings })
 
 const base = { writtenBy: WRITTEN_BY, flags: [], injection: false, mustNotPropose: [] }
-function kase({ id, lang, workspace, about, covers, replyDate, today, replyText, order: snapshot, expected }) {
+// heldOut: a case written after the reading was tuned on this set, kept
+// apart and scored as its own batch.
+function kase({ id, lang, workspace, about, covers, replyDate, today, replyText, order: snapshot, expected, heldOut = false }) {
   return {
-    id, lang, workspace, writtenBy: base.writtenBy, about, covers, replyDate, today, replyText, order: snapshot,
+    id, lang, workspace, writtenBy: base.writtenBy, about, covers, replyDate, today, replyText, order: snapshot, heldOut,
     expected: { flags: base.flags, injection: base.injection, mustNotPropose: base.mustNotPropose, ...expected },
   }
 }
+
+// For another batch of cases written the same way.
+export const CASE_HELPERS = Object.freeze({ kase, order, refsOf, email, proposed, relative, dayOnly, committed, confirmed, vague, ambiguous })
 
 // Our chase as the follow-up email writes it (src/modules/overview/followUpMessage.ts),
 // with the UCI workspace's en-GB dates.
