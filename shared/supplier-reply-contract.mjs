@@ -78,10 +78,13 @@ export const SUPPLIER_REPLY_DISMISS_REASONS = Object.freeze(['wrong_reading', 's
 //                        no longer takes dates
 //   unchanged            the date is the line's current promised date
 //   split_incomplete     a split delivery's parts do not cover what is open
+//   refused              the reply refuses this date ("cannot ship on 28 Nov",
+//                        "28 Nov is no longer possible", 发不了) and names no other
+//   addressed_to_system  quoted from text addressed to the system (dropped)
 //   several_dates        the quote names more than one date, and this one is
 //                        the line's current promise or the one it replaces
 //                        (both offered in readings when there are two)
-export const SUPPLIER_REPLY_LINE_ISSUES = Object.freeze(['quote_not_found', 'date_mismatch', 'ambiguous_numeric', 'vague', 'relative_unreadable', 'before_reply', 'too_far', 'unknown_line', 'not_open', 'unchanged', 'split_incomplete', 'several_dates'])
+export const SUPPLIER_REPLY_LINE_ISSUES = Object.freeze(['quote_not_found', 'date_mismatch', 'ambiguous_numeric', 'vague', 'relative_unreadable', 'before_reply', 'too_far', 'unknown_line', 'not_open', 'unchanged', 'split_incomplete', 'several_dates', 'refused', 'addressed_to_system'])
 // What became of one line of the reading.
 export const SUPPLIER_REPLY_LINE_OUTCOMES = Object.freeze(['proposed', 'needs_you', 'dropped', 'confirmed'])
 
@@ -270,14 +273,19 @@ export const supplierReplyCardSchema = z.strictObject({
 //   409 SUPPLIER_REPLY_ORDER_NOT_OPEN     a paste on an order that is not issued
 //                                         or partly received
 //   409 SUPPLIER_REPLY_CONFLICT           two pastes on one order at once
+//   409 SUPPLIER_REPLY_STALE              recording a proposal whose lines'
+//                                         dates changed on the order since the
+//                                         paste (details: [{ purchaseOrderLineId,
+//                                         pastedDate, currentDate }])
 //   409 TRANSACTION_CONFLICT              a database race; try again
 //   422 SUPPLIER_REPLY_INVALID            the body fails its schema (details:
 //                                         [{ field, code }])
 //   422 SUPPLIER_REPLY_EMPTY              nothing left once quoted text is cut
 //   422 SUPPLIER_REPLY_RECEIVED_IN_FUTURE receivedOn after today
+//   422 SUPPLIER_REPLY_RECEIVED_TOO_EARLY receivedOn more than 60 days ago
 //   422 SUPPLIER_REPLY_NO_DATES           record with no proposed or given line
 //   422 PROMISED_DATE_UNCHANGED and the promised-dates command's other codes
-export const SUPPLIER_REPLY_ERROR_CODES = Object.freeze(['SUPPLIER_REPLY_INVALID_BODY', 'PURCHASE_ORDER_NOT_FOUND', 'SUPPLIER_REPLY_NOT_FOUND', 'SYNC_VERSION_CONFLICT', 'SUPPLIER_REPLY_NOT_OPEN', 'SUPPLIER_REPLY_ORDER_NOT_OPEN', 'SUPPLIER_REPLY_CONFLICT', 'TRANSACTION_CONFLICT', 'SUPPLIER_REPLY_INVALID', 'SUPPLIER_REPLY_EMPTY', 'SUPPLIER_REPLY_RECEIVED_IN_FUTURE', 'SUPPLIER_REPLY_NO_DATES'])
+export const SUPPLIER_REPLY_ERROR_CODES = Object.freeze(['SUPPLIER_REPLY_INVALID_BODY', 'PURCHASE_ORDER_NOT_FOUND', 'SUPPLIER_REPLY_NOT_FOUND', 'SYNC_VERSION_CONFLICT', 'SUPPLIER_REPLY_NOT_OPEN', 'SUPPLIER_REPLY_ORDER_NOT_OPEN', 'SUPPLIER_REPLY_CONFLICT', 'SUPPLIER_REPLY_STALE', 'TRANSACTION_CONFLICT', 'SUPPLIER_REPLY_INVALID', 'SUPPLIER_REPLY_EMPTY', 'SUPPLIER_REPLY_RECEIVED_IN_FUTURE', 'SUPPLIER_REPLY_RECEIVED_TOO_EARLY', 'SUPPLIER_REPLY_NO_DATES'])
 
 export const SUPPLIER_REPLY_ROUTES = Object.freeze({
   list: '/api/procurement/orders/:id/supplier-replies',
@@ -288,8 +296,10 @@ export const SUPPLIER_REPLY_ROUTES = Object.freeze({
 })
 
 export const supplierReplyPasteRequestSchema = z.strictObject({
-  text: z.string().min(1).max(SUPPLIER_REPLY_LIMITS.text),
-  // The day the reply was received; today in the workspace when omitted. It
+  // Twice the cleaned limit: a long thread is cut to the reply before the
+  // limit applies (the cleaned text keeps at most SUPPLIER_REPLY_LIMITS.text).
+  text: z.string().min(1).max(SUPPLIER_REPLY_LIMITS.text * 2),
+  // The day the reply was received, within the last 60 days; today in the workspace when omitted. It
   // anchors relative dates.
   receivedOn: day.optional(),
 })

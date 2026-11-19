@@ -50,7 +50,13 @@ export async function handleSupplierRepliesRoute(ctx) {
   const collection = url.pathname.match(/^\/api\/procurement\/orders\/([^/]+)\/supplier-replies$/)
   const action = url.pathname.match(/^\/api\/procurement\/orders\/([^/]+)\/supplier-replies\/([^/]+)\/(record|dismiss|not-now)$/)
   if (req.method === 'GET' && collection) return answer(ctx, 200, (replies) => replies.listReplies(decodeURIComponent(collection[1]), ctx))
-  if (req.method === 'POST' && collection) return answer(ctx, 201, async (replies) => replies.pasteReply(decodeURIComponent(collection[1]), await bodyOf(ctx), ctx))
+  if (req.method === 'POST' && collection) {
+    // The reading stops when the person goes away (the connection closes
+    // before the answer is written); the reply is still kept.
+    const reading = new AbortController()
+    ctx.res?.once?.('close', () => { if (!ctx.res.writableFinished) reading.abort() })
+    return answer(ctx, 201, async (replies) => replies.pasteReply(decodeURIComponent(collection[1]), await bodyOf(ctx), ctx, { signal: reading.signal }))
+  }
   if (req.method === 'POST' && action) {
     return answer(ctx, 200, async (replies) => replies[ACTIONS[action[3]]](decodeURIComponent(action[1]), decodeURIComponent(action[2]), await bodyOf(ctx, { idempotent: action[3] === 'record' }), ctx))
   }
