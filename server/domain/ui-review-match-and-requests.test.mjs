@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { inventoryPosition } from "../../shared/purchase-suggestion.mjs";
 
 // Source contracts for the seventh UI review, on the three-way match pages,
 // the purchase request detail, the prefilled request form and the reorder
@@ -109,4 +110,18 @@ test("the reorder list folds its method behind a toggle on phones and says 库�
   assert.match(copy, /reason: "补货清单：库存位置（含在途）\{position\}/);
   assert.match(copy, /methodToggle: "How this is worked out"/);
   assert.match(copy, /methodToggle: "计算方法"/);
+});
+
+test("the reorder list's method note states the stock position the list computes (design audit C2)", () => {
+  const copy = read("src/modules/inventory/reorderListCopy.ts");
+  // The note's formula, in both languages, with the columns' own words.
+  assert.match(copy, /rule: "Stock position = on hand − reserved \+ incoming \+ requested − backorders\. Requested is draft and pending-approval purchase orders and open purchase requests; backorders are open sales demand that no reservation covers\./);
+  assert.match(copy, /rule: "库存位置（含在途）= 在手 − 预留 \+ 在途 \+ 已申请 − 欠交。已申请指草稿和待审批的采购订单及未结采购申请；欠交指尚无预留覆盖的未结销售需求。/);
+  // The note before C2 left out requests and backorders.
+  assert.doesNotMatch(copy, /Stock position = on hand − reserved \+ incoming\. |在手 − 预留 \+ 在途。/);
+  for (const [en, zh] of [["colIncoming", "在途"], ["colRequested", "已申请"], ["colBackorders", "欠交"]]) assert.match(copy, new RegExp(`${en}: "${zh}"`));
+  // The same sum as the code: requested is pending orders plus open requests.
+  const parts = { onHand: 10, reserved: 2, incoming: 5, pendingOrders: 1, openRequests: 3, backorders: 4 };
+  const requested = parts.pendingOrders + parts.openRequests;
+  assert.equal(inventoryPosition(parts).position, parts.onHand - parts.reserved + parts.incoming + requested - parts.backorders);
 });

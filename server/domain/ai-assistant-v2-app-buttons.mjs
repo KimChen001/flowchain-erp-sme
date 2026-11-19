@@ -5,23 +5,28 @@
 // issued order, which has only Close PO, and to 催货 and 改期 buttons that do
 // not exist; a survey of published agent guidance found no such check). Keep
 // these in step with the labels in the app's copy:
-//   the request form and record cards in chat   src/i18n/I18n.tsx (ai.v2.form.*, ai.v2.actions.button.*)
+//   the request form and record cards in chat   src/i18n/I18n.tsx (ai.v2.form.*, ai.v2.actions.button.*;
+//                                               the card shows only the steps of RECORD_ACTION_RULES)
 //   a purchase order's page                     src/modules/purchasing/components/PurchaseOrderWorkflowActions.tsx, PurchaseOrderPromiseDates.tsx
 //   the receiving form                          src/modules/procurement/ReceivingForm.tsx
 //   decision cards on Today                     src/modules/overview/decisionCopy.ts
-//   a supplier invoice's page                   src/modules/finance/SupplierInvoiceScreens.tsx
+//   a supplier invoice's page                   src/modules/finance/SupplierInvoiceScreens.tsx, I18n.tsx (finance.action.*)
+// ai-assistant-v2-app-buttons.test.mjs reads these screens and fails on a
+// label none of them draws.
 export const ASSISTANT_APP_BUTTONS = Object.freeze([
   { where: 'the request form in chat', buttons: [['Create draft request', '创建草稿申请'], ['Submit for approval', '提交审批'], ['Cancel draft', '取消草稿'], ['Cancel request', '取消申请'], ['Withdraw', '撤回']] },
-  { where: 'the card on a request or an order in chat', buttons: [['Approve', '批准'], ['Reject', '驳回'], ['Create purchase order', '生成采购订单'], ['Request quotes (RFQ)', '发起询价'], ['Mark as issued', '标记为已下达']] },
+  { where: 'a request or order card in chat', buttons: [['Approve', '批准'], ['Reject', '驳回'], ['Create purchase order', '生成采购订单'], ['Mark as issued', '标记为已下达']] },
   { where: 'a purchase order\'s page', buttons: [['Submit for approval', '提交审批'], ['Approve', '批准'], ['Reject', '驳回'], ['Mark as issued', '标记为已下达'], ['Cancel PO', '取消采购订单'], ['Close PO', '关闭采购订单'], ['Change promised date', '修改承诺交期'], ['Save revision', '保存修改'], ['Receive', '收货']] },
   { where: 'the receiving form', buttons: [['Save draft', '保存草稿'], ['Save and submit', '保存并提交']] },
   { where: 'a decision card on Today', buttons: [['Review and create the request', '核对并创建申请'], ['Copy and mark chased', '复制并记为已催'], ['Review and send', '核对并发送'], ['Create the purchase orders', '生成采购订单'], ['Open the request', '打开申请'], ['Copy and mark contacted', '复制并记为已联系'], ['Open the invoice', '打开发票'], ['Check the receipt', '核对收货'], ['Not now', '以后再说'], ['Not needed', '不需要'], ['Reopen', '重新打开']] },
-  // A held invoice's differences are approved or rejected on its page.
-  { where: 'the page of a supplier invoice', buttons: [['Approve difference', '批准差异'], ['Reject difference', '驳回差异']] },
+  // The three-way match on a supplier invoice's page: Match (Match again once
+  // it held the invoice), and each held difference approved, rejected or, for
+  // a quantity, accepted at the received quantity (design audit B2).
+  { where: "a supplier invoice's page", buttons: [['Match', '匹配'], ['Match again', '重新匹配'], ['Approve difference', '批准差异'], ['Reject difference', '驳回差异'], ['Accept at received quantity', '按实收数量接受']] },
 ])
 
 // The prompt's line: every button with both labels, by where it is.
-export const assistantAppButtonsLine = () => `- The buttons the app has, by where they are (English / 中文): ${ASSISTANT_APP_BUTTONS.map((group) => `${group.where}: ${group.buttons.map(([en, zh]) => `${en} / ${zh}`).join(', ')}`).join('; ')}. Name a button only from this list, with its label in answerLanguage exactly as written here; describe any other step without a button name.`
+export const assistantAppButtonsLine = () => `- The app's buttons, by place (English / 中文): ${ASSISTANT_APP_BUTTONS.map((group) => `${group.where}: ${group.buttons.map(([en, zh]) => `${en} / ${zh}`).join(', ')}`).join('; ')}. Name only these buttons, in answerLanguage exactly as written; describe any other step without a button name.`
 
 // A label as compared: NFKC, lower case, no quotes, stars or spaces, and no
 // count of lines after it ("Create draft request (2 lines)", 创建草稿申请（1 行）).

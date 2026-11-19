@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { ASSISTANT_APP_BUTTONS, assistantAppButtonsLine, unknownAppButtons } from './ai-assistant-v2-app-buttons.mjs'
+import { RECORD_ACTION_RULES } from '../../shared/assistant-record-actions.mjs'
 
 // 2026-11-12: answers sent users to a "cancel action" an issued order does not
 // have, and to 催货 and 改期 buttons that do not exist.
@@ -24,11 +25,57 @@ test('a button an answer names is checked against the buttons the app has', () =
   assert.deepEqual(unknownAppButtons('然后点“提交审批”，再点“催货”。'), ['催货'])
 })
 
-test('the prompt lists every button with both labels, and the labels are the app\'s own', () => {
+const read = (file) => readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8')
+// Every double-quoted string of a source file.
+const quoted = (file) => [...read(file).matchAll(/"((?:[^"\\\n]|\\.)*)"/g)].map((match) => match[1])
+// The app's I18n copy: [English, Chinese] of a key.
+function i18nCopy() {
+  const text = read('src/i18n/I18n.tsx')
+  const at = text.indexOf('\nconst en')
+  const entries = (part) => new Map([...part.matchAll(/^\s*"([\w.-]+)": "((?:[^"\\]|\\.)*)",?\s*$/gm)].map((match) => [match[1], JSON.parse(`"${match[2]}"`)]))
+  const zh = entries(text.slice(0, at))
+  const en = entries(text.slice(at))
+  return { pair: (key) => [en.get(key), zh.get(key)], keys: (prefix) => [...en.keys()].filter((key) => key.startsWith(prefix)) }
+}
+
+// The labels each place shows now, read from the screens that draw them. The
+// chat record card draws only the steps RECORD_ACTION_RULES offers, so a
+// label whose step left the card (Request quotes (RFQ), design audit A7)
+// is not among them even while its I18n key remains.
+function labelsOnScreen() {
+  const copy = i18nCopy()
+  // "Create draft request ({count} lines)" is named without its count.
+  const withoutCount = (label) => String(label).replace(/\s*[(（]\{count\}[^)）]*[)）]$/u, '')
+  const card = Object.entries(RECORD_ACTION_RULES).flatMap(([type, steps]) => Object.keys(steps).flatMap((step) => copy.pair(`ai.v2.actions.button.${type}.${step}`)))
+  return new Map([
+    ['the request form in chat', copy.keys('ai.v2.form.').flatMap((key) => copy.pair(key)).map(withoutCount)],
+    ['a request or order card in chat', card],
+    ['a purchase order\'s page', [...quoted('src/modules/purchasing/components/PurchaseOrderWorkflowActions.tsx'), ...quoted('src/modules/purchasing/components/PurchaseOrderPromiseDates.tsx')]],
+    ['the receiving form', quoted('src/modules/procurement/ReceivingForm.tsx')],
+    ['a decision card on Today', quoted('src/modules/overview/decisionCopy.ts')],
+    ['a supplier invoice\'s page', [...quoted('src/modules/finance/SupplierInvoiceScreens.tsx'), ...copy.keys('finance.action.').flatMap((key) => copy.pair(key))]],
+  ].map(([where, labels]) => [where, new Set(labels.filter(Boolean))]))
+}
+
+test('the prompt lists every button with both labels, and each label is on the screen it names', () => {
   const line = assistantAppButtonsLine()
   for (const group of ASSISTANT_APP_BUTTONS) for (const [en, zh] of group.buttons) assert.ok(line.includes(`${en} / ${zh}`), en)
-  // Each label is in the app's copy, so a renamed button fails here first.
-  const copy = ['src/i18n/I18n.tsx', 'src/modules/purchasing/components/PurchaseOrderWorkflowActions.tsx', 'src/modules/purchasing/components/PurchaseOrderPromiseDates.tsx', 'src/modules/procurement/ReceivingForm.tsx', 'src/modules/overview/decisionCopy.ts', 'src/modules/finance/SupplierInvoiceScreens.tsx']
-    .map((file) => readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8')).join('\n')
-  for (const group of ASSISTANT_APP_BUTTONS) for (const label of group.buttons.flat()) assert.ok(copy.includes(`"${label}`), `${label} is not in the app's copy`)
+  // Each label is drawn where the group says, so a renamed or removed
+  // button fails here first.
+  const screens = labelsOnScreen()
+  for (const group of ASSISTANT_APP_BUTTONS) {
+    const shown = screens.get(group.where)
+    assert.ok(shown, `no screen is read for "${group.where}"`)
+    for (const label of group.buttons.flat()) assert.ok(shown.has(label), `${label} is not on ${group.where}`)
+  }
+})
+
+test('the record card offers no RFQ, and the three-way match buttons of a supplier invoice are known (design audit A7, B2)', () => {
+  const labels = ASSISTANT_APP_BUTTONS.flatMap((group) => group.buttons.flat())
+  assert.ok(!labels.includes('Request quotes (RFQ)') && !labels.includes('发起询价'))
+  assert.deepEqual(unknownAppButtons('On the request card, click **Request quotes (RFQ)**.'), ['Request quotes (RFQ)'])
+  const invoice = ASSISTANT_APP_BUTTONS.find((group) => group.where === 'a supplier invoice\'s page').buttons
+  assert.deepEqual(invoice, [['Match', '匹配'], ['Match again', '重新匹配'], ['Approve difference', '批准差异'], ['Reject difference', '驳回差异'], ['Accept at received quantity', '按实收数量接受']])
+  assert.deepEqual(unknownAppButtons('Wait for the goods and click **Match again**, or click **Accept at received quantity**.'), [])
+  assert.deepEqual(unknownAppButtons('请点击“按实收数量接受”，或收货后点“重新匹配”。'), [])
 })
