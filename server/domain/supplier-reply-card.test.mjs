@@ -6,7 +6,7 @@ import {
   SUPPLIER_REPLY_ERROR_CODES, SUPPLIER_REPLY_LINE_ISSUES, SUPPLIER_REPLY_READING_STATUSES, SUPPLIER_REPLY_ROUTES, supplierReplyCardSchema,
 } from '../../shared/supplier-reply-contract.mjs'
 import {
-  SUPPLIER_REPLY_NOTE_LIMIT, SUPPLIER_REPLY_TEXT_LIMIT, dismissReady, formStart, isOutage, lineNow, markQuotes, needsManualForm,
+  SUPPLIER_REPLY_NOTE_LIMIT, SUPPLIER_REPLY_PASTE_LIMIT, SUPPLIER_REPLY_TEXT_LIMIT, dismissReady, featuredReplies, formStart, isOutage, lineNow, markQuotes, needsManualForm,
   openQuestions, pickableReadings, proposalRecord, recordKey, recordLines, replyErrorKind,
 } from '../../src/modules/purchasing/supplierReply/supplierReplyLogic.ts'
 import { SUPPLIER_REPLY_COPY, SUPPLIER_REPLY_ERROR_TEXT, supplierReplyText } from '../../src/modules/purchasing/supplierReply/supplierReplyCopy.ts'
@@ -39,6 +39,8 @@ test('the fixtures are cards the contract accepts', () => {
     assert.ok(parsed.success, JSON.stringify(parsed.error?.issues))
   }
   assert.equal(SUPPLIER_REPLY_TEXT_LIMIT, SUPPLIER_REPLY_LIMITS.text)
+  // What may be pasted: twice the cleaned reply, as supplierReplyPasteRequestSchema takes it.
+  assert.equal(SUPPLIER_REPLY_PASTE_LIMIT, SUPPLIER_REPLY_LIMITS.text * 2)
   assert.equal(SUPPLIER_REPLY_NOTE_LIMIT, SUPPLIER_REPLY_LIMITS.note)
 })
 
@@ -114,6 +116,18 @@ test('needs you and every outage show the manual form; a proposal does not', () 
   for (const state of ['recorded', 'not_recorded', 'superseded', 'nothing_to_record']) assert.equal(needsManualForm(cardFixture({ state })), false)
 })
 
+test('a newer paste kept beside an open reply shows with it; the rest are earlier replies', () => {
+  const open = cardFixture({ id: 'sr-open' })
+  const inactive = cardFixture({ id: 'sr-new', state: 'nothing_to_record', canDecide: false, lines: [] })
+  const old = cardFixture({ id: 'sr-old', state: 'recorded' })
+  assert.deepEqual(featuredReplies([inactive, open, old]).featured.map((card) => card.id), ['sr-new', 'sr-open'])
+  assert.deepEqual(featuredReplies([inactive, open, old]).earlier.map((card) => card.id), ['sr-old'])
+  assert.deepEqual(featuredReplies([open, old]).featured.map((card) => card.id), ['sr-open'])
+  // Today: the one just pasted or decided first.
+  assert.deepEqual(featuredReplies([inactive, open, old], old).featured.map((card) => card.id), ['sr-old', 'sr-open'])
+  assert.deepEqual(featuredReplies([]).featured, [])
+})
+
 test('a dismissal needs a note only for Other, and at most 200 characters', () => {
   assert.equal(dismissReady('wrong_reading', ''), true)
   assert.equal(dismissReady('other', '  '), false)
@@ -133,7 +147,7 @@ test('a stale card and a closed reply are told apart from other refusals, in eit
   // purchasing words the procurement pages already use.
   const purchasing = read('src/modules/procurement/procurementErrors.ts')
   for (const code of SUPPLIER_REPLY_ERROR_CODES) {
-    const handled = ['stale', 'closed'].includes(replyErrorKind({ code })) || code in SUPPLIER_REPLY_ERROR_TEXT || purchasing.includes(`${code}:`) || code === 'TRANSACTION_CONFLICT'
+    const handled = ['stale', 'moved', 'closed'].includes(replyErrorKind({ code })) || code in SUPPLIER_REPLY_ERROR_TEXT || purchasing.includes(`${code}:`) || code === 'TRANSACTION_CONFLICT'
     assert.ok(handled, code)
   }
   for (const [code, [english, chinese]] of Object.entries(SUPPLIER_REPLY_ERROR_TEXT)) assert.ok(english && /[㐀-鿿]/.test(chinese), code)
@@ -168,7 +182,7 @@ test('the paste box sits on a chased overdue item and on the order page; buttons
   assert.match(page, /<PurchaseOrderPromiseDates key=\{`\$\{selectedPO\.po\}:\$\{selectedPO\.version \?\? ""\}`\}/)
   const replies = read('src/modules/purchasing/supplierReply/SupplierReplies.tsx')
   assert.match(replies, /const PASTE_STATUSES = new Set\(\["issued", "partially_received"\]\);/)
-  assert.match(replies, /const canPaste = Boolean\(permissions\?\.has\(REVISE\)\)/)
+  assert.match(replies, /const mayChange = Boolean\(permissions\?\.has\(REVISE\)\);\n\s+const canPaste = mayChange && /)
   const card = read('src/modules/purchasing/supplierReply/SupplierReplyCard.tsx')
   // Record, Edit, Not now and Don't record only with canDecide; the stale
   // order version goes back as expectedVersion.

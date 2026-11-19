@@ -10,7 +10,7 @@ import { procurementErrorCode, procurementErrorText } from "../../procurement/pr
 import { supplierReplyCardSchema } from "../../../../shared/supplier-reply-contract.mjs";
 import { SupplierReplyCard } from "./SupplierReplyCard";
 import { SUPPLIER_REPLY_ERROR_TEXT, supplierReplyText, type SupplierReplyCopyKey } from "./supplierReplyCopy";
-import { SUPPLIER_REPLY_TEXT_LIMIT, isOpenReply } from "./supplierReplyLogic";
+import { SUPPLIER_REPLY_PASTE_LIMIT, featuredReplies } from "./supplierReplyLogic";
 import type { SupplierReplyCardData } from "./supplierReplyTypes";
 
 // A supplier's replies on one order and the box to paste a new one
@@ -45,7 +45,8 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
   const { language, workspaceToday } = useI18n();
   const t = (key: SupplierReplyCopyKey, values?: Record<string, string | number>) => supplierReplyText(language, key, values);
   const permissions = usePermissionSet();
-  const canPaste = Boolean(permissions?.has(REVISE)) && (entry === "today" || PASTE_STATUSES.has(String(orderStatus || "")));
+  const mayChange = Boolean(permissions?.has(REVISE));
+  const canPaste = mayChange && (entry === "today" || PASTE_STATUSES.has(String(orderStatus || "")));
   const [replies, setReplies] = useState<SupplierReplyCardData[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [open, setOpen] = useState(false);
@@ -78,7 +79,7 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
 
   const paste = async () => {
     const reply = text.trim();
-    if (!reply || reply.length > SUPPLIER_REPLY_TEXT_LIMIT) return;
+    if (!reply || reply.length > SUPPLIER_REPLY_PASTE_LIMIT) return;
     setBusy(true);
     try {
       const result = await apiJson<{ reply: SupplierReplyCardData }>(replies_, {
@@ -127,19 +128,20 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
           <span>{t("receivedOn")}</span>
           <input type="date" className="rounded border bg-white px-1 py-0.5" max={workspaceToday || undefined} value={receivedOn || workspaceToday} onChange={(event) => setReceivedOn(event.target.value)} data-testid="supplier-reply-received-on" />
         </label>
-        <span style={{ color: length > SUPPLIER_REPLY_TEXT_LIMIT ? A.red : A.sub }} data-testid="supplier-reply-count">{t("characters", { n: length.toLocaleString() })}</span>
+        <span style={{ color: length > SUPPLIER_REPLY_PASTE_LIMIT ? A.red : A.sub }} data-testid="supplier-reply-count">{t("characters", { n: length.toLocaleString(), limit: SUPPLIER_REPLY_PASTE_LIMIT.toLocaleString() })}</span>
         <div className="ml-auto flex gap-2">
-          <button type="button" disabled={busy || !text.trim() || length > SUPPLIER_REPLY_TEXT_LIMIT} className={BUTTON.primary} data-testid="supplier-reply-read" onClick={() => void paste()}>{busy ? t("reading") : t("read")}</button>
+          <button type="button" disabled={busy || !text.trim() || length > SUPPLIER_REPLY_PASTE_LIMIT} className={BUTTON.primary} data-testid="supplier-reply-read" onClick={() => void paste()}>{busy ? t("reading") : t("read")}</button>
           <button type="button" className={BUTTON.secondary} onClick={() => (entry === "today" && current ? setPasteAgain(false) : setOpen(false))}>{t("cancel")}</button>
         </div>
       </div>
-      {length > SUPPLIER_REPLY_TEXT_LIMIT ? <p style={{ color: A.red }} role="alert">{t("tooLong")}</p> : null}
+      {length > SUPPLIER_REPLY_PASTE_LIMIT ? <p style={{ color: A.red }} role="alert">{t("tooLong", { limit: SUPPLIER_REPLY_PASTE_LIMIT.toLocaleString() })}</p> : null}
     </div>
   ) : null;
 
   if (entry === "today") {
     if (!canPaste) return null;
-    const current = list.find((card) => card.id === shownId) || list.find(isOpenReply) || null;
+    const { featured } = featuredReplies(list, list.find((card) => card.id === shownId) || null);
+    const current = featured[0] || null;
     return (
       <div className="w-full" data-testid="supplier-reply-today">
         <button type="button" className="flex items-center gap-1 text-xs font-medium text-blue-600" aria-expanded={open} data-testid="supplier-reply-open" onClick={() => setOpen(!open)}>
@@ -147,7 +149,7 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
         </button>
         {pasteForm(current)}
         {open && loadFailed ? <p className="mt-1 text-xs" style={{ color: A.sub }}>{t("loadFailed")}</p> : null}
-        {open && current ? <div className="mt-2"><SupplierReplyCard key={`${current.id}:${current.orderVersion}:${current.state}`} card={current} onChanged={changed} onRefused={refused(current.id)} notice={notices[current.id] || null} /></div> : null}
+        {open ? featured.map((card) => <div key={`${card.id}:${card.orderVersion}:${card.state}`} className="mt-2"><SupplierReplyCard card={card} onChanged={changed} onRefused={refused(card.id)} notice={notices[card.id] || null} mayChange={mayChange} /></div>) : null}
         {open && current && !pasteAgain ? <button type="button" className="mt-1 text-xs font-medium text-blue-600" data-testid="supplier-reply-paste-again" onClick={() => setPasteAgain(true)}>{t("pasteAnother")}</button> : null}
       </div>
     );
@@ -156,7 +158,8 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
   // The order page: nothing to show to a reader who cannot paste on an order
   // with no replies.
   if (!canPaste && !list.length) return null;
-  const [latest, ...earlier] = list;
+  const { featured, earlier } = featuredReplies(list);
+  const latest = featured[0] || null;
   return (
     <section className="rounded-xl border bg-white p-4" data-testid="supplier-replies">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -169,13 +172,13 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
       {pasteForm(latest || null)}
       {loadFailed ? <p className="mt-2 text-xs" style={{ color: A.sub }}>{t("loadFailed")}</p> : null}
       {replies && !list.length && !open ? <p className="mt-2 text-xs" style={{ color: A.sub }}>{t("none")}</p> : null}
-      {latest ? <div className="mt-3"><SupplierReplyCard key={`${latest.id}:${latest.orderVersion}:${latest.state}`} card={latest} onChanged={changed} onRefused={refused(latest.id)} notice={notices[latest.id] || null} /></div> : null}
+      {featured.map((card) => <div key={`${card.id}:${card.orderVersion}:${card.state}`} className="mt-3"><SupplierReplyCard card={card} onChanged={changed} onRefused={refused(card.id)} notice={notices[card.id] || null} mayChange={mayChange} /></div>)}
       {earlier.length ? (
         <div className="mt-3">
           <button type="button" className="flex items-center gap-1 text-xs font-medium" style={{ color: A.gray1 }} aria-expanded={showEarlier} onClick={() => setShowEarlier(!showEarlier)}>
             {showEarlier ? <ChevronDown size={13} aria-hidden /> : <ChevronRight size={13} aria-hidden />}{t("earlier", { n: earlier.length })}
           </button>
-          {showEarlier ? <div className="mt-2 space-y-2">{earlier.map((card) => <SupplierReplyCard key={`${card.id}:${card.orderVersion}:${card.state}`} card={card} onChanged={changed} onRefused={refused(card.id)} notice={notices[card.id] || null} />)}</div> : null}
+          {showEarlier ? <div className="mt-2 space-y-2">{earlier.map((card) => <SupplierReplyCard key={`${card.id}:${card.orderVersion}:${card.state}`} card={card} onChanged={changed} onRefused={refused(card.id)} notice={notices[card.id] || null} mayChange={mayChange} />)}</div> : null}
         </div>
       ) : null}
     </section>

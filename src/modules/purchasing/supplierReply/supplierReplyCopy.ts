@@ -12,8 +12,8 @@ export const SUPPLIER_REPLY_COPY = {
   pasteLabel: ["Supplier's reply", "供应商回复"],
   pastePlaceholder: ["Paste the email text. Earlier messages quoted below it are set aside and not read.", "粘贴邮件正文。下方引用的往来邮件会被放在一边，不会被读取。"],
   receivedOn: ["Reply received on", "回复收到日期"],
-  characters: ["{n} of 8,000 characters", "{n} / 8,000 字符"],
-  tooLong: ["The reply is longer than 8,000 characters. Paste the part with the dates.", "回复超过 8,000 字符，请只粘贴含交期的部分。"],
+  characters: ["{n} of {limit} characters", "{n} / {limit} 字符"],
+  tooLong: ["The reply is longer than {limit} characters. Paste the part with the dates.", "回复超过 {limit} 字符，请只粘贴含交期的部分。"],
   read: ["Read reply", "读取回复"],
   reading: ["Reading the reply…", "正在读取回复…"],
   cancel: ["Cancel", "取消"],
@@ -114,6 +114,7 @@ export const SUPPLIER_REPLY_COPY = {
   resolveFirst: ["Give each line that needs you a date, or leave it unchanged.", "请为需要确认的每一行填写交期，或选择保持不变。"],
   movedLine: ["Moved to {now} since the reply was read (was {was}). Check before recording.", "读取回复后已改为 {now}（原为 {was}），记录前请核对。"],
   viewOnly: ["Only people who may change this order can record its dates.", "只有可以修改该订单的人才能记录交期。"],
+  inactive: ["Kept on the order. Another open reply on this order is the one to record or dismiss.", "已保存在订单上。该订单另有一条待处理的回复，请在那条回复上记录或不记录。"],
 
   // After a decision.
   recorded: ["Recorded on {date}.", "已于 {date} 记录。"],

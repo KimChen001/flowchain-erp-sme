@@ -24,7 +24,7 @@ const DISMISS_REASONS: SupplierReplyDismissReason[] = ["wrong_reading", "supplie
 // A reading of an ambiguous date, on the grey form line: white, and blue once picked.
 const readingClass = (picked: boolean) => `inline-flex h-7 items-center rounded-lg border px-2 text-[12px] font-medium disabled:opacity-60 ${picked ? "border-blue-500 bg-blue-50 text-blue-700" : "border-slate-200 bg-white text-slate-800 hover:bg-slate-100"}`;
 
-export function SupplierReplyCard({ card, onChanged, onRefused, notice = null }: {
+export function SupplierReplyCard({ card, onChanged, onRefused, notice = null, mayChange = false }: {
   card: SupplierReplyCardData;
   // The card after a decision, as the server answered it.
   onChanged: (next: SupplierReplyCardData, recorded: boolean) => void;
@@ -32,6 +32,9 @@ export function SupplierReplyCard({ card, onChanged, onRefused, notice = null }:
   // this reply (`notice`) across the reload it then makes.
   onRefused: (kind: "stale" | "moved" | "closed") => void;
   notice?: string | null;
+  // The reader may change the order: a card without canDecide is then a
+  // paste kept beside another open reply, not a matter of permission.
+  mayChange?: boolean;
 }) {
   const { language, locale, timezone } = useI18n();
   const t = (key: SupplierReplyCopyKey, values?: Record<string, string | number>) => supplierReplyText(language, key, values);
@@ -276,7 +279,7 @@ export function SupplierReplyCard({ card, onChanged, onRefused, notice = null }:
           </div>
         </div>
       ) : null}
-      {open && !card.canDecide ? <p className="mt-2" style={{ color: A.sub }} data-testid="supplier-reply-view-only">{t("viewOnly")}</p> : null}
+      {open && !card.canDecide ? <p className="mt-2" style={{ color: A.sub }} data-testid="supplier-reply-view-only">{t(mayChange ? "inactive" : "viewOnly")}</p> : null}
       {open && card.canDecide && dismissing ? (
         <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md bg-slate-50 p-2" data-testid="supplier-reply-dismiss-form">
           <label className="flex items-center gap-1">

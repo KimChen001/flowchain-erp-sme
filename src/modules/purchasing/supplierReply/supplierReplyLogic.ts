@@ -3,11 +3,23 @@ import type { SupplierReplyCardData, SupplierReplyDismissReason } from "./suppli
 // What the supplier reply card decides without React, so a node test can
 // pin it (server/domain/supplier-reply-card.test.mjs).
 
-// The assistant's paste limit, as the server's (SUPPLIER_REPLY_LIMITS.text).
+// The cleaned reply the card shows (SUPPLIER_REPLY_LIMITS.text), and what
+// may be pasted: twice that, since the quoted chase and signature are cut
+// before reading (supplierReplyPasteRequestSchema).
 export const SUPPLIER_REPLY_TEXT_LIMIT = 8000;
+export const SUPPLIER_REPLY_PASTE_LIMIT = SUPPLIER_REPLY_TEXT_LIMIT * 2;
 export const SUPPLIER_REPLY_NOTE_LIMIT = 200;
 
 export const isOpenReply = (card: SupplierReplyCardData) => card.state === "proposed" || card.state === "needs_you";
+// The cards to show first: the open reply the person decides on, and the
+// latest one when it is another (a newer paste kept beside the open card:
+// an outage or nothing to record, which the server lists with canDecide
+// false). The rest are earlier replies.
+export function featuredReplies(list: SupplierReplyCardData[], first: SupplierReplyCardData | null = list[0] || null) {
+  const decidable = list.find((card) => isOpenReply(card) && card.canDecide) || list.find(isOpenReply) || null;
+  const featured = [first, decidable].filter((card, index, all): card is SupplierReplyCardData => Boolean(card) && all.findIndex((other) => other?.id === card!.id) === index);
+  return { featured, earlier: list.filter((card) => !featured.some((shown) => shown.id === card.id)) };
+}
 // The reply could not be read (AI off, no model, over the cap, a failure):
 // the card shows the manual form with the reply beside it (#363 §4.9).
 export const isOutage = (card: SupplierReplyCardData) => card.readingStatus !== "read";
