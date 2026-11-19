@@ -61,7 +61,7 @@ function asCheck(kase) {
 
 test('the set: about 40 cases, about 25 in English and 15 in Chinese, mostly UCI with 3 to 5 on M5', () => {
   const count = (pick) => SUPPLIER_REPLY_CASES.filter(pick).length
-  assert.ok(SUPPLIER_REPLY_CASES.length >= 38 && SUPPLIER_REPLY_CASES.length <= 45, `${SUPPLIER_REPLY_CASES.length} cases`)
+  assert.ok(SUPPLIER_REPLY_CASES.length >= 38 && SUPPLIER_REPLY_CASES.length <= 50, `${SUPPLIER_REPLY_CASES.length} cases`)
   assert.ok(count((row) => row.lang === 'en') >= 22, 'English cases')
   assert.ok(count((row) => row.lang === 'zh') >= 13, 'Chinese cases')
   const m5 = count((row) => row.workspace === 'm5')
@@ -200,6 +200,23 @@ for (const kase of SUPPLIER_REPLY_CASES) {
     if (kase.covers.includes('quoted-chase') || kase.covers.includes('long-thread')) assert.ok(hasQuotedPart(kase.replyText), 'has a quoted earlier message')
     if (kase.covers.includes('split')) assert.ok(expected.lines.some((line) => line.parts) || expected.state === 'needs_you', 'a split shows its parts or goes to the person')
     if (kase.covers.includes('relative')) assert.ok(expected.lines.some((line) => line.readAs))
+    // A day of the month with no month is read from the reply date, as a
+    // relative date is: the first such day on or after it, with readAs.
+    if (kase.covers.includes('day-only')) {
+      const day = expected.lines.find((line) => line.readAs)
+      assert.ok(day && day.dateKind === 'relative', 'a day-only date is proposed with readAs')
+      const first = Array.from({ length: 62 }, (_, offset) => new Date(Date.parse(`${kase.replyDate}T00:00:00Z`) + offset * 86400000).toISOString().slice(0, 10))
+        .find((candidate) => candidate.slice(8) === day.proposedDate.slice(8))
+      assert.equal(day.proposedDate, first, 'the first such day on or after the reply date')
+    }
+    // A refused date next to the committed one: the committed date is
+    // proposed, and the refused date is listed as never to propose.
+    if (kase.covers.includes('negated-date')) {
+      assert.equal(expected.state, 'proposed')
+      const refused = expected.mustNotPropose.filter((entry) => entry.date && !entry.ref)
+      assert.ok(refused.length > 0, 'the refused date is listed')
+      assert.ok(refused.every((entry) => expected.lines.every((line) => line.proposedDate !== entry.date)))
+    }
     if (kase.covers.includes('ambiguous-numeric')) assert.ok(expected.lines.some((line) => line.issue === 'ambiguous_numeric'))
     if (kase.covers.includes('vague')) assert.ok(expected.lines.some((line) => line.issue === 'vague'))
     if (kase.covers.includes('confirms')) assert.ok(outcomes.includes('confirmed'))

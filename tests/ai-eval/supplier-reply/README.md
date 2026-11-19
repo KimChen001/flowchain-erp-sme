@@ -4,10 +4,12 @@ The evaluation set of `docs/supplier-reply-dates-design.md` §7 (#363), step 1e:
 supplier emails pasted on open purchase orders, each with the outcome that
 reading the reply and checking it in code should give.
 
-- **42 replies:** 27 in English and 15 in Chinese.
-- **Workspaces:** 38 on the UCI walkthrough workspace, 4 on the M5 workspace.
-- **Outcomes:** 27 proposals, 8 "needs you" and 7 "nothing to record", each
+- **46 replies:** 30 in English and 16 in Chinese.
+- **Workspaces:** 42 on the UCI walkthrough workspace, 4 on the M5 workspace.
+- **Outcomes:** 31 proposals, 8 "needs you" and 7 "nothing to record", each
   outcome in both languages.
+- **Added after review:** the design audit's review of the first 42 (at
+  b3e5d90c) added the refused-date and day-only cases.
 
 This is phase 1: the cases and their structural test. The scorer comes once
 step 1's functions are on the branch: `cleanSupplierReply`,
@@ -149,7 +151,8 @@ it with that schema. It has these fields:
   - another order's date;
   - an out-of-office return date;
   - the first part of a split;
-  - either reading of `03/12`.
+  - either reading of `03/12`;
+  - a date the supplier says it cannot make.
 - **`alsoAccept`:** other states that are not a miss, where the reply allows
   two readings. It is used once, on `en-uci-0013-injection-hidden`.
 
@@ -165,8 +168,15 @@ it with that schema. It has these fields:
     example (from Tue 17 Nov, Fri 27 Nov);
   - "in two weeks" is 14 days after the reply date;
   - 下周五 is next week's Friday.
-- **A day of the month with no month** ("二十八号", the twenty-eighth) is the
-  next such day on or after the reply date. It counts as `stated`.
+- **A day of the month with no month** ("二十八号", "the 28th") is the first
+  such day on or after the reply date. Code reads it from the reply date, as
+  it reads a relative date, so it is `relative` with `readAs`.
+- **A refused date next to the committed one** ("We can't make 28 November;
+  the earliest we can ship is 4 December", "28号发不了，最早12月5日", "moved
+  from 30 Nov to 3 Dec"): only the committed date is proposed, and the refused
+  date is in `mustNotPropose`. A check that only finds a claimed date
+  somewhere in its quote would pass the refused date as well, so these cases
+  mark where a hard fail could slip through.
 - **An ambiguous numeric date** has both readings, each at its next
   occurrence on or after the reply date. Neither reading is proposed, even
   where the workspace's locale suggests one, because §4.5 leaves it to the
@@ -186,13 +196,14 @@ For the scorer, from §7:
 
 ## Coverage
 
-Each row of §4.8 and each extra of §7, with the cases that cover it.
+Each row of §4.8 and each extra of §7, plus the two kinds the review added,
+with the cases that cover it.
 `cases.test.mjs` checks that this table lists exactly the cases tagged with
 each requirement, and that the main rows have at least two.
 
 | Source | Requirement | Tag | Cases |
 | --- | --- | --- | --- |
-| §4.8 | One date for everything still open | `one-date` | `en-uci-0028-balance-gmail-quote`, `en-uci-0012-all-lines-one-date`, `en-uci-0030-flag-price`, `en-uci-0028-other-order`, `en-uci-0014-date-in-words`, `en-m5-0014-one-date`, `zh-uci-0013-all-lines-1128` |
+| §4.8 | One date for everything still open | `one-date` | `en-uci-0028-balance-gmail-quote`, `en-uci-0012-all-lines-one-date`, `en-uci-0030-flag-price`, `en-uci-0028-other-order`, `en-uci-0014-date-in-words`, `en-uci-0020-negated-moved-from`, `en-m5-0014-one-date`, `zh-uci-0013-all-lines-1128` |
 | §4.8 | A date per item | `date-per-item` | `en-uci-0019-per-item`, `en-uci-0008-per-item-unmatched`, `en-uci-0019-flag-cancellation`, `en-m5-0019-per-item`, `zh-uci-0018-per-item` |
 | §4.8 | Relative date, proposed and marked "read as" | `relative` | `en-uci-0030-relative-next-friday`, `en-uci-0029-relative-two-weeks-anchor`, `zh-uci-0029-relative-next-friday` |
 | §4.8 | Ambiguous numeric date (03/12) | `ambiguous-numeric` | `en-uci-0028-ambiguous-0312`, `en-m5-0012-ambiguous-1201` |
@@ -210,6 +221,8 @@ each requirement, and that the main rows have at least two.
 | §7 | A long thread | `long-thread` | `en-uci-0029-long-thread` |
 | §7 | A date in words | `date-in-words` | `en-uci-0014-date-in-words`, `zh-uci-0028-date-in-words` |
 | §7 | A wrong order number | `wrong-order-number` | `en-uci-0028-wrong-order-number` |
+| §4.5, review | A refused date next to the one committed to | `negated-date` | `en-uci-0029-negated-date`, `en-uci-0020-negated-moved-from`, `zh-uci-0030-negated-date` |
+| §4.5, review | A day of the month with no month, read from the reply date | `day-only` | `en-uci-0028-day-only`, `zh-uci-0028-date-in-words` |
 
 Also covered:
 - **No date at all** (`no-date`): `en-uci-0013-injection-hidden` and

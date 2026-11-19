@@ -38,6 +38,10 @@ export const SUPPLIER_REPLY_REQUIREMENTS = Object.freeze([
   { tag: 'long-thread', source: '§7', label: 'A long thread', min: 1 },
   { tag: 'date-in-words', source: '§7', label: 'A date in words', min: 1 },
   { tag: 'wrong-order-number', source: '§7', label: 'A wrong order number', min: 1 },
+  // From the design audit's review of the set (b3e5d90c): a check that only
+  // finds a claimed date somewhere in its quote passes a refused date too.
+  { tag: 'negated-date', source: '§4.5, review', label: 'A refused date next to the one committed to', min: 2 },
+  { tag: 'day-only', source: '§4.5, review', label: 'A day of the month with no month, read from the reply date', min: 2 },
 ])
 
 // Tags used beyond the required ones.
@@ -687,6 +691,68 @@ export const SUPPLIER_REPLY_CASES = [
       mustNotPropose: [{ date: '2026-11-30', why: '"the end of November" is the old date, said loosely' }],
     },
   }),
+  kase({
+    id: 'en-uci-0029-negated-date',
+    lang: 'en', workspace: 'uci',
+    about: 'A refused date next to the committed one: "We can\'t make 28 November; the earliest we can ship is 4 December." Only 4 December is proposed.',
+    covers: ['negated-date'],
+    replyDate: '2026-11-19', today: '2026-11-19',
+    order: order('uci', 'PO-202610-0029'),
+    replyText: email(`
+      Hi Daniel,
+
+      Sorry, an update on what I told you on the phone yesterday. We can't make 28 November; the earliest we can ship is 4 December.
+
+      Tomás
+      Globex Party Supplies
+    `),
+    expected: {
+      state: 'proposed', replyKind: 'dates',
+      lines: [proposed('L1', '2026-12-04', 'the earliest we can ship is 4 December')],
+      mustNotPropose: [{ date: '2026-11-28', why: 'the date the supplier says it cannot make' }],
+    },
+  }),
+  kase({
+    id: 'en-uci-0020-negated-moved-from',
+    lang: 'en', workspace: 'uci',
+    about: 'A date moved "from 30 Nov to 3 Dec" for every line: the old date sits in the same sentence and must not be taken.',
+    covers: ['negated-date', 'one-date'],
+    replyDate: '2026-11-20', today: '2026-11-20',
+    order: order('uci', 'PO-202611-0020'),
+    replyText: email(`
+      Hello Daniel,
+
+      Because of a haulier strike, delivery of PO-202611-0020 has moved from 30 Nov to 3 Dec. All three lines will come together.
+
+      Regards,
+      Sales administration
+    `),
+    expected: {
+      state: 'proposed', replyKind: 'dates',
+      lines: refsOf('uci', 'PO-202611-0020').map((ref) => proposed(ref, '2026-12-03', 'moved from 30 Nov to 3 Dec')),
+      mustNotPropose: [{ date: '2026-11-30', why: 'the date it moved from' }],
+    },
+  }),
+  kase({
+    id: 'en-uci-0028-day-only',
+    lang: 'en', workspace: 'uci',
+    about: 'A day of the month with no month, "the 28th": the first 28th on or after the reply date, 28 Nov, marked "read as".',
+    covers: ['day-only'],
+    replyDate: '2026-11-19', today: '2026-11-19',
+    order: order('uci', 'PO-202610-0028'),
+    replyText: email(`
+      Hi Daniel,
+
+      Good news: the balance ships on the 28th. I'll send the tracking number once it's collected.
+
+      Priya
+      Acme Home Goods
+    `),
+    expected: {
+      state: 'proposed', replyKind: 'dates',
+      lines: [relative('L1', '2026-11-28', 'the 28th', '2026-11-19', 'the balance ships on the 28th')],
+    },
+  }),
 
   // ---------------------------------------------------------------- English, M5
   kase({
@@ -936,8 +1002,8 @@ export const SUPPLIER_REPLY_CASES = [
   kase({
     id: 'zh-uci-0028-date-in-words',
     lang: 'zh', workspace: 'uci',
-    about: '用汉字写的日期“二十八号”，没写月份：取回信日之后的第一个 28 号，即 11月28日。',
-    covers: ['date-in-words'],
+    about: '用汉字写的日期“二十八号”，没写月份：取回信日当天或之后的第一个 28 号，即 11月28日，并标明“读作”。',
+    covers: ['date-in-words', 'day-only'],
     replyDate: '2026-11-19', today: '2026-11-19',
     order: order('uci', 'PO-202610-0028'),
     replyText: email(`
@@ -949,7 +1015,28 @@ export const SUPPLIER_REPLY_CASES = [
     `),
     expected: {
       state: 'proposed', replyKind: 'dates',
-      lines: [proposed('L1', '2026-11-28', '二十八号发货')],
+      lines: [relative('L1', '2026-11-28', '二十八号', '2026-11-19', '二十八号发货')],
+    },
+  }),
+  kase({
+    id: 'zh-uci-0030-negated-date',
+    lang: 'zh', workspace: 'uci',
+    about: '否定的日期：“28号发不了，最早12月5日”。只提议承诺的 12月5日，28号不能被提议。',
+    covers: ['negated-date'],
+    replyDate: '2026-11-19', today: '2026-11-19',
+    order: order('uci', 'PO-202610-0030'),
+    replyText: email(`
+      Daniel 您好：
+
+      PO-202610-0030 的心形烛台28号发不了，最早12月5日发货。实在抱歉。
+
+      王丽
+      Acme Home Goods
+    `),
+    expected: {
+      state: 'proposed', replyKind: 'dates',
+      lines: [proposed('L1', '2026-12-05', '最早12月5日发货')],
+      mustNotPropose: [{ date: '2026-11-28', why: '供应商说 28号发不了' }],
     },
   }),
   kase({
