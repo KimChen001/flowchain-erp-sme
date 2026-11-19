@@ -87,6 +87,13 @@ test("the supplier performance panel and table show the PO-date basis in both la
   // but not sent is listed apart. A closed line never received is late.
   assert.match(panel, /only POs the supplier actually got count: issued to the supplier, or with a posted receipt/)
   assert.match(panel, /已批准但未下达且没有收货的采购订单不计入任何指标/)
+  // The original promise is the date on the PO when it was issued or first
+  // received, in both languages; approval fixes nothing (design audit L1-05).
+  const definition = panel.match(/\n  definition: \[\n    "(.*)",\n    "(.*)",\n  \],/)
+  assert.ok(definition, 'the definition is an [English, Chinese] pair')
+  assert.match(definition[1], /an original promised date, the date on the PO when it was issued to the supplier or first received\./)
+  assert.match(definition[2], /原始承诺交期是采购订单下达给供应商或首次收货时订单上的日期/)
+  assert.doesNotMatch(panel, /审批时的日期|when it was approved/)
   assert.doesNotMatch(panel, /even before it is sent|即使尚未发送给供应商/)
   assert.deepEqual(copy('notSent'), ['Not sent to supplier: {n}', '未下达：{n} 张'])
   assert.match(panel, /a line closed with nothing received counts as late/)
