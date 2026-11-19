@@ -77,7 +77,8 @@ export const SUPPLIER_REPLY_DISMISS_REASONS = Object.freeze(['wrong_reading', 's
 //   not_open             the line has nothing left to receive, or the order
 //                        no longer takes dates
 //   unchanged            the date is the line's current promised date
-export const SUPPLIER_REPLY_LINE_ISSUES = Object.freeze(['quote_not_found', 'date_mismatch', 'ambiguous_numeric', 'vague', 'relative_unreadable', 'before_reply', 'too_far', 'unknown_line', 'not_open', 'unchanged'])
+//   split_incomplete     a split delivery's parts do not cover what is open
+export const SUPPLIER_REPLY_LINE_ISSUES = Object.freeze(['quote_not_found', 'date_mismatch', 'ambiguous_numeric', 'vague', 'relative_unreadable', 'before_reply', 'too_far', 'unknown_line', 'not_open', 'unchanged', 'split_incomplete'])
 // What became of one line of the reading.
 export const SUPPLIER_REPLY_LINE_OUTCOMES = Object.freeze(['proposed', 'needs_you', 'dropped', 'confirmed'])
 
@@ -238,8 +239,8 @@ export const supplierReplyCardSchema = z.strictObject({
 //   POST /api/procurement/orders/:id/supplier-replies/:replyId/not-now   not now
 //
 // Reading follows the order's read permission; pasting, recording and
-// dismissing need procurement.purchase_order.revise. Errors use the app's
-// { error: { code, message, details } } shape.
+// dismissing need procurement.purchase_order.revise. Errors use the
+// procurement routes' { code, message, details } body.
 
 export const SUPPLIER_REPLY_ROUTES = Object.freeze({
   list: '/api/procurement/orders/:id/supplier-replies',
