@@ -78,7 +78,10 @@ export const SUPPLIER_REPLY_DISMISS_REASONS = Object.freeze(['wrong_reading', 's
 //                        no longer takes dates
 //   unchanged            the date is the line's current promised date
 //   split_incomplete     a split delivery's parts do not cover what is open
-export const SUPPLIER_REPLY_LINE_ISSUES = Object.freeze(['quote_not_found', 'date_mismatch', 'ambiguous_numeric', 'vague', 'relative_unreadable', 'before_reply', 'too_far', 'unknown_line', 'not_open', 'unchanged', 'split_incomplete'])
+//   several_dates        the quote names more than one date, and this one is
+//                        the line's current promise or the one it replaces
+//                        (both offered in readings when there are two)
+export const SUPPLIER_REPLY_LINE_ISSUES = Object.freeze(['quote_not_found', 'date_mismatch', 'ambiguous_numeric', 'vague', 'relative_unreadable', 'before_reply', 'too_far', 'unknown_line', 'not_open', 'unchanged', 'split_incomplete', 'several_dates'])
 // What became of one line of the reading.
 export const SUPPLIER_REPLY_LINE_OUTCOMES = Object.freeze(['proposed', 'needs_you', 'dropped', 'confirmed'])
 

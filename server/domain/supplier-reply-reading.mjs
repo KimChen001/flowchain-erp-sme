@@ -73,7 +73,9 @@ const SIGNATURE = /^--\s?$/
 export function cleanSupplierReply(value) {
   const raw = String(value ?? '').slice(0, SUPPLIER_REPLY_LIMITS.text * 2)
   let invisibleRemoved = 0
-  const visible = raw.replace(INVISIBLE, () => { invisibleRemoved += 1; return '' }).normalize('NFKC').replace(/\r\n?/g, '\n').replace(/ /g, ' ')
+  // The supplier's characters are kept as written (full-width punctuation
+  // too); quotes and dates are compared in a folded form (quoteForm).
+  const visible = raw.replace(INVISIBLE, () => { invisibleRemoved += 1; return '' }).replace(/\r\n?/g, '\n').replace(/[ 　]/g, ' ')
   const lines = visible.split('\n')
   let cut = lines.length
   for (let at = 0; at < lines.length && cut === lines.length; at += 1) {
@@ -131,28 +133,47 @@ function withYear(month, date, year, receivedOn) {
   return daysBetween(receivedOn, same) < -60 ? dayOf(replyYear + 1, month, date) : same
 }
 
-// The calendar dates a quote writes: exact ones, and numeric ones that read
-// two ways (03/12: 3 December or March 12). Relative words are not dates here.
-export function datesInQuote(quote, receivedOn) {
-  const source = String(quote ?? '').normalize('NFKC')
-  const exact = new Set()
-  const ambiguous = []
-  const add = (value) => { if (value) exact.add(value) }
-  let rest = source
-  const take = (pattern, read) => {
-    rest = rest.replace(pattern, (...match) => { read(match); return ' ' })
+// A day of the month written without a month ("the 28th", 28号, 二十八号):
+// the first such day on or after the reply date, within 31 days.
+function dayOnlyDate(date, receivedOn) {
+  const from = parseDay(receivedOn)
+  if (!from || !(date >= 1 && date <= 31)) return null
+  for (let months = 0; months < 3; months += 1) {
+    const year = from.getUTCFullYear() + Math.floor((from.getUTCMonth() + months) / 12)
+    const month = ((from.getUTCMonth() + months) % 12) + 1
+    const candidate = dayOf(year, month, date)
+    if (candidate && candidate >= receivedOn) return daysBetween(receivedOn, candidate) <= 31 ? candidate : null
   }
+  return null
+}
+
+// Every date a quote writes, with where it stands in the quote (in its NFKC
+// form): { date } exact, { readings } read two ways (03/12: 3 December or
+// March 12), or { date, dayOnly } a day of the month without a month.
+// Relative words are not dates here.
+function datesWithPlaces(source, receivedOn) {
+  const found = []
+  let rest = source
+  // Each match is blanked to its own length, so later patterns keep places.
+  const take = (pattern, read) => {
+    rest = rest.replace(pattern, (...match) => {
+      const place = read(match)
+      if (place) found.push({ ...place, phrase: match[0].trim(), index: match[match.length - 2] })
+      return ' '.repeat(match[0].length)
+    })
+  }
+  const exactly = (date) => (date ? { date } : null)
   // 2026-11-28, 2026/11/28, 2026.11.28
-  take(/(?<!\d)(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?!\d)/g, (m) => add(dayOf(Number(m[1]), Number(m[2]), Number(m[3]))))
+  take(/(?<!\d)(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?!\d)/g, (m) => exactly(dayOf(Number(m[1]), Number(m[2]), Number(m[3]))))
   // 2026年11月28日, 11月28日, 11月28号
-  take(/(?:(\d{4})\s*年\s*)?(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]/g, (m) => add(withYear(Number(m[2]), Number(m[3]), m[1] ? Number(m[1]) : null, receivedOn)))
+  take(/(?:(\d{4})\s*年\s*)?(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]/g, (m) => exactly(withYear(Number(m[2]), Number(m[3]), m[1] ? Number(m[1]) : null, receivedOn)))
   // 28 November 2026, 28th of Nov, the 28th November
-  take(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?(?:\\s+of)?\\s+(${MONTH})\\.?(?:,?\\s+(\\d{4}))?\\b`, 'gi'), (m) => add(withYear(MONTHS[m[2].toLowerCase()], Number(m[1]), m[3] ? Number(m[3]) : null, receivedOn)))
+  take(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?(?:\\s+of)?\\s+(${MONTH})\\.?(?:,?\\s+(\\d{4}))?\\b`, 'gi'), (m) => exactly(withYear(MONTHS[m[2].toLowerCase()], Number(m[1]), m[3] ? Number(m[3]) : null, receivedOn)))
   // November 28, Nov 28th, 2026
-  take(new RegExp(`\\b(${MONTH})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?!\\d)(?:,?\\s+(\\d{4}))?`, 'gi'), (m) => add(withYear(MONTHS[m[1].toLowerCase()], Number(m[2]), m[3] ? Number(m[3]) : null, receivedOn)))
+  take(new RegExp(`\\b(${MONTH})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?!\\d)(?:,?\\s+(\\d{4}))?`, 'gi'), (m) => exactly(withYear(MONTHS[m[1].toLowerCase()], Number(m[2]), m[3] ? Number(m[3]) : null, receivedOn)))
   // the twenty-eighth of November; November the twenty-eighth
-  take(new RegExp(`\\b(?:the\\s+)?(${ORDINAL_WORD})(?:\\s+of)?\\s+(${MONTH})\\b`, 'gi'), (m) => add(withYear(MONTHS[m[2].toLowerCase()], ordinalValue(m[1]), null, receivedOn)))
-  take(new RegExp(`\\b(${MONTH})\\s+(?:the\\s+)?(${ORDINAL_WORD})\\b`, 'gi'), (m) => add(withYear(MONTHS[m[1].toLowerCase()], ordinalValue(m[2]), null, receivedOn)))
+  take(new RegExp(`\\b(?:the\\s+)?(${ORDINAL_WORD})(?:\\s+of)?\\s+(${MONTH})\\b`, 'gi'), (m) => exactly(withYear(MONTHS[m[2].toLowerCase()], ordinalValue(m[1]), null, receivedOn)))
+  take(new RegExp(`\\b(${MONTH})\\s+(?:the\\s+)?(${ORDINAL_WORD})\\b`, 'gi'), (m) => exactly(withYear(MONTHS[m[1].toLowerCase()], ordinalValue(m[2]), null, receivedOn)))
   // 28/11/2026, 28.11.2026, 28-11-2026 (a year is needed with . or -), 28/11, 03/12
   take(/(?<![\d/.-])(\d{1,2})\/(\d{1,2})(?:\/(\d{2}|\d{4}))?(?![\d/])|(?<![\d/.-])(\d{1,2})[.-](\d{1,2})[.-](\d{2}|\d{4})(?![\d.-])/g, (m) => {
     const a = Number(m[1] ?? m[4])
@@ -161,10 +182,27 @@ export function datesInQuote(quote, receivedOn) {
     const year = yearText ? Number(yearText) : null
     const dayFirst = a <= 31 && b <= 12 ? withYear(b, a, year, receivedOn) : null
     const monthFirst = a <= 12 && b <= 31 ? withYear(a, b, year, receivedOn) : null
-    if (dayFirst && monthFirst && dayFirst !== monthFirst) ambiguous.push([dayFirst, monthFirst].sort())
-    else add(dayFirst || monthFirst)
+    if (dayFirst && monthFirst && dayFirst !== monthFirst) return { readings: [dayFirst, monthFirst].sort() }
+    return exactly(dayFirst || monthFirst)
   })
-  return { exact: [...exact].sort(), ambiguous }
+  // A day without a month: "the 28th", "on the twenty-eighth" (not "the 28th
+  // of next month"), 28号, 二十八号 (not 3日后, three days later).
+  const dayOnly = (date) => { const value = dayOnlyDate(date, receivedOn); return value ? { date: value, dayOnly: true } : null }
+  take(/\bthe\s+(\d{1,2})(?:st|nd|rd|th)\b(?!\s+of\b)/gi, (m) => dayOnly(Number(m[1])))
+  take(new RegExp(`\\bthe\\s+(${ORDINAL_WORD})\\b(?!\\s+of\\b)`, 'gi'), (m) => dayOnly(ordinalValue(m[1])))
+  take(/(?<![\d一二三四五六七八九十两月周期拜])(\d{1,2}|[一二三四五六七八九十]{1,3})\s*[号日](?!\s*(?:前|后|之后|以后|内|之内|起))/g, (m) => dayOnly(zhCount(m[1])))
+  return found
+}
+
+// The calendar dates a quote writes: exact ones, numeric ones that read two
+// ways, and days without a month with the day assumed ({ phrase, from, date }).
+export function datesInQuote(quote, receivedOn) {
+  const found = datesWithPlaces(String(quote ?? '').normalize('NFKC'), receivedOn)
+  return {
+    exact: [...new Set(found.filter((row) => row.date && !row.dayOnly).map((row) => row.date))].sort(),
+    ambiguous: found.filter((row) => row.readings).map((row) => row.readings),
+    dayOnly: found.filter((row) => row.dayOnly).map((row) => ({ phrase: row.phrase.slice(0, 80), from: receivedOn, date: row.date })),
+  }
 }
 
 // --- Relative dates, computed by code -------------------------------------------------
@@ -343,23 +381,65 @@ const ORDER_NUMBER = /\b([A-Z]{1,6}(?:-[A-Z0-9]{1,8})*-\d{1,8})\b/g
 // readings?, issue? }. A stated date must parse from its quote to the same
 // day; a relative date is the one code computes from the quote and the reply
 // date; an ambiguous numeric date is never chosen.
-function resolveDate(entry, receivedOn) {
+// Words before a date that say it is the one being replaced: "instead of 30
+// November", "can't make 28 Nov", "was 12 Nov", "from 30 Nov to 3 Dec",
+// 原定11月30日, 而不是11月30日, 30号发不了 (after). Up to three words may stand
+// between the marker and the date in English.
+const REPLACED_BEFORE = /(?:\binstead\s+of|\brather\s+than|\bnot|\bcan(?:'|no)?t\s+make|\bcannot\s+make|\bwon'?t\s+make|\bunable\s+to\s+make|\bwas|\bwere|\boriginally|\bpreviously|\bno\s+longer|\bfrom)(?:\s+[\w']+){0,3}\s*$/i
+const REPLACED_BEFORE_ZH = /(?:原定|原来|原计划|原先|而不是|不是|赶不上|来不及|无法|不能)[^。，,.;；!?！？]{0,6}$/
+const REPLACED_AFTER_ZH = /^[^。，,.;；!?！？]{0,4}(?:发不了|做不到|来不及|赶不上|不行)/
+
+// One value's date, as code reads it from its quote: { date, kind, readAs? }
+// or { issue, readings? }. A stated date must parse from its quote to the
+// same day; a day without a month is read as its next occurrence, shown as
+// "read as"; a relative date is the one code computes from the quote and the
+// reply date; an ambiguous numeric date is never chosen. A quote naming
+// several dates passes only a date that is not the line's current promise and
+// not the one the quote says is replaced (#392 review, 2026-11-19).
+function resolveDate(entry, receivedOn, currentDate = null) {
   const quote = entry.quote
+  const source = String(quote ?? '').normalize('NFKC')
+  const places = datesWithPlaces(source, receivedOn)
   const written = datesInQuote(quote, receivedOn)
   const relative = relativeDateInQuote(quote, receivedOn)
   const claimed = entry.date
-  const pair = written.ambiguous.find((readings) => readings.includes(claimed)) || (written.exact.length ? null : written.ambiguous[0])
+  const pair = written.ambiguous.find((readings) => readings.includes(claimed)) || (written.exact.length || written.dayOnly.length ? null : written.ambiguous[0])
   if (pair) return { issue: 'ambiguous_numeric', readings: pair }
   if (entry.dateKind === 'vague' || !claimed) {
     // Code may still find a day the model called vague: it is not proposed
     // from that alone; the person sees it.
     return { issue: 'vague' }
   }
-  if (written.exact.includes(claimed)) return { date: claimed, kind: 'stated' }
-  if (relative?.date === claimed) return { date: claimed, kind: 'relative', readAs: relative }
-  if (entry.dateKind === 'relative' && !relative) return { issue: 'relative_unreadable' }
-  const other = relative?.date || (written.exact.length === 1 ? written.exact[0] : null)
-  return { issue: 'date_mismatch', readings: other && other !== claimed ? [other, claimed].sort() : null }
+  const dayOnly = written.dayOnly.find((row) => row.date === claimed)
+  const hit = written.exact.includes(claimed) ? { date: claimed, kind: 'stated', readAs: null }
+    : dayOnly ? { date: claimed, kind: 'stated', readAs: dayOnly }
+      : relative?.date === claimed ? { date: claimed, kind: 'relative', readAs: relative }
+        : null
+  if (!hit) {
+    if (entry.dateKind === 'relative' && !relative) return { issue: 'relative_unreadable' }
+    const other = relative?.date || (written.exact.length === 1 ? written.exact[0] : written.dayOnly.length === 1 ? written.dayOnly[0].date : null)
+    return { issue: 'date_mismatch', readings: other && other !== claimed ? [other, claimed].sort() : null }
+  }
+  const distinct = [...new Set([...places.flatMap((row) => row.readings || [row.date]), relative?.date].filter(Boolean))].sort()
+  if (distinct.length > 1) {
+    const several = { issue: 'several_dates', readings: distinct.length === 2 ? distinct : null }
+    if (claimed === currentDate) return several
+    const at = places.filter((row) => row.date === claimed).map((row) => ({ index: row.index, end: row.index + row.phrase.length }))
+    if (hit.kind === 'relative') {
+      const index = source.toLowerCase().indexOf(relative.phrase.toLowerCase())
+      if (index >= 0) at.push({ index, end: index + relative.phrase.length })
+    }
+    // The words between the previous date and this one ("from 30 Nov to 4
+    // Dec": only " to " stands before 4 Dec).
+    const ends = places.map((row) => row.index + row.phrase.length)
+    const replaced = at.some(({ index, end }) => {
+      const previous = Math.max(0, ...ends.filter((value) => value <= index))
+      const before = source.slice(Math.max(previous, index - 40), index)
+      return REPLACED_BEFORE.test(before) || REPLACED_BEFORE_ZH.test(before) || REPLACED_AFTER_ZH.test(source.slice(end, end + 12))
+    })
+    if (replaced) return several
+  }
+  return hit
 }
 
 const lineRow = (fields) => ({ ref: null, purchaseOrderLineId: null, outcome: 'dropped', issue: null, currentDate: null, proposedDate: null, quote: null, dateKind: null, readAs: null, readings: null, parts: null, ...fields })
@@ -385,12 +465,13 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
     const line = byRef.get(ref)
     const base = { ref, purchaseOrderLineId: line.purchaseOrderLineId, currentDate: line.promisedDate || null, quote: entries[0].quote, dateKind: entries[0].dateKind }
     if (!open || !(Number(line.remaining) > 0)) { out.push(lineRow({ ...base, issue: 'not_open' })); continue }
-    const resolved = entries.map((entry) => ({ entry, ...resolveDate(entry, receivedOn) }))
+    const resolved = entries.map((entry) => ({ entry, ...resolveDate(entry, receivedOn, line.promisedDate || null) }))
     const failed = resolved.find((row) => row.issue)
     if (failed) { out.push(lineRow({ ...base, outcome: 'needs_you', issue: failed.issue, quote: failed.entry.quote, dateKind: failed.entry.dateKind, readings: failed.readings || null })); continue }
     let date = resolved[0].date
     let parts = null
     let readAs = resolved[0].readAs || null
+    let kind = resolved[0].kind
     if (resolved.length > 1) {
       parts = resolved.map((row) => ({ quantity: Number.isFinite(row.entry.quantity) ? row.entry.quantity : null, date: row.date, quote: row.entry.quote }))
       const total = parts.every((part) => part.quantity !== null) ? parts.reduce((sum, part) => sum + part.quantity, 0) : null
@@ -399,8 +480,8 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
       if (total === null || total < Number(line.remaining)) { out.push(lineRow({ ...base, outcome: 'needs_you', issue: 'split_incomplete', parts })); continue }
       date = last.date
       readAs = last.readAs || null
+      kind = last.kind
     }
-    const kind = readAs ? 'relative' : 'stated'
     if (receivedOn && date < receivedOn) { out.push(lineRow({ ...base, outcome: 'needs_you', issue: 'before_reply', dateKind: kind, parts })); continue }
     if (latest && date > latest) { out.push(lineRow({ ...base, outcome: 'needs_you', issue: 'too_far', dateKind: kind, parts })); continue }
     if (date === line.promisedDate) { out.push(lineRow({ ...base, outcome: 'confirmed', issue: 'unchanged', proposedDate: date, dateKind: kind, readAs, parts })); continue }
