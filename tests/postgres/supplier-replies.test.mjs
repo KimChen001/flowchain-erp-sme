@@ -7,6 +7,7 @@ import { createDbProcurementCommandService } from '../../server/domain/procureme
 import { createPrismaClient } from '../../server/persistence/prisma-client.mjs'
 import { createSupplierReplyService } from '../../server/services/supplier-reply-service.mjs'
 import { createSupplierReliabilityReadService } from '../../server/domain/supplier-reliability.mjs'
+import { addDays, localDay } from '../../server/domain/supplier-scorecard.mjs'
 import { supplierReliabilityResponseSchema } from '../../shared/supplier-reliability-contract.mjs'
 import { supplierReplyCardSchema } from '../../shared/supplier-reply-contract.mjs'
 
@@ -270,12 +271,26 @@ test('the reading with a mocked model: a proposal recorded as proposed, a reply 
 
     // 7. The reliability measure (#363 §4.12) over these rows, as the
     // supplier evaluation page reads it: the two date changes on PO-C (the
-    // reply's and the phone call's) are revisions, the superseded paste is
+    // reply's and the phone call's) and PO-C-IN's are revisions, the superseded paste is
     // not a reply, and every reply is in one outcome. No figure under 5.
+    // The window's edge: an order first promised the day before the window
+    // starts is not read or counted, one first promised on its first day is
+    // (the database filter and the check in code agree). The workspace keeps
+    // the default timezone.
+    const firstDay = addDays(localDay(new Date(), 'America/New_York'), -89)
+    const noon = (day) => new Date(`${day}T12:00:00Z`)
+    for (const [id, number, day] of [['PO-C-OUT', 'PO-202608-0091', addDays(firstDay, -1)], ['PO-C-IN', 'PO-202608-0092', firstDay]]) {
+      await prisma.purchaseOrder.create({ data: {
+        id, number, tenantId: tenantC, supplierId: 'SUP-C', supplierName: 'Acme C', status: 'issued', currency: 'USD', amount: '10.0000', expectedDate: noon(day), issuedAt: dayOffset(-120),
+        lines: { create: [{ id: `${id}-L1`, sku: 'SKU-1040', itemName: 'Bracket', orderedQuantity: '4.0000', receivedQuantity: '0.0000', unit: 'pcs', unitPrice: '2.5000', amount: '10.0000', originalPromisedDate: noon(day), metadata: { promisedDate: addDays(day, 3) } }] },
+      } })
+      await prisma.purchaseOrderPromiseRevision.create({ data: { id: `REV-${id}`, tenantId: tenantC, purchaseOrderId: id, purchaseOrderLineId: `${id}-L1`, previousDate: noon(day), newDate: noon(addDays(day, 3)), reason: 'The supplier moved it.', source: 'purchase_order_promise_dates' } })
+    }
     const reliability = supplierReliabilityResponseSchema.parse(await createSupplierReliabilityReadService({ prisma }).read(buyer))
     const acme = reliability.suppliers['SUP-C']
-    assert.deepEqual([acme.revisions.orders, acme.revisions.revisedOrders, acme.revisions.revisions, acme.revisions.perOrder, acme.revisions.averageDaysMoved], [1, 1, 2, null, null])
-    assert.deepEqual(acme.revisions.movedLater, { count: 2, of: 2, share: null })
+    // PO-C and PO-C-IN, with PO-C's two changes and PO-C-IN's one.
+    assert.deepEqual([acme.revisions.orders, acme.revisions.revisedOrders, acme.revisions.revisions, acme.revisions.perOrder, acme.revisions.averageDaysMoved], [2, 2, 3, null, null])
+    assert.deepEqual(acme.revisions.movedLater, { count: 3, of: 3, share: null })
     const kept = await prisma.supplierReply.count({ where: { tenantId: tenantC, state: { not: 'superseded' } } })
     const { notRecorded, ...outcomes } = acme.replies.outcomes
     assert.equal(acme.replies.received, kept)
