@@ -95,7 +95,7 @@ test.describe("promised dates and supplier replies on Supplier evaluation", () =
     const tooltip = await busyRow.getByTestId("supplier-reliability-outcomes").getAttribute("title");
     expect(tooltip!.split("\n")).toEqual([
       "Recorded as read: 2", "Recorded after an edit: 1", "Recorded by hand: 1", "Not recorded, wrong reading: 1", "Not recorded, supplier will confirm: 0",
-      "Not recorded, other reason: 0", "Needs you: 1", "Proposed, not decided: 0", "Nothing to record: 0", "Median time to record: 5.5 hours",
+      "Not recorded, other reason: 0", "Needs you: 1", "Proposed, not decided: 0", "Nothing to record: 0", "Median time from paste to record: 5.5 hours",
     ]);
 
     // Under 5: the counts, never a bare "—", with the minimum in the tooltip;

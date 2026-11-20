@@ -134,9 +134,10 @@ export function SupplierReliabilityCard({ suppliers, loadKey = 0, hidden = false
       t("Needs you: {n}", { n: outcomes.needsYou }),
       t("Proposed, not decided: {n}", { n: outcomes.proposed }),
       t("Nothing to record: {n}", { n: outcomes.nothingToRecord }),
+      // From when the reply was pasted into FlowChain, not when the supplier sent it.
       part.medianHoursToRecord === null
-        ? t("Median time to record needs {n} recorded replies.", { n: minimum })
-        : t("Median time to record: {n} hours", { n: oneDecimal(part.medianHoursToRecord) }),
+        ? t("Median time from paste to record needs {n} recorded replies.", { n: minimum })
+        : t("Median time from paste to record: {n} hours", { n: oneDecimal(part.medianHoursToRecord) }),
     ];
     const summary = outcomeParts(outcomes).map(({ part: group, n }) => t(OUTCOME_PART_TEXT[group], { n: number(n) })).join(" · ");
     const outcome = !part.received ? dash(none) : <span title={lines.join("\n")} data-testid="supplier-reliability-outcomes">{summary}</span>;
