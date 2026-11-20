@@ -16,7 +16,11 @@
 //                someone should record the new end date. FlowChain never
 //                moves a date by itself.
 //   renewed      a newer contract that renews it was activated.
-//   terminated   ended early by a person, with a date and a reason.
+//   terminated   ended early by a person, with a date and a reason, once
+//                that date has come. Until then the contract is in force:
+//                active, or ending inside the reminder window, with the
+//                termination date as its key date ("terminates"), so Today
+//                keeps reminding until that day (design audit L9-09).
 //
 // Days are calendar days ("YYYY-MM-DD"). Stored days are kept at 00:00 UTC as
 // entered (like due dates since #170) and are read as that UTC day, never in
@@ -68,8 +72,10 @@ const whole = (value, fallback) => {
 //   today             the workspace's calendar day, YYYY-MM-DD
 //   renewalActivated  whether a contract that renews this one was activated
 // Returns { state, keyDate, keyDateKind, daysUntilKeyDate, noticeDeadline,
-// inReminderWindow }: keyDateKind is 'notice_deadline', 'end', 'terminated'
-// or null; daysUntilKeyDate is negative once the key date has passed.
+// inReminderWindow, terminatesOn }: keyDateKind is 'notice_deadline', 'end',
+// 'terminates' (a termination date still to come), 'terminated' or null;
+// daysUntilKeyDate is negative once the key date has passed; terminatesOn is
+// that termination date while it is still to come, else null.
 export function contractShownState(contract = {}, { today, renewalActivated = false } = {}) {
   const day = contractCalendarDay(today)
   if (!day) throw new TypeError('contractShownState needs the workspace day as YYYY-MM-DD.')
@@ -86,9 +92,18 @@ export function contractShownState(contract = {}, { today, renewalActivated = fa
     daysUntilKeyDate: keyDate ? contractDaysBetween(day, keyDate) : null,
     noticeDeadline,
     inReminderWindow: state === 'notice_due' || state === 'ending',
+    terminatesOn: null,
   })
 
-  if (contract.status === 'terminated') return result('terminated', contractCalendarDay(contract.terminatedOn) || null, 'terminated')
+  if (contract.status === 'terminated') {
+    const terminatedOn = contractCalendarDay(contract.terminatedOn) || null
+    // Terminated from a day still to come: in force until then, ending on it.
+    // No notice is due on a contract that ends early.
+    if (terminatedOn && terminatedOn > day) {
+      return { ...result(contractDaysBetween(day, terminatedOn) <= reminderDays ? 'ending' : 'active', terminatedOn, 'terminates'), noticeDeadline: null, terminatesOn: terminatedOn }
+    }
+    return result('terminated', terminatedOn, 'terminated')
+  }
   if (contract.status !== 'active') return result('draft')
   if (renewalActivated) return result('renewed', endDate, 'end')
   if (!endDate) return result('active')
@@ -101,4 +116,29 @@ export function contractShownState(contract = {}, { today, renewalActivated = fa
     return untilDeadline >= 0 ? result('active', noticeDeadline, 'notice_deadline') : result('active', endDate, 'end')
   }
   return result(untilEnd <= reminderDays ? 'ending' : 'active', endDate, 'end')
+}
+
+// Whether a contract may be terminated, from its shown state: an active one
+// still in force (active, notice due or ending). One that has ended, is past
+// its end date or was renewed is not; one already terminated, from today or
+// a day to come, is not either (design audit L9-09).
+export const CONTRACT_TERMINABLE_STATES = Object.freeze(['active', 'notice_due', 'ending'])
+export function contractMayTerminate(contract = {}) {
+  return contract.status === 'active' && CONTRACT_TERMINABLE_STATES.includes(contract.state)
+}
+
+// The termination date against the contract's own dates: not before it was
+// signed or started, not after it ends. Field issues with codes the pages
+// word (BEFORE_SIGNED_ON, BEFORE_START_DATE, AFTER_END_DATE).
+export function contractTerminationDateIssues(contract = {}, terminatedOn) {
+  const day = contractCalendarDay(terminatedOn)
+  if (!day) return []
+  const signedOn = contractCalendarDay(contract.signedOn)
+  const startDate = contractCalendarDay(contract.startDate)
+  const endDate = contractCalendarDay(contract.endDate)
+  const issue = (code, message) => [{ field: 'terminatedOn', code, message }]
+  if (signedOn && day < signedOn) return issue('BEFORE_SIGNED_ON', 'The termination date cannot be before the signed date.')
+  if (startDate && day < startDate) return issue('BEFORE_START_DATE', 'The termination date cannot be before the start date.')
+  if (endDate && day > endDate) return issue('AFTER_END_DATE', 'The termination date cannot be after the end date.')
+  return []
 }

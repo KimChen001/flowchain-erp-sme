@@ -53,6 +53,8 @@ export type ContractView = {
   renewsContract: { id: string; number: string } | null;
   renewals: Array<{ id: string; number: string; status: ContractStatus; activatedAt: string | null }>;
   terminatedOn: string | null;
+  // Terminated from a day still to come: that day, while it is (L9-09).
+  terminatesOn: string | null;
   terminationReason: string | null;
   version: number;
   createdAt: string | null;
@@ -159,21 +161,25 @@ export function useContractFormat() {
   }), [locale, timezone]);
 }
 
-export function ContractStateChip({ state, testId = "contract-state-chip" }: { state: ContractState; testId?: string }) {
+// A contract terminated from a day still to come reads "Active · Terminates
+// on 5 Dec 2026" (or Ending soon) until that day (design audit L9-09).
+export function ContractStateChip({ state, terminatesOn = null, testId = "contract-state-chip" }: { state: ContractState; terminatesOn?: string | null; testId?: string }) {
   const t = useContractCopy();
+  const f = useContractFormat();
   // The list chips' colours (design audit U-06), not a second palette.
   const style = STATUS_TONE_COLORS[(STATE_TONE[state] || "neutral") as StatusTone];
   return (
-    <span className="fc-status-chip inline-flex w-fit items-center whitespace-nowrap" data-testid={testId} data-state={state} style={{ color: style.color, background: style.background }}>
-      {t(STATE_LABEL[state] || "Changed")}
+    <span className="fc-status-chip inline-flex w-fit items-center whitespace-nowrap" data-testid={testId} data-state={state} data-terminates-on={terminatesOn || undefined} style={{ color: style.color, background: style.background }}>
+      {t(STATE_LABEL[state] || "Changed")}{terminatesOn ? ` · ${t("Terminates on {date}", { date: f.day(terminatesOn) })}` : ""}
     </span>
   );
 }
 
-// The key date and what it is: the last day to give notice, the end date, or
-// the day it was terminated.
+// The key date and what it is: the last day to give notice, the end date,
+// the termination date still to come, or the day it was terminated.
 export function keyDateLabel(contract: Pick<ContractView, "keyDateKind" | "daysUntilKeyDate">) {
   if (contract.keyDateKind === "notice_deadline") return "Notice by";
+  if (contract.keyDateKind === "terminates") return "Terminates on";
   if (contract.keyDateKind === "terminated") return "Terminated on";
   if (contract.keyDateKind === "end") return contract.daysUntilKeyDate !== null && contract.daysUntilKeyDate < 0 ? "Ended" : "Ends";
   return "";
@@ -249,6 +255,8 @@ export function fieldIssueText(issue: FieldIssue, t: (value: string, variables?:
     case "END_BEFORE_START": return t("The end date must be on or after the start date.");
     case "SIGNED_ON_IN_FUTURE": return t("The signed date cannot be after today.");
     case "BEFORE_SIGNED_ON": return t("The termination date cannot be before the signed date.");
+    case "BEFORE_START_DATE": return t("The termination date cannot be before the start date.");
+    case "AFTER_END_DATE": return t("The termination date cannot be after the end date.");
     case "SUPPLIER_NOT_FOUND": return t("Choose a supplier of this workspace.");
     case "OWNER_NOT_FOUND": return t("Choose an active user of this workspace.");
     case "PAYMENT_TERM_NOT_FOUND": return t("Choose one of the workspace payment terms.");

@@ -39,7 +39,7 @@ type WorkItem = {
   href: string;
   actionHref: string | null;
   date: string | null;
-  dateKind: "due" | "order_by" | "invoice" | "promised" | "required" | "notice_by" | "ends" | "ended";
+  dateKind: "due" | "order_by" | "invoice" | "promised" | "required" | "notice_by" | "ends" | "terminates" | "ended";
   overdueDays: number;
   detail: Record<string, any>;
 };

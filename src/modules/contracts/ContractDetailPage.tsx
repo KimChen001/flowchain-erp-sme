@@ -7,6 +7,7 @@ import { A, Card, Modal, inputStyle } from "../../components/ui";
 import { EntityLink } from "../../components/business/EntityLink";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import { ContractForm } from "./ContractForm";
+import { contractMayTerminate } from "../../../shared/contract-status.mjs";
 import {
   CONTRACT_FILE_MAX_BYTES,
   CONTRACT_FILE_TYPES,
@@ -177,11 +178,16 @@ export function ContractDetailPage({ contractId }: { contractId: string }) {
     if (contract.status !== "terminated") actions.push(action("Edit", () => setEditing(true), "contract-action-edit", <Pencil size={13} />, "quiet"));
     if (contract.status === "draft") actions.push(action("Activate", () => { setDialogIssues([]); setActivation({ signedOn: contract.signedOn || "", startDate: contract.startDate || "" }); setDialog({ kind: "activate" }); }, "contract-action-activate", undefined, "primary"));
     if (contract.status === "active" && contract.renewals.length === 0) actions.push(action("Renew", () => setDialog({ kind: "renew" }), "contract-action-renew", <RefreshCw size={13} />));
-    if (contract.status === "active") actions.push(action("Terminate", () => { setDialogIssues([]); setTermination({ terminatedOn: detail.today, reason: "" }); setDialog({ kind: "terminate" }); }, "contract-action-terminate", undefined, "danger"));
+    // Only while it is in force, by its shown state: not once it has ended,
+    // is past its end date or was renewed (design audit L9-09).
+    if (contractMayTerminate(contract)) actions.push(action("Terminate", () => { setDialogIssues([]); setTermination({ terminatedOn: detail.today, reason: "" }); setDialog({ kind: "terminate" }); }, "contract-action-terminate", undefined, "danger"));
     actions.push(action(uploading ? "Uploading…" : "Add file", () => fileInput.current?.click(), "contract-action-add-file", <Paperclip size={13} />));
     if (contract.status === "draft") actions.push(action("Delete draft", () => setDialog({ kind: "delete" }), "contract-action-delete", <Trash2 size={13} />, "danger"));
   }
   const keyKind = keyDateLabel(contract);
+  // The first day a termination may take: the later of signed and started
+  // (contractTerminationDateIssues checks the same on the server).
+  const terminationFrom = [contract.signedOn, contract.startDate].filter((value): value is string => Boolean(value)).sort().at(-1) || null;
   const notRecorded = <span style={{ color: A.gray2 }}>{t("Not recorded")}</span>;
   const row = (label: string, value: ReactNode, testId?: string) => (
     <div className="fc-detail-field" data-testid={testId}>
@@ -205,7 +211,7 @@ export function ContractDetailPage({ contractId }: { contractId: string }) {
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="fc-page-title tabular-nums" style={{ color: A.label }} data-testid="contract-number">{contract.number}</h1>
-              <ContractStateChip state={contract.state} />
+              <ContractStateChip state={contract.state} terminatesOn={contract.terminatesOn} />
             </div>
             <div className="mt-1 text-base font-medium" style={{ color: A.label }} data-testid="contract-title">{contract.title}</div>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" style={{ color: A.sub }}>
@@ -213,6 +219,7 @@ export function ContractDetailPage({ contractId }: { contractId: string }) {
               {contract.externalReference && <span>{t("Their reference")}: {contract.externalReference}</span>}
               {contract.keyDate && keyKind && <span data-testid="contract-key-date-line">{t(keyKind)} {f.day(contract.keyDate)}</span>}
             </div>
+            {contract.terminatesOn && <p className="mt-2 text-xs" style={{ color: A.sub }} data-testid="contract-terminates-note">{t("Terminated from {date}. It stays in force, and on Today, until then.", { date: f.day(contract.terminatesOn) })}</p>}
           </div>
           {actions.length > 0 && <div className="fc-detail-actions flex flex-wrap items-center gap-2" data-testid="contract-actions">{actions}</div>}
         </div>
@@ -234,7 +241,7 @@ export function ContractDetailPage({ contractId }: { contractId: string }) {
             {row("Owner", contract.owner?.name || null)}
             {row("Their reference", contract.externalReference)}
             {row("Payment terms", contract.paymentTermsId ? (terms[contract.paymentTermsId] ? `${terms[contract.paymentTermsId]} (${contract.paymentTermsId})` : contract.paymentTermsId) : null)}
-            {contract.status === "terminated" && row("Terminated on", f.day(contract.terminatedOn))}
+            {contract.status === "terminated" && row(contract.terminatesOn ? "Terminates on" : "Terminated on", f.day(contract.terminatedOn))}
           </div>
           {contract.status === "terminated" && contract.terminationReason && <div className="mt-3">{row("Termination reason", contract.terminationReason)}</div>}
           <div className="mt-3">{row("Notes", contract.notes ? <span className="whitespace-pre-wrap font-normal">{contract.notes}</span> : null)}</div>
@@ -345,7 +352,8 @@ export function ContractDetailPage({ contractId }: { contractId: string }) {
       >
         <div className="grid gap-4">
           <label className="text-[13px] font-semibold" style={{ color: A.sub }}>{t("Termination date")}
-            <input type="date" data-testid="contract-terminate-date" value={termination.terminatedOn} onChange={(event) => setTermination({ ...termination, terminatedOn: event.target.value })} style={{ ...inputStyle, marginTop: 6 }} />
+            <input type="date" data-testid="contract-terminate-date" min={terminationFrom || undefined} max={contract.endDate || undefined} value={termination.terminatedOn} onChange={(event) => setTermination({ ...termination, terminatedOn: event.target.value })} style={{ ...inputStyle, marginTop: 6 }} />
+            {terminationFrom && <span className="mt-1 block text-xs font-normal" data-testid="contract-terminate-range">{contract.endDate ? t("Pick a day from {from} to {to}. A day still to come keeps the contract in force until then.", { from: f.day(terminationFrom), to: f.day(contract.endDate) }) : t("Pick a day from {from}. A day still to come keeps the contract in force until then.", { from: f.day(terminationFrom) })}</span>}
             {dialogIssue("terminatedOn")}
           </label>
           <label className="text-[13px] font-semibold" style={{ color: A.sub }}>{t("Reason")}

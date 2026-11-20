@@ -43,6 +43,11 @@ const rows = [
   contract('C-8', { endDate: new Date('2026-09-08T00:00:00.000Z') }),
   // renews automatically and ended Jun 30: stays until the new end date is recorded.
   contract('C-0', { renewal: 'automatic', endDate: new Date('2026-06-30T00:00:00.000Z') }),
+  // terminated from Oct 25, still to come: in force and ending, on Today until
+  // then (design audit L9-09).
+  contract('C-T', { status: 'terminated', terminatedOn: new Date('2026-10-25T00:00:00.000Z'), terminationReason: 'Supplier exit', number: 'CT-0000000T' }),
+  // terminated from Sep 1: terminated, not on Today.
+  contract('C-P', { status: 'terminated', terminatedOn: new Date('2026-09-01T00:00:00.000Z'), terminationReason: 'Merged', number: 'CT-0000000P' }),
 ]
 
 test('contract rows name the number, title, supplier and key date, and open the contract', () => {
@@ -65,7 +70,7 @@ test('contract rows name the number, title, supplier and key date, and open the 
     ['contract_notice_due', 'CT-00000002', '2026-11-01', 'notice_by', 0],
   ])
   const ending = work.items.find((item) => item.recordId === 'C-1')
-  assert.deepEqual([ending.entityType, ending.name, ending.href, ending.actionHref, ending.detail], ['contract', 'Acme Packaging', '/app/contracts/C-1', null, { title: 'Packaging supply', renewal: 'none', endDate: '2026-10-30', noticeDeadline: null }])
+  assert.deepEqual([ending.entityType, ending.name, ending.href, ending.actionHref, ending.detail], ['contract', 'Acme Packaging', '/app/contracts/C-1', null, { title: 'Packaging supply', renewal: 'none', endDate: '2026-10-30', noticeDeadline: null, terminatesOn: null }])
   assert.equal(work.overdue, 2)
 })
 
@@ -83,9 +88,14 @@ const reader = (roleKey, userId) => reportReadAccessFor({ authenticated: true, c
 function database(queries) {
   return {
     contract: {
+      // The read's where: its owner, and any of its OR clauses (an active
+      // contract by its end date, one terminated from a day still to come).
       findMany: async (args) => {
         queries.push(args.where)
-        return rows.filter((row) => row.status === args.where.status && row.endDate && row.endDate <= args.where.endDate.lte && (!args.where.ownerId || row.ownerId === args.where.ownerId))
+        const matches = (row, clause) => row.status === clause.status
+          && (!clause.endDate || (row.endDate && row.endDate <= clause.endDate.lte))
+          && (!clause.terminatedOn || (row.terminatedOn && row.terminatedOn > clause.terminatedOn.gt && row.terminatedOn <= clause.terminatedOn.lte))
+        return rows.filter((row) => (!args.where.ownerId || row.ownerId === args.where.ownerId) && (args.where.OR || [args.where]).some((clause) => matches(row, clause)))
       },
     },
     customerInvoice: { findMany: async () => [] },
@@ -126,9 +136,17 @@ test('a reader who manages contracts sees every contract that needs attention, o
     ['contract_past_end', 'C-4'],
     ['contract_past_end', 'C-3'],
     ['contract_ending', 'C-7'],
+    ['contract_ending', 'C-T'],
     ['contract_ending', 'C-1'],
     ['contract_notice_due', 'C-2'],
   ])
+  // Terminated from Oct 25: on Today until then, dated by that day.
+  const terminating = payload.workItems.find((item) => item.recordId === 'C-T')
+  assert.deepEqual([terminating.date, terminating.dateKind, terminating.detail.terminatesOn], ['2026-10-25', 'terminates', '2026-10-25'])
+  // The read asks for active contracts by their end date and for those
+  // terminated from a day after today.
+  assert.deepEqual(queries[0].OR.map((clause) => clause.status), ['active', 'terminated'])
+  assert.equal(queries[0].OR[1].terminatedOn.gt.toISOString(), '2026-10-09T00:00:00.000Z')
   assert.equal(queries[0].ownerId, undefined)
   assert.equal(queries[0].tenantId, 'tenant-t')
   assert.equal(payload.hidden.includes('contracts'), false)
@@ -137,7 +155,7 @@ test('a reader who manages contracts sees every contract that needs attention, o
 test('a reader who only reads contracts sees the ones they own', async () => {
   const { payload, queries } = await homeFor(reader('finance-specialist', 'user-owner'))
   assert.equal(queries[0].ownerId, 'user-owner')
-  assert.deepEqual(contractRows(payload).map(([, id]) => id).sort(), ['C-0', 'C-1', 'C-3', 'C-4', 'C-7'])
+  assert.deepEqual(contractRows(payload).map(([, id]) => id).sort(), ['C-0', 'C-1', 'C-3', 'C-4', 'C-7', 'C-T'])
   const other = await homeFor(reader('read-only-viewer', 'user-nobody'))
   assert.deepEqual(contractRows(other.payload), [])
 })
