@@ -8,7 +8,7 @@ import { procurementDocumentNumber } from '../../shared/document-numbering.mjs'
 import { assertWarehouseAccess, hasWarehouseAccess, resolveProvisionedActor } from './pilot-identity.mjs'
 import { isPrismaConcurrencyError } from './prisma-concurrency-error.mjs'
 import { ReceivingCommandError } from './receiving-posting-command-service.mjs'
-import { isPurchaseOrderReceivable, RECEIVABLE_PURCHASE_ORDER_INPUTS, RECEIVING_POSTING_STATUS, RECEIVING_WORKFLOW_STATUS } from './procurement-status-authority.mjs'
+import { isPurchaseOrderReceivable, normalizeProcurementAuthorityStatus, PURCHASE_ORDER_STATUS, RECEIVABLE_PURCHASE_ORDER_INPUTS, RECEIVING_POSTING_STATUS, RECEIVING_WORKFLOW_STATUS } from './procurement-status-authority.mjs'
 import { receivingDecimalString, receivingDecimalUnits } from './receiving-transaction-policy.mjs'
 
 // The receiving draft commands (create, revise, submit) that both the desktop
@@ -108,6 +108,11 @@ function arrivalTime(value, fallback) {
   if (Number.isNaN(parsed.getTime())) fail('RECEIVING_VALIDATION_FAILED', 'arrivedAt must be a valid date and time.', 422)
   return parsed
 }
+
+// The orders the New receipt page reads at most, earliest expected first.
+const ORDERS_TO_RECEIVE_LIMIT = 500
+// Legacy stored statuses that read as approved, issued or partially received.
+const LEGACY_RECEIVABLE_STATUSES = ['已审批', '已批准', '已下发', '已下达', '已发出', '部分收货']
 
 export function createReceivingDraftCommandService({ prisma, idFactory = randomUUID, now = () => new Date() } = {}) {
   if (!prisma) throw new Error('prisma is required')
@@ -323,6 +328,37 @@ export function createReceivingDraftCommandService({ prisma, idFactory = randomU
     return { items, total: items.length, warehouses: warehouses.map((row) => ({ ...row, locations: locationsByWarehouse.get(row.id) || [] })) }
   }
 
+  // The orders a person who prepares receipts may receive now, for the New
+  // receipt page (GET /api/procurement/receivable-orders). Read with
+  // receiving.prepare rather than the purchase order read model, which the
+  // default Operations Specialist role cannot use (product review
+  // 2026-11-20). Issued or partially received orders with quantity still to
+  // receive, into a warehouse the reader may operate (or none set yet), with
+  // only what the page shows: no price, amount or currency. notIssued counts
+  // the approved orders for those warehouses, which are received only once
+  // issued, by the status rule the purchase order list's Approved filter uses.
+  async function listOrdersToReceive(context) {
+    const actor = await resolveProvisionedActor(prisma, context?.identity || context)
+    assertAuthorized({ actor, permission: 'receiving.prepare', tenantId: actor.tenantId })
+    const rows = await prisma.purchaseOrder.findMany({
+      where: { tenantId: actor.tenantId, status: { in: [...RECEIVABLE_PURCHASE_ORDER_INPUTS, ...LEGACY_RECEIVABLE_STATUSES] } },
+      select: { id: true, number: true, metadata: true, status: true, supplierName: true, expectedDate: true, lines: { select: { sku: true, itemName: true, unit: true, orderedQuantity: true, receivedQuantity: true } } },
+      orderBy: [{ expectedDate: 'asc' }, { id: 'asc' }], take: ORDERS_TO_RECEIVE_LIMIT + 1,
+    })
+    const statusOf = (value) => { try { return normalizeProcurementAuthorityStatus('purchaseOrder', value) } catch { return '' } }
+    const inScope = (po) => { const warehouseId = text(po.metadata?.targetWarehouseId); return !warehouseId || hasWarehouseAccess(actor, [warehouseId], 'operate') }
+    const open = (line) => receivingDecimalUnits(line.orderedQuantity || 0) - receivingDecimalUnits(line.receivedQuantity || 0)
+    const scoped = rows.slice(0, ORDERS_TO_RECEIVE_LIMIT).filter(inScope).map((po) => ({ po, status: statusOf(po.status) }))
+    const orders = scoped.filter(({ po, status }) => [PURCHASE_ORDER_STATUS.ISSUED, PURCHASE_ORDER_STATUS.PARTIALLY_RECEIVED].includes(status) && po.lines.some((line) => open(line) > 0n))
+      .map(({ po, status }) => ({
+        id: po.id, number: procurementDocumentNumber(po), status, supplierName: po.supplierName || null,
+        expectedDate: po.expectedDate ? new Date(po.expectedDate).toISOString().slice(0, 10) : null,
+        lines: po.lines.map((line) => ({ sku: line.sku || null, itemName: line.itemName || null, unit: line.unit || null, orderedQuantity: text(line.orderedQuantity) || '0', receivedQuantity: text(line.receivedQuantity) || '0' })),
+      }))
+    const notIssued = scoped.filter(({ status }) => status === PURCHASE_ORDER_STATUS.APPROVED).length
+    return { orders, notIssued, truncated: rows.length > ORDERS_TO_RECEIVE_LIMIT }
+  }
+
   // Where each item already sits in the warehouses the actor may receive
   // into, most stock first, and every location those warehouses know (their
   // bins and the locations stock is recorded at). The receiving form offers
@@ -393,5 +429,5 @@ export function createReceivingDraftCommandService({ prisma, idFactory = randomU
     return { items, total: items.length }
   }
 
-  return { createDraft, reviseDraft, submitDraft, cancelDraft, listReceivablePurchaseOrders, listReceivingDocuments }
+  return { createDraft, reviseDraft, submitDraft, cancelDraft, listReceivablePurchaseOrders, listOrdersToReceive, listReceivingDocuments }
 }

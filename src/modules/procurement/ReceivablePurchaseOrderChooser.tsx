@@ -7,9 +7,10 @@ import { ListCard, ListSearchCard, ListStateRow, StatusChip, listButtonClass, li
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { useI18n } from "../../i18n/I18n";
 import { statusCodeLabel } from "../../i18n/statusLabels";
-import { ApiError, apiJson } from "../../lib/api-client";
+import { apiJson } from "../../lib/api-client";
 import { formatCalendarDay } from "../../lib/format";
 import { usePermissionSet } from "../../lib/usePermissionSet";
+import { useRouteAvailability } from "../../app/routeAvailability";
 
 // English source copy with its Chinese translation.
 const COPY: Record<string, [string, string]> = {
@@ -33,25 +34,27 @@ const COPY: Record<string, [string, string]> = {
   loadFailed: ["The purchase orders could not be loaded.", "采购订单加载失败。"],
   cannotReceive: ["Your role cannot prepare receipts.", "你的角色无权准备收货单。"],
   cannotReceiveDetail: ["Ask an administrator for receiving access, or ask someone who receives goods to record this delivery.", "请联系管理员开通收货权限，或请负责收货的同事登记本次到货。"],
-  cannotListOrders: ["Your role cannot view purchase orders.", "你的角色无权查看采购订单。"],
-  cannotListOrdersDetail: ["Open the receipt from the purchase order link you were given.", "请通过收到的采购订单链接进入收货。"],
-  notIssuedOne: ["1 approved purchase order is not issued to its supplier yet, so it can't be received.", "有 1 张已审批的采购订单尚未下达给供应商，因此还不能收货。"],
-  notIssuedMany: ["{count} approved purchase orders are not issued to their suppliers yet, so they can't be received.", "有 {count} 张已审批的采购订单尚未下达给供应商，因此还不能收货。"],
-  notIssuedLink: ["See them and mark them issued", "查看并标记为已下达"],
+  notIssuedOne: ["1 approved purchase order for your warehouses is not issued to its supplier yet, so it can't be received.", "你负责的仓库有 1 张已审批的采购订单尚未下达给供应商，因此还不能收货。"],
+  notIssuedMany: ["{count} approved purchase orders for your warehouses are not issued to their suppliers yet, so they can't be received.", "你负责的仓库有 {count} 张已审批的采购订单尚未下达给供应商，因此还不能收货。"],
+  notIssuedIssue: ["See approved orders and mark them issued", "查看已审批订单并标记为已下达"],
+  notIssuedSee: ["See approved orders", "查看已审批订单"],
+  notIssuedAsk: ["Someone who manages purchase orders can issue them.", "请负责采购订单的同事将其下达。"],
+  truncated: ["Showing the orders with the earliest expected arrival; search to find another.", "仅显示预计到货最早的订单；如需其他订单请搜索。"],
 };
 
 // The statuses the Receive action on a purchase order offers (PurchaseOrderReceiveAction).
 const RECEIVE_STATUSES = new Set(["issued", "partially_received"]);
 
-type OrderLine = { quantityOrdered?: number; quantityReceived?: number; unit?: string; sku?: string; itemName?: string };
-type Order = { id?: string; po?: string; number?: string; orderNumber?: string; status: string; supplier?: string; eta?: string; lines?: OrderLine[]; totalOrderedQty?: number; totalReceivedQty?: number };
+// GET /api/procurement/receivable-orders (receiving-draft-command-service
+// listOrdersToReceive): issued or partially received orders with quantity to
+// receive, into the reader's warehouses, read with receiving.prepare.
+type OrderLine = { orderedQuantity?: string | number; receivedQuantity?: string | number; unit?: string | null; sku?: string | null; itemName?: string | null };
+type Order = { id: string; number?: string; status: string; supplierName?: string | null; expectedDate?: string | null; lines?: OrderLine[] };
+type OrdersToReceive = { orders: Order[]; notIssued: number; truncated: boolean };
 // open is a total only when every open line uses one unit; otherwise null and
 // the row says how many lines are open.
 // number: the document number people read; id stays in links and calls.
 type Receivable = { id: string; number: string; status: string; supplier: string; eta: string; open: number | null; unit: string; openLines: number; search: string };
-// Approved orders are not received until they are issued (the Receive action
-// on a purchase order follows the same rule); the page counts them instead.
-const AWAITING_ISSUE = "approved";
 
 const quantity = (value: unknown) => {
   const parsed = Number(value ?? 0);
@@ -59,35 +62,34 @@ const quantity = (value: unknown) => {
 };
 
 // An order with quantity still to receive, in a status the Receive action allows.
-function receivableOf(order: Order, statuses: Set<string> = RECEIVE_STATUSES): Receivable | null {
-  const id = String(order.po || order.id || "").trim();
-  if (!id || !statuses.has(order.status)) return null;
+function receivableOf(order: Order): Receivable | null {
+  const id = String(order.id || "").trim();
+  if (!id || !RECEIVE_STATUSES.has(order.status)) return null;
   const lines = order.lines || [];
-  const openLines = lines.filter((line) => quantity(line.quantityOrdered) > quantity(line.quantityReceived));
-  const open = lines.length
-    ? openLines.reduce((sum, line) => sum + quantity(line.quantityOrdered) - quantity(line.quantityReceived), 0)
-    : Math.max(quantity(order.totalOrderedQty) - quantity(order.totalReceivedQty), 0);
+  const openLines = lines.filter((line) => quantity(line.orderedQuantity) > quantity(line.receivedQuantity));
+  const open = openLines.reduce((sum, line) => sum + quantity(line.orderedQuantity) - quantity(line.receivedQuantity), 0);
   if (open <= 0) return null;
   const units = [...new Set(openLines.map((line) => String(line.unit || "").trim()))];
-  const number = String(order.number || order.orderNumber || "").trim() || id;
+  const number = String(order.number || "").trim() || id;
   return {
     id,
     number,
     status: order.status,
-    supplier: String(order.supplier || ""),
-    eta: String(order.eta || ""),
+    supplier: String(order.supplierName || ""),
+    eta: String(order.expectedDate || ""),
     open: units.length > 1 ? null : open,
     unit: units.length === 1 ? units[0] : "",
     openLines: openLines.length,
-    search: [number, id, order.supplier, ...lines.flatMap((line) => [line.sku, line.itemName])].filter(Boolean).join(" ").toLowerCase(),
+    search: [number, id, order.supplierName, ...lines.flatMap((line) => [line.sku, line.itemName])].filter(Boolean).join(" ").toLowerCase(),
   };
 }
 
 // /app/procurement/receiving/new without ?po=: the purchase orders that can be
-// received now, each opening the receipt form for that order. Read from
-// /api/procurement/orders (the purchase order read model, masked by role);
-// the server checks receiving.prepare, warehouse scope and open quantities
-// again when the receipt is saved.
+// received now, each opening the receipt form for that order. Read with
+// receiving permissions, so a receiver without purchase order access (the
+// default Operations Specialist) gets the list too; the server checks
+// receiving.prepare, warehouse scope and open quantities again when the
+// receipt is saved.
 export function ReceivablePurchaseOrderChooser() {
   const { language, locale, formatNumber } = useI18n();
   const tr = (key: string, values: Record<string, string | number> = {}) =>
@@ -95,24 +97,31 @@ export function ReceivablePurchaseOrderChooser() {
   const navigate = useNavigate();
   const permissions = usePermissionSet();
   const canReceive = Boolean(permissions?.has("receiving.prepare"));
+  const canOpenRoute = useRouteAvailability();
+  // The way to the approved orders, and whether this person may issue them.
+  const canOpenOrders = canOpenRoute("procurement:orders");
+  const canIssue = Boolean(permissions?.has("procurement.purchase_order.revise"));
   const [orders, setOrders] = useState<Receivable[]>([]);
   const [notIssued, setNotIssued] = useState(0);
-  const [state, setState] = useState<"loading" | "loaded" | "error" | "denied">("loading");
+  const [truncated, setTruncated] = useState(false);
+  const [state, setState] = useState<"loading" | "loaded" | "error">("loading");
   const [query, setQuery] = useState("");
 
   const load = useCallback(async () => {
     setState("loading");
     try {
-      const rows = await apiJson<Order[]>("/api/procurement/orders");
-      setNotIssued((rows || []).filter((row) => receivableOf(row, new Set([AWAITING_ISSUE]))).length);
+      const answer = await apiJson<OrdersToReceive>("/api/procurement/receivable-orders");
+      setNotIssued(Number(answer?.notIssued) || 0);
+      setTruncated(Boolean(answer?.truncated));
       // Earliest expected arrival first; orders without a date last.
-      setOrders((rows || []).map((row) => receivableOf(row)).filter((row): row is Receivable => Boolean(row))
+      setOrders((answer?.orders || []).map((row) => receivableOf(row)).filter((row): row is Receivable => Boolean(row))
         .sort((a, b) => (a.eta || "9999-12-31").localeCompare(b.eta || "9999-12-31") || a.id.localeCompare(b.id)));
       setState("loaded");
-    } catch (error) {
+    } catch {
       setOrders([]);
       setNotIssued(0);
-      setState(error instanceof ApiError && error.status === 403 ? "denied" : "error");
+      setTruncated(false);
+      setState("error");
     }
   }, []);
 
@@ -134,7 +143,7 @@ export function ReceivablePurchaseOrderChooser() {
 
   return (
     <div className="space-y-5" data-testid="receiving-po-chooser">
-      <ListSearchCard title={tr("title")} subtitle={tr("intro")} actions={backToOrders}>
+      <ListSearchCard title={tr("title")} subtitle={tr("intro")} actions={canOpenOrders ? backToOrders : undefined}>
         {canReceive && (
           <Field label={tr("search")}>
             <input aria-label={tr("search")} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tr("searchPlaceholder")} style={inputStyle} />
@@ -157,7 +166,6 @@ export function ReceivablePurchaseOrderChooser() {
               {permissions !== null && !canReceive && <ListStateRow colSpan={6} state="empty" title={tr("cannotReceive")} detail={tr("cannotReceiveDetail")} />}
               {canReceive && state === "loading" && <ListStateRow colSpan={6} state="loading" />}
               {canReceive && state === "error" && <ListStateRow colSpan={6} state="error" title={tr("loadFailed")} onRetry={() => void load()} />}
-              {canReceive && state === "denied" && <ListStateRow colSpan={6} state="empty" title={tr("cannotListOrders")} detail={tr("cannotListOrdersDetail")} />}
               {canReceive && state === "loaded" && shown.length === 0 && (
                 orders.length === 0
                   ? <ListStateRow colSpan={6} state="empty" title={tr("empty")} detail={tr("emptyDetail")} />
@@ -189,10 +197,13 @@ export function ReceivablePurchaseOrderChooser() {
           </table>
         </div>
       </ListCard>
+      {canReceive && state === "loaded" && truncated && <p className="text-xs" style={{ color: A.sub }} data-testid="receiving-po-chooser-truncated">{tr("truncated")}</p>}
       {canReceive && state === "loaded" && notIssued > 0 && (
         <p className="text-sm" style={{ color: A.sub }} data-testid="receiving-po-chooser-not-issued">
           {notIssued === 1 ? tr("notIssuedOne") : tr("notIssuedMany", { count: formatNumber(notIssued) })}{" "}
-          <Link to="/app/procurement/orders?status=approved" className={tableLinkClass}>{tr("notIssuedLink")}</Link>
+          {canOpenOrders
+            ? <Link to="/app/procurement/orders?status=approved" className={`${tableLinkClass} max-sm:inline-flex max-sm:min-h-9 max-sm:items-center`}>{tr(canIssue ? "notIssuedIssue" : "notIssuedSee")}</Link>
+            : tr("notIssuedAsk")}
         </p>
       )}
     </div>

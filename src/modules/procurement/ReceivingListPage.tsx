@@ -14,6 +14,7 @@ import { ListPager, usePagedRows } from "./listPaging";
 import { exportRowsToCsv } from "../../lib/data-export";
 import { instantDayInTimeZone } from "../../lib/format";
 import { usePermissionSet } from "../../lib/usePermissionSet";
+import { useRouteAvailability } from "../../app/routeAvailability";
 
 // Receipts drawn at a time; the cards, search and filters cover every receipt.
 const PAGE_SIZE = 50;
@@ -29,7 +30,8 @@ export function ReceivingListPage() {
   const tr = (zh: string, en: string) => language === "en-US" ? en : zh;
   // New receipt opens the orders waiting to be received (ReceivablePurchaseOrderChooser),
   // for people who prepare receipts; the server checks receiving.prepare again.
-  const canPrepareReceipt = Boolean(usePermissionSet()?.has("receiving.prepare"));
+  const canOpenRoute = useRouteAvailability();
+  const canPrepareReceipt = Boolean(usePermissionSet()?.has("receiving.prepare")) && canOpenRoute("procurement:receiving:new");
   const statusLabel = (status: string) => language === "en-US"
     ? (workspaceCopy(status, language) !== status ? workspaceCopy(status, language) : status.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()))
     : workspaceCopy(status, language);
@@ -106,7 +108,9 @@ export function ReceivingListPage() {
 
       <ListSearchCard
         title={tr("收货查询", "Receipt search")}
-        subtitle={tr("点击编号查看收货、过账与库存影响。点击“新建收货单”选择到货的采购订单，或在采购订单上点击“收货”。", "Select a number to review receiving, posting, and inventory impact. To record a delivery, use New receipt and choose its purchase order, or Receive on the purchase order.")}
+        subtitle={canPrepareReceipt
+          ? tr("点击编号查看收货、过账与库存影响。点击“新建收货单”选择到货的采购订单，或在采购订单上点击“收货”。", "Select a number to review receiving, posting, and inventory impact. To record a delivery, use New receipt and choose its purchase order, or Receive on the purchase order.")
+          : tr("点击编号查看收货、过账与库存影响。", "Select a number to review receiving, posting, and inventory impact.")}
         actions={<>
           <ResetButton onClick={reset} />
           <RefreshButton onClick={() => void load()} />
