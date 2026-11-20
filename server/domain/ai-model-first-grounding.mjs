@@ -625,6 +625,20 @@ const WEEKS_IN_WORDS = [
   [/\bfour\s+weeks\b|四\s*(?:个)?\s*(?:周|星期|礼拜)/i, 28],
 ]
 const DIGIT_WEEKS = /(\d+)\s*(?:weeks?\b|周|个星期|星期)/gi
+// Counts and multiples the user wrote in words, for a calculation's inputs
+// ("three times the minimum order" is a product by 3; 2026-11-20 question
+// set, minimum-multiple-en: its right £957 was flagged). English number
+// words one to twelve, twice, double and triple; Chinese only as a multiple
+// (两倍, 三倍), since 三 and 两 sit inside many words (三方匹配).
+const NUMBER_WORDS = Object.freeze({ one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, twice: 2, double: 2, triple: 3 })
+const CHINESE_DIGITS = Object.freeze({ 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 })
+function countsInWords(value) {
+  const counts = []
+  for (const match of value.matchAll(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twice|double|triple)\b/gi)) counts.push(NUMBER_WORDS[match[1].toLowerCase()])
+  for (const match of value.matchAll(/([一二两三四五六七八九十])\s*倍/g)) counts.push(CHINESE_DIGITS[match[1]])
+  if (/翻倍|翻一番/.test(value)) counts.push(2)
+  return counts
+}
 // The days a span of weeks in the user's words reaches from today: "what
 // should I reorder this week?" answered "order by 27 Nov" (today + 7), and
 // "if Acme delays another week" with the week after today (question set
@@ -646,6 +660,7 @@ export function aiCalculationGrounded(input = {}, { results = [], question = '',
     ...aiGroundingSources(results).numbers.map((row) => row.value),
     ...[text(question), text(conversation)].flatMap((value) => [...value.matchAll(INPUT_NUMBER)].map((match) => Number(match[0].replace(/,/g, '')))),
     ...[text(question), text(conversation)].flatMap(weeksAsDays),
+    ...[text(question), text(conversation)].flatMap(countsInWords),
   ].filter(Number.isFinite)
   const near = (value) => known.some((candidate) => Math.abs(candidate - value) <= Math.max(0.005, Math.abs(candidate) * 0.0005) || Math.abs(candidate * 100 - value) <= 0.005 || Math.abs(candidate / 100 - value) <= 0.00005)
   return values.every((value) => value === 0 || value === 1 || near(value))

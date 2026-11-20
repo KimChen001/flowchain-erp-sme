@@ -128,3 +128,18 @@ test('a date a span of weeks in the question reaches from today is one the user 
   assert.equal(dates('Order 60 by 27 Nov 2026.', 'What should I reorder?').length, 1)
   assert.equal(dates('Order 60 by 28 Nov 2026.', 'What should I reorder this week?').length, 1)
 })
+
+// 2026-11-20 question set, minimum-multiple-en: "three times the minimum
+// order" is a product by 3; its right £957 was flagged, as 3 was no digit
+// the user typed.
+test('a count or multiple in the user\'s words grounds a calculation', () => {
+  const results = [{ minimumOrderQuantity: 50, unitPrice: 6.38 }]
+  const grounded = (values, question) => aiCalculationGrounded({ operation: 'product', values }, { results, question })
+  assert.equal(grounded([50, 3], 'What would three times the minimum order of the Regency Cakestand cost?'), true)
+  assert.equal(grounded([50, 2], 'And twice that?'), true)
+  assert.equal(grounded([50, 2], '起订量的两倍要多少钱？'), true)
+  assert.equal(grounded([50, 3], '三倍呢？'), true)
+  // Not a count the user gave.
+  assert.equal(grounded([50, 3], 'What would the minimum order cost?'), false)
+  assert.equal(grounded([50, 3], '三方匹配通过了几张？'), false)
+})
