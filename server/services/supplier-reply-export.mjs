@@ -171,9 +171,43 @@ export function supplierReplyExportRows({ replies = [], orders = new Map(), supp
   return { replies: replyRows, revisions: revisionRows }
 }
 
-// The "about" sheet: what the export holds and where it stops.
-export function supplierReplyExportAbout({ generatedAt, window, timeZone, publicData, includeText, replies, revisions, truncated }) {
+// The "about" sheet: what the export holds and where it stops. Field names
+// are codes; the notes are in the reader's interface language (en-US, or
+// zh-CN), and the values are the same in both.
+const ABOUT_NOTES = {
+  when_truncated: [
+    (limit) => `A truncated sheet holds the earliest ${limit} rows of the window: replies by received date, revisions by time made. Choose a shorter window for the rest.`,
+    (limit) => `被截断的工作表只含期间内最早的 ${limit} 行：回复按收到日期，修改按修改时间。其余部分请缩短期间再导出。`,
+  ],
+  replies_in_window: [
+    () => 'Replies received on a day in the window (received_on), in the workspace timezone.',
+    () => '收到日期（received_on）在期间内的回复，按工作区时区计。',
+  ],
+  revisions_in_window: [
+    () => 'Promised-date changes made on a day in the window (revised_on), in the workspace timezone.',
+    () => '修改日期（revised_on）在期间内的承诺日期修改，按工作区时区计。',
+  ],
+  outcome: [
+    () => 'recorded_unchanged: every proposed line recorded at its proposed date; recorded_edited: a proposed line recorded at another date or left out; recorded_manual: nothing proposed, dates typed by hand; recorded: dates not known; not_recorded_<reason>; otherwise the state. Rare case: a proposed line whose promised date was already the proposed day when it was recorded writes no revision, so it reads as left out and the reply as recorded_edited.',
+    () => 'recorded_unchanged：每条建议行都按建议日期记录；recorded_edited：有建议行按其他日期记录或未记录；recorded_manual：没有建议，日期由人手填；recorded：不知道写入了哪些日期；not_recorded_<原因>；其余为当时的状态。少见情况：记录时某建议行的承诺日期已经是建议日期，不会产生修改记录，该行会被视为未记录，回复记为 recorded_edited。',
+  ],
+  lines_edited: [
+    () => 'On a recorded reply whose dates are known: proposed lines recorded at another date or left out. lines_by_hand: lines recorded that were not proposed.',
+    () => '已记录且知道写入日期的回复：按其他日期记录或未记录的建议行数。lines_by_hand：记录了但不是建议的行数。',
+  ],
+  reply_id_link: [
+    () => "A supplier_reply revision's reply_id comes from the reply's revision ids, else from the revision's audit row (its origin); it is empty only when neither has it.",
+    () => 'supplier_reply 修改的 reply_id 取自回复保存的修改编号，没有时取自该修改的操作记录（origin）；两处都没有时才为空。',
+  ],
+  text_rule: [
+    (included) => (included ? 'Public-data workspace: reply text, decision notes, supplier names and revision reasons are included (DD-7).' : 'Codes, ids and dates only: reply text, decision notes, supplier names and revision reasons are left out (DD-7).'),
+    (included) => (included ? '公开数据工作区：包含回复原文、处理备注、供应商名称和修改原因（DD-7）。' : '只含代码、编号和日期：不含回复原文、处理备注、供应商名称和修改原因（DD-7）。'),
+  ],
+}
+
+export function supplierReplyExportAbout({ generatedAt, window, timeZone, publicData, includeText, replies, revisions, truncated, language = 'en-US' }) {
   const limit = SUPPLIER_REPLY_EXPORT_LIMIT
+  const note = (field, value) => [field, ABOUT_NOTES[field][language === 'zh-CN' ? 1 : 0](value)]
   return [
     ['as_of', generatedAt],
     ['window_from', window.from],
@@ -186,13 +220,13 @@ export function supplierReplyExportAbout({ generatedAt, window, timeZone, public
     ['replies_truncated', truncated.replies],
     ['revisions_rows', revisions],
     ['revisions_truncated', truncated.revisions],
-    ['when_truncated', `A truncated sheet holds the earliest ${limit} rows of the window: replies by received date, revisions by time made. Choose a shorter window for the rest.`],
-    ['replies_in_window', 'Replies received on a day in the window (received_on), in the workspace timezone.'],
-    ['revisions_in_window', 'Promised-date changes made on a day in the window (revised_on), in the workspace timezone.'],
-    ['outcome', 'recorded_unchanged: every proposed line recorded at its proposed date; recorded_edited: a proposed line recorded at another date or left out; recorded_manual: nothing proposed, dates typed by hand; recorded: dates not known; not_recorded_<reason>; otherwise the state.'],
-    ['lines_edited', 'On a recorded reply whose dates are known: proposed lines recorded at another date or left out. lines_by_hand: lines recorded that were not proposed.'],
-    ['reply_id_link', 'A supplier_reply revision\'s reply_id comes from the reply\'s revision ids, else from the revision\'s audit row (its origin); it is empty only when neither has it.'],
-    ['text_rule', includeText ? 'Public-data workspace: reply text, decision notes, supplier names and revision reasons are included (DD-7).' : 'Codes, ids and dates only: reply text, decision notes, supplier names and revision reasons are left out (DD-7).'],
+    note('when_truncated', limit),
+    note('replies_in_window'),
+    note('revisions_in_window'),
+    note('outcome'),
+    note('lines_edited'),
+    note('reply_id_link'),
+    note('text_rule', includeText),
   ].map(([field, value]) => ({ field, value }))
 }
 
@@ -203,7 +237,7 @@ export function createSupplierReplyExportService({ prisma, now = () => new Date(
   // revision id -> reply id, from the audit rows of revisions made from a
   // reply (metadata.origin), for links the reply's revisionIds lack.
   async function originsOf(tenantId, where) {
-    const rows = await prisma.auditLog.findMany({ where: { tenantId, action: REVISED, ...where }, select: { metadata: true } })
+    const rows = await prisma.auditLog.findMany({ where: { tenantId, action: REVISED, entityType: 'PurchaseOrderLine', ...where }, select: { metadata: true } })
     return rows.flatMap((row) => {
       const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {}
       return metadata.origin?.type === 'supplier_reply' && text(metadata.revisionId) && text(metadata.origin?.id) ? [[text(metadata.revisionId), text(metadata.origin.id)]] : []
@@ -306,7 +340,7 @@ export function createSupplierReplyExportService({ prisma, now = () => new Date(
       textIncluded: includeText,
       truncated,
       limit: SUPPLIER_REPLY_EXPORT_LIMIT,
-      about: supplierReplyExportAbout({ generatedAt, window, timeZone, publicData, includeText, replies: rows.replies.length, revisions: rows.revisions.length, truncated }),
+      about: supplierReplyExportAbout({ generatedAt, window, timeZone, publicData, includeText, replies: rows.replies.length, revisions: rows.revisions.length, truncated, language: query?.language === 'zh-CN' ? 'zh-CN' : 'en-US' }),
       ...rows,
     }
   }

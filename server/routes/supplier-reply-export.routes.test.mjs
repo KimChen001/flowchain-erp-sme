@@ -60,13 +60,13 @@ const REVISIONS = [
   revision('rev-3', 'PO-2', 'PO-2-L1', '2026-12-02', '2026-12-04', 'procurement_db_command_service', '2026-11-21T00:30:00Z', 'x', 'user-2'),
 ]
 const AUDIT = REVISIONS.map((row) => ({
-  entityId: row.purchaseOrderLineId, createdAt: row.createdAt, action: 'purchase_order_promise_revised',
+  entityType: 'PurchaseOrderLine', entityId: row.purchaseOrderLineId, createdAt: row.createdAt, action: 'purchase_order_promise_revised',
   metadata: { revisionId: row.id, ...(row.id === 'rev-5' ? { origin: { type: 'supplier_reply', id: 'reply-unsaved' } } : row.source === 'supplier_reply' ? { origin: { type: 'supplier_reply', id: row.id === 'rev-1' ? 'reply-recorded' : 'reply-manual' } } : {}) },
 }))
 
 // A Prisma stand-in holding the rows above; findMany honours the filters the
 // export uses, and select keeps only the fields asked for.
-function fakePrisma({ publicData = true, timezone = 'Europe/London', replies = REPLIES, revisions = REVISIONS } = {}) {
+function fakePrisma({ publicData = true, timezone = 'Europe/London', replies = REPLIES, revisions = REVISIONS, strayAudit = [] } = {}) {
   const seen = []
   const pick = (row, select) => (select ? Object.fromEntries(Object.keys(select).filter((key) => select[key]).map((key) => [key, row[key]])) : row)
   const inRange = (value, range) => (!range || ((range.gte === undefined || value >= range.gte) && (range.lte === undefined || value <= range.lte) && (range.lt === undefined || value < range.lt)))
@@ -89,7 +89,7 @@ function fakePrisma({ publicData = true, timezone = 'Europe/London', replies = R
       },
     },
     auditLog: {
-      findMany: async ({ where }) => AUDIT.filter((row) => row.action === where.action && inList(row.entityId, where.entityId) && inRange(row.createdAt, where.createdAt)
+      findMany: async ({ where }) => [...AUDIT, ...strayAudit].filter((row) => row.action === where.action && (!where.entityType || row.entityType === where.entityType) && inList(row.entityId, where.entityId) && inRange(row.createdAt, where.createdAt)
         && (!where.OR || where.OR.some(({ metadata }) => pathValue(row.metadata, metadata.path) === metadata.equals))).map((row) => ({ metadata: row.metadata })),
     },
     purchaseOrder: { findMany: async ({ where, select }) => [{ id: 'PO-1', number: 'PO-202610-0028', supplierId: 'SUP-1', supplierName: 'Acme Home Goods' }, { id: 'PO-2', number: 'PO-202610-0029', supplierId: 'SUP-2', supplierName: 'Globex Party Supplies' }, { id: 'PO-3', number: 'PO-202610-0030', supplierId: 'SUP-2', supplierName: 'Globex Party Supplies' }].filter((row) => where.id.in.includes(row.id)).map((row) => pick(row, select)) },
@@ -174,6 +174,34 @@ test('a sheet is marked cut only when it is, and then holds the earliest rows of
   assert.deepEqual([cut.truncated, cut.revisions.length, cut.revisions[0].revision_id, cut.revisions.at(-1).revision_id], [{ replies: false, revisions: true }, SUPPLIER_REPLY_EXPORT_LIMIT, 'rev-many-00000', `rev-many-0${SUPPLIER_REPLY_EXPORT_LIMIT - 1}`])
   const full = await serviceOf({ revisions: many.slice(0, SUPPLIER_REPLY_EXPORT_LIMIT) }).exportOutcomes({ from: '2026-11-01', to: '2026-11-20' }, IDENTITY)
   assert.deepEqual([full.truncated, full.revisions.length], [{ replies: false, revisions: false }, SUPPLIER_REPLY_EXPORT_LIMIT])
+})
+
+test('the About sheet\'s notes follow the reader\'s language; its fields and values do not', async () => {
+  const english = await serviceOf().exportOutcomes({ from: '2026-11-01', to: '2026-11-20' }, IDENTITY)
+  const chinese = await serviceOf().exportOutcomes({ from: '2026-11-01', to: '2026-11-20', language: 'zh-CN' }, IDENTITY)
+  assert.deepEqual(chinese.about.map((row) => row.field), english.about.map((row) => row.field))
+  const notes = new Set(['when_truncated', 'replies_in_window', 'revisions_in_window', 'outcome', 'lines_edited', 'reply_id_link', 'text_rule'])
+  for (const [at, row] of english.about.entries()) {
+    if (notes.has(row.field)) {
+      assert.match(row.value, /^[\x20-\x7e]+$/, `${row.field} is English`)
+      assert.match(chinese.about[at].value, /[\u4e00-\u9fff]/, `${row.field} is Chinese`)
+    } else assert.deepEqual(chinese.about[at].value, row.value, row.field)
+  }
+  // The rows themselves are the same in both languages.
+  assert.deepEqual([chinese.replies, chinese.revisions], [english.replies, english.revisions])
+  assert.match(english.about.find((row) => row.field === 'outcome').value, /Rare case: a proposed line whose promised date was already the proposed day/)
+})
+
+test('the audit fallback reads only promise revision rows of order lines', async () => {
+  // A row on another entity naming the unsaved reply as origin, for the hand
+  // revision rev-4: read without the entity type, it would tie rev-4 to that
+  // reply and add it to the reply's revisions.
+  const stray = { entityType: 'PurchaseOrder', entityId: 'PO-2', createdAt: new Date('2026-11-19T08:00:00Z'), action: 'purchase_order_promise_revised', metadata: { revisionId: 'rev-4', origin: { type: 'supplier_reply', id: 'reply-unsaved' } } }
+  const result = await serviceOf({ strayAudit: [stray] }).exportOutcomes({ from: '2026-11-01', to: '2026-11-20' }, IDENTITY)
+  const revisions = byId(result.revisions, 'revision_id')
+  assert.deepEqual([revisions['rev-4'].reply_id, revisions['rev-5'].reply_id], [null, 'reply-unsaved'])
+  const unsaved = byId(result.replies, 'reply_id')['reply-unsaved']
+  assert.deepEqual([unsaved.revision_ids, unsaved.outcome, unsaved.lines_by_hand], ['rev-5', 'recorded_unchanged', 0])
 })
 
 test('the export needs settings.export.read and the purchase order read permission', async () => {

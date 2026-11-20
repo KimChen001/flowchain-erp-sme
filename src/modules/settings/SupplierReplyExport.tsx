@@ -12,8 +12,8 @@ import { useI18n } from "../../i18n/I18n";
 // source. Column names are codes, the same in both languages, so a script
 // reads any export. Reply text and notes come only from a public-data
 // workspace (DD-7). A third sheet, About, says what the export holds and
-// whether a sheet was cut. Shown to people with settings.export.read; the
-// server also needs procurement.purchase_order.read.
+// whether a sheet was cut. Shown to people with settings.export.read and
+// procurement.purchase_order.read, the two the server checks.
 
 type ExportAnswer = {
   window: { from: string; to: string };
@@ -66,11 +66,11 @@ export default function SupplierReplyExport() {
     setBusy(true);
     setStatus(null);
     try {
-      const params = new URLSearchParams();
+      // The About sheet's notes follow the interface language; codes and values do not.
+      const params = new URLSearchParams({ language: zh ? "zh-CN" : "en-US" });
       if (from) params.set("from", from);
       if (to) params.set("to", to);
-      const query = params.toString();
-      const answer = await apiJson<ExportAnswer>(`/api/admin/supplier-reply-export${query ? `?${query}` : ""}`);
+      const answer = await apiJson<ExportAnswer>(`/api/admin/supplier-reply-export?${params}`);
       await exportWorkbookSheets(`supplier-replies-${answer.window.from}-to-${answer.window.to}`, [
         { name: say(COPY.repliesSheet), rows: answer.replies },
         { name: say(COPY.revisionsSheet), rows: answer.revisions },
