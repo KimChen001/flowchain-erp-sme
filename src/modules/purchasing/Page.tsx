@@ -3,7 +3,8 @@ import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
 import { useI18n } from "../../i18n/I18n";
 import { unitLabel } from "../../i18n/unitLabels";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useNavigate, useSearchParams } from "react-router";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
+import { isOverdueOpen, todayChasesOrder } from "./lateOrders";
 import { toast } from "sonner";
 import {
   AlertCircle,
@@ -1166,21 +1167,20 @@ export default function PurchasingOrdersPage({
   // Overdue: open, with an expected arrival before today in the workspace timezone.
   // The same day and due day as "N days late" below (design audit B3, V-B-02).
   const overdueOnly = searchParams.get("overdue") === "true";
-  const overdueOpen = (order: PurchaseOrder) => Boolean((summary?.openPurchaseOrderIds || []).includes(order.po) && workspaceToday && dueOf(order) && String(dueOf(order)) < workspaceToday);
+  const overdueOpen = (order: PurchaseOrder) => isOverdueOpen(Boolean(openOrderIds?.has(order.po)), dueOf(order) ? String(dueOf(order)) : null, workspaceToday);
   const setOverdueOnly = (on: boolean) => {
     const params = new URLSearchParams(searchParams);
     if (on) params.set("overdue", "true"); else params.delete("overdue");
     setSearchParams(params, { replace: true });
   };
-  const filtered = filterPurchaseOrdersForWorkbench(orders, filters, openOrderIds).filter((order) => {
-    const supplier = searchParams.get("supplier");
-    if (supplier && order.supplier !== supplier) return false;
-    if (overdueOnly && !overdueOpen(order)) return false;
-    return true;
-  });
-  // The open orders past their expected arrival, whatever the other filters;
-  // the line above the list offers them (product review 2026-11-20).
-  const overdueCount = orders.filter(overdueOpen).length;
+  // Every filter but Overdue; the overdue line counts within these, so its
+  // number is what "Show only these" shows.
+  const supplierInAddress = searchParams.get("supplier");
+  const matchingOtherFilters = filterPurchaseOrdersForWorkbench(orders, filters, openOrderIds).filter((order) => !supplierInAddress || order.supplier === supplierInAddress);
+  const filtered = overdueOnly ? matchingOtherFilters.filter(overdueOpen) : matchingOtherFilters;
+  // The open orders past their expected arrival among those the other filters
+  // match; the line above the list offers them (product review 2026-11-20).
+  const overdueCount = matchingOtherFilters.filter(overdueOpen).length;
   // One page of the list is drawn, as on the other long lists; search and
   // filters run over every order, and a new search starts at page 1.
   const paged = usePagedRows(filtered, PO_LIST_PAGE_SIZE, searchParams.toString());
@@ -1399,6 +1399,9 @@ export default function PurchasingOrdersPage({
     );
     // A closed, cancelled or fully received order has nothing left to arrive.
     const delayed = delayRisk.delayed && !["cancelled", "closed", "fully_received", "已取消", "已关闭", "已完成"].includes(String(selectedPO.status));
+    // Today chases an issued or partly received order that is open and due
+    // before the workspace day; only then does the page point there.
+    const chasedOnToday = todayChasesOrder(purchaseOrderStatusCode(selectedPO.status), Boolean(openOrderIds?.has(selectedPO.po)), dueOf(selectedPO) ? String(dueOf(selectedPO)) : null, workspaceToday);
     const delayNote = delayed
       ? say(`Was due ${day(selectedPO.eta)}; ${formatNumber(delayRisk.openQty)} still to receive.`, `应于 ${day(selectedPO.eta)} 到货，仍有 ${formatNumber(delayRisk.openQty)} 未收。`)
       : !selectedPO.eta ? say("No expected arrival date recorded.", "未记录预计到货日期。") : say("Nothing overdue to receive.", "没有逾期未收的数量。");
@@ -1452,7 +1455,7 @@ export default function PurchasingOrdersPage({
       // Plain words: is anything late to arrive? The note says what.
       // The follow-up to the supplier is drafted on Today (decision cards); a
       // late order's page says where, with a link (product review 2026-11-20).
-      { label: say("Late deliveries", "逾期未到"), value: <StatusChip label={delayed ? say("Some lines are late", "有逾期行") : say("None", "无")} tone={delayed ? "warning" : "success"} />, helper: delayed ? <>{delayNote}{" "}<button type="button" className="font-medium text-blue-600 hover:underline" data-testid="po-late-follow-up" onClick={() => routerNavigate("/app/overview/risks")}>{say("Follow up with the supplier on Today", "在今日页催办供应商")}</button></> : delayNote },
+      { label: say("Late deliveries", "逾期未到"), value: <StatusChip label={delayed ? say("Some lines are late", "有逾期行") : say("None", "无")} tone={delayed ? "warning" : "success"} />, helper: chasedOnToday ? <>{delayNote}{" "}<Link to="/app/overview/risks#today-decisions" className="font-medium text-blue-600 hover:underline max-sm:inline-flex max-sm:min-h-9 max-sm:items-center" data-testid="po-late-follow-up">{say("Follow up with the supplier on Today", "在今日页催办供应商")}</Link></> : delayNote },
     ];
     const lineLabel = poLineLabel;
     const qty = (value: number, unit: string) => `${formatNumber(value)} ${unitLabel(unit, language, value)}`;

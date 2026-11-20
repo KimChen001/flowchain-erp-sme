@@ -55,8 +55,9 @@ test('the workbench and the other pages count from the workspace day, not the br
   assert.match(read('src/modules/procurement/RfqListPage.tsx'), /const inAWeek = today \? new Date\(/)
   const orders = read('src/modules/purchasing/Page.tsx')
   assert.match(orders, /const dueOf = \(order: PurchaseOrder\) => order\.dueDay \|\| order\.eta;/)
-  // Overdue: open and due before the workspace day (one rule for the filter and its count).
-  assert.match(orders, /workspaceToday && dueOf\(order\) && String\(dueOf\(order\)\) < workspaceToday/)
+  // Overdue: open and due before the workspace day (lateOrders.ts, one rule for the list, its count and the link to Today).
+  assert.match(orders, /isOverdueOpen\(Boolean\(openOrderIds\?\.has\(order\.po\)\), dueOf\(order\) \? String\(dueOf\(order\)\) : null, workspaceToday\)/)
+  assert.match(read('src/modules/purchasing/lateOrders.ts'), /return Boolean\(open && workspaceToday && due && String\(due\) < workspaceToday\);/)
   assert.doesNotMatch(orders, /todayInTimeZone\(\)\)\) return false/)
   // A default date saved with a record is the workspace day (#18).
   const form = read('src/components/business/BusinessDocumentForm.tsx')

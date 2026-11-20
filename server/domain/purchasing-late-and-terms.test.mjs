@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { buildPurchaseOrderDocument, supplierPaymentTerms } from '../../shared/business-documents.mjs'
 import { createPurchaseOrderDocumentReadService } from './purchase-order-document-read-service.mjs'
+import { isOverdueOpen, todayChasesOrder } from '../../src/modules/purchasing/lateOrders.ts'
 
 // Product review 2026-11-20, items 13, 17 and 29.
 const read = (file) => readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8')
@@ -40,26 +41,44 @@ test('the read service reads the workspace\'s payment terms only when the suppli
   })
   const recorded = await createPurchaseOrderDocumentReadService({ prisma: prismaWith({ paymentTermsId: 'PT-30' }) }).readPurchaseOrderDocument({ tenantId: 'tenant-doc', order, access: { prices: true } })
   assert.equal(recorded.paymentTerms, 'Net 30 days')
-  assert.deepEqual(calls.filter((call) => Array.isArray(call) && call[0] === 'paymentTerm'), [['paymentTerm', { tenantId: 'tenant-doc' }]])
+  // Only the term the supplier names, in this workspace (readPaymentTerms, as the customer invoice).
+  assert.deepEqual(calls.filter((call) => Array.isArray(call) && call[0] === 'paymentTerm'), [['paymentTerm', { tenantId: 'tenant-doc', OR: [{ id: 'PT-30' }, { code: 'PT-30' }] }]])
   calls.length = 0
   const none = await createPurchaseOrderDocumentReadService({ prisma: prismaWith({}) }).readPurchaseOrderDocument({ tenantId: 'tenant-doc', order, access: { prices: true } })
   assert.equal(none.paymentTerms, null)
   assert.ok(!calls.some((call) => Array.isArray(call) && call[0] === 'paymentTerm'))
 })
 
-test('the PO list says when only overdue orders show, and offers them when not', () => {
+test('the PO list says when only overdue orders show, and offers them within the other filters', () => {
   const page = read('src/modules/purchasing/Page.tsx')
-  // One rule for the filter and the count.
-  assert.match(page, /const overdueOpen = \(order: PurchaseOrder\) => Boolean\(\(summary\?\.openPurchaseOrderIds \|\| \[\]\)\.includes\(order\.po\) && workspaceToday && dueOf\(order\) && String\(dueOf\(order\)\) < workspaceToday\)/)
-  assert.match(page, /if \(overdueOnly && !overdueOpen\(order\)\) return false;/)
-  assert.match(page, /const overdueCount = orders\.filter\(overdueOpen\)\.length;/)
+  assert.match(page, /const overdueOpen = \(order: PurchaseOrder\) => isOverdueOpen\(Boolean\(openOrderIds\?\.has\(order\.po\)\)/)
+  // One set for the other filters: the count is what "Show only these" shows.
+  assert.match(page, /const filtered = overdueOnly \? matchingOtherFilters\.filter\(overdueOpen\) : matchingOtherFilters;/)
+  assert.match(page, /const overdueCount = matchingOtherFilters\.filter\(overdueOpen\)\.length;/)
   assert.match(page, /data-testid="po-list-overdue-only"/)
   assert.match(page, /data-testid="po-list-overdue-offer"/)
   assert.match(page, /say\("Show all orders", "显示全部订单"\)/)
   assert.match(page, /say\("Show only these", "只看这些"\)/)
 })
 
-test('a late order\'s page points to the follow-up drafted on Today', () => {
+test('overdue is open and due before the workspace day; Today chases only issued or partly received ones', () => {
+  assert.equal(isOverdueOpen(true, '2026-11-19', '2026-11-20'), true)
+  // Due today is not late, whatever the browser's clock says.
+  assert.equal(isOverdueOpen(true, '2026-11-20', '2026-11-20'), false)
+  assert.equal(isOverdueOpen(false, '2026-11-01', '2026-11-20'), false)
+  assert.equal(isOverdueOpen(true, null, '2026-11-20'), false)
+  assert.equal(isOverdueOpen(true, '2026-11-01', null), false)
+  for (const status of ['issued', 'partially_received']) assert.equal(todayChasesOrder(status, true, '2026-11-01', '2026-11-20'), true, status)
+  // Draft, pending, rejected and approved-but-unsent orders are never chased.
+  for (const status of ['draft', 'pending_approval', 'rejected', 'approved', 'cancelled', 'closed', 'fully_received']) {
+    assert.equal(todayChasesOrder(status, true, '2026-11-01', '2026-11-20'), false, status)
+  }
+  assert.equal(todayChasesOrder('issued', true, '2026-11-20', '2026-11-20'), false)
+  assert.equal(todayChasesOrder('issued', false, '2026-11-01', '2026-11-20'), false)
+})
+
+test("a late order's page points to the follow-up drafted on Today, by that rule, with a real link", () => {
   const page = read('src/modules/purchasing/Page.tsx')
-  assert.match(page, /helper: delayed \? <>\{delayNote\}\{" "\}<button type="button"[^>]*data-testid="po-late-follow-up" onClick=\{\(\) => routerNavigate\("\/app\/overview\/risks"\)\}>\{say\("Follow up with the supplier on Today", "在今日页催办供应商"\)\}<\/button><\/> : delayNote/)
+  assert.match(page, /const chasedOnToday = todayChasesOrder\(purchaseOrderStatusCode\(selectedPO\.status\), Boolean\(openOrderIds\?\.has\(selectedPO\.po\)\), dueOf\(selectedPO\) \? String\(dueOf\(selectedPO\)\) : null, workspaceToday\);/)
+  assert.match(page, /helper: chasedOnToday \? <>\{delayNote\}\{" "\}<Link to="\/app\/overview\/risks#today-decisions"[^>]*data-testid="po-late-follow-up">\{say\("Follow up with the supplier on Today", "在今日页催办供应商"\)\}<\/Link><\/> : delayNote/)
 })

@@ -1,4 +1,5 @@
 import { buildPurchaseOrderDocument, supplierPaymentTerms } from "../../shared/business-documents.mjs";
+import { readPaymentTerms } from "./recorded-payment-terms.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { listItemSupplierRecords, mapItemSupplierRecord } from "./master-data-commands.mjs";
 import { mergeOperationalSettings } from "./workspace-settings-contract.mjs";
@@ -8,10 +9,10 @@ const text = (value) => String(value ?? "").trim();
 // The purchase order document a person prints or saves as PDF and sends
 // themselves. The caller has already read the PO through readPurchaseOrder,
 // with the detail route's permission, tenant and price masking; this reads
-// the rest in the same workspace: the stored supplier row (not the master
-// data view, which defaults a currency and payment terms nobody recorded),
-// the supplier's item links for supplier SKUs, the delivery warehouse, and
-// the workspace's letterhead and PO template. Addresses are read live, so a
+// the rest in the same workspace: the stored supplier row (its fields as
+// recorded, never a default), the payment term it names, the supplier's item
+// links for supplier SKUs, the delivery warehouse, and the workspace's
+// letterhead and PO template. Addresses are read live, so a
 // reprint shows the supplier's current address.
 export function createPurchaseOrderDocumentReadService({ prisma, env = process.env } = {}) {
   const db = async () => prisma || getPrismaClient(env);
@@ -30,9 +31,9 @@ export function createPurchaseOrderDocumentReadService({ prisma, env = process.e
       supplierId ? listItemSupplierRecords(client, tenantId, { supplierId }) : [],
     ]);
     const settings = mergeOperationalSettings(tenant?.operationalSettings).documents;
-    // The workspace's payment terms, to print a recorded term by its name;
-    // read only when the supplier has one recorded.
-    const paymentTerms = supplierPaymentTerms(supplier) ? await client.paymentTerm.findMany({ where: { tenantId }, select: { id: true, code: true, name: true } }) : [];
+    // The payment term the supplier's recorded value names, to print it by
+    // its name (as the customer invoice does); nothing read when none is recorded.
+    const paymentTerms = await readPaymentTerms(client, tenantId, supplierPaymentTerms(supplier));
     return buildPurchaseOrderDocument({
       order,
       supplier,
