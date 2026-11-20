@@ -152,8 +152,10 @@ test.describe("the supplier reply card's states", () => {
         line({ outcome: "needs_you", issue: "ambiguous_numeric", proposedDate: null, quote: "Brackets 03/12.", readings }),
         line({ ref: "L2", purchaseOrderLineId: "pol-2", sku: "SKU-2210", outcome: "needs_you", issue: "several_dates", proposedDate: null, quote: "Hinges move from 3 December to 12 March.", readings }),
         line({ ref: "L3", purchaseOrderLineId: "pol-3", sku: "SKU-3300", outcome: "needs_you", issue: "date_mismatch", proposedDate: null, quote: "Clips on 4 December.", readings }),
+        // A hedged day comes with no readings (#394 ca1628cd): no pick, the person types it.
+        line({ ref: "L4", purchaseOrderLineId: "pol-4", sku: "SKU-4400", outcome: "needs_you", issue: "vague", dateKind: "vague", proposedDate: null, quote: "Pencilled in for 3 December, depending on customs.", readings: null }),
       ],
-      formLines: [formLine("pol-1", "SKU-1040"), formLine("pol-2", "SKU-2210"), formLine("pol-3", "SKU-3300")],
+      formLines: [formLine("pol-1", "SKU-1040"), formLine("pol-2", "SKU-2210"), formLine("pol-3", "SKU-3300"), formLine("pol-4", "SKU-4400")],
     })]);
     await page.goto(`/app/procurement/orders/${encodeURIComponent(orderId)}`);
     const view = page.getByTestId("supplier-reply-card").first();
@@ -164,6 +166,10 @@ test.describe("the supplier reply card's states", () => {
     await expect(lineOf("pol-2").getByTestId("supplier-reply-readings").getByRole("button")).toHaveCount(2);
     await expect(lineOf("pol-3").getByTestId("supplier-reply-readings")).toHaveCount(0);
     await expect(lineOf("pol-3")).toContainText("the date does not match its sentence");
+    await expect(lineOf("pol-4").getByTestId("supplier-reply-readings")).toHaveCount(0);
+    await expect(lineOf("pol-4")).toContainText("no exact day given");
+    await expect(lineOf("pol-4")).toContainText("Pencilled in for 3 December, depending on customs.");
+    await expect(lineOf("pol-4").locator('input[type="date"]')).toHaveValue("");
   });
 
   test("in Chinese the card's words translate; the supplier's sentence and the record values stay as written", async ({ page, request }) => {
