@@ -210,7 +210,7 @@ export function PrintTemplateTable({ templates }: { templates: PrintTemplateCata
           {["Template name", "Document type", "Default", "Last updated", "Actions"].map((item) => <th key={item} className={thClass} style={{ color: A.gray1 }}>{copy(item)}</th>)}
         </tr></thead>
         <tbody>{templates.map((item, index) => {
-          const name = item.copyOf ? copy("{name} (copy)", { name: copy(item.copyOf) }) : copy(item.name);
+          const name = copy(item.name);
           return (
             <tr key={item.id} className="transition-colors hover:bg-blue-50/40" style={{ borderBottom: index < templates.length - 1 ? "0.5px solid rgba(0,0,0,0.04)" : "none" }}>
               <td className={`${tdNameClass} font-medium`} style={{ color: A.label }}>{name}</td>

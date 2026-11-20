@@ -226,7 +226,7 @@ export const canonicalPurchaseRequestLines = async (lines = [], itemRepository) 
       let supplierOverride = null;
       if (itemRepository?.approvedSuppliersForItem) {
         const approved = await itemRepository.approvedSuppliersForItem(item.itemId);
-        if (!approved.length) throw procurementError("ITEM_HAS_NO_APPROVED_SUPPLIER", "This item has no approved supplier yet. Add one on the item first.", [{ field: `lines.${index}.supplierId` }], 400);
+        if (!approved.length) throw procurementError("ITEM_HAS_NO_APPROVED_SUPPLIER", "This item has no approved supplier yet. Add it under Supplied items on a supplier's page first.", [{ field: `lines.${index}.supplierId` }], 400);
         if (!approved.some(row => row.id === supplierId)) throw procurementError("ITEM_SUPPLIER_RELATIONSHIP_INVALID", "The chosen supplier is not an approved source for this item.", [{ field: `lines.${index}.supplierId` }], 400);
         supplierOverride = supplierOverrideFor(line, index, supplierId, approved);
       } else if (item.defaultSupplierId && supplierId !== item.defaultSupplierId) {

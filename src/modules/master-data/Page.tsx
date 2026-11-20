@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
+import { useRouteAvailability } from "../../app/routeAvailability";
 import { FileSpreadsheet } from "lucide-react";
 import { A, Card, Field, inputStyle } from "../../components/ui";
 import { ListCard, ListSearchCard, ResetButton, listButtonClass } from "../../components/ui/listLayout";
@@ -42,9 +43,11 @@ type ListTab = ReferenceTableTab | "customers" | "print-templates";
 // Warehouses & access, and what a document prints in Settings › Company &
 // workspace › Documents. The list says so, with a link (product review
 // 2026-11-20).
-const SETTINGS_SIGNPOSTS: Partial<Record<ListTab, { text: string; link: string; to: string }>> = {
-  warehouses: { text: "Warehouses and their locations are added and edited in Settings › Warehouses & access.", link: "Open Warehouses & access", to: "/app/settings/warehouse-access" },
-  "print-templates": { text: "These are the built-in print layouts. To change what prints (letterhead, logo and the notes on each document), use Settings › Company & workspace › Documents.", link: "Open document settings", to: "/app/settings/company" },
+// The link only for those who may open that page (useRouteAvailability); the
+// sentence says where for everyone.
+const SETTINGS_SIGNPOSTS: Partial<Record<ListTab, { text: string; link: string; to: string; routeId: string }>> = {
+  warehouses: { text: "Warehouses and their locations are added and edited in Settings › Warehouses & access.", link: "Open Warehouses & access", to: "/app/settings/warehouse-access", routeId: "settings:warehouse-access" },
+  "print-templates": { text: "These are the built-in print layouts. To change what prints (the letterhead, document titles, columns and the notes on each document), use Settings › Company & workspace › Documents.", link: "Open document settings", to: "/app/settings/company", routeId: "settings:company" },
 };
 // The search and list card copy of each reference list.
 const VIEWS: Record<ListTab, { search: string; hint: string; placeholder: string; list: string; statusLabel: string; allStatuses: string; empty: string }> = {
@@ -76,7 +79,8 @@ export default function MasterDataPage({
   const [creatingCustomer, setCreatingCustomer] = useState(false);
   const [masterData, setMasterData] = useState<MasterDataSnapshot>(emptyMasterData);
   const [loadStatus, setLoadStatus] = useState<AsyncDataStatus>("loading");
-  const [templateCatalog] = useState<PrintTemplateCatalogItem[]>(PRINT_TEMPLATE_CATALOG);
+  const templateCatalog: PrintTemplateCatalogItem[] = PRINT_TEMPLATE_CATALOG;
+  const canOpenRoute = useRouteAvailability();
   // Bumped after a customer is created or changed, to read the data again.
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -186,8 +190,8 @@ export default function MasterDataPage({
 
       {SETTINGS_SIGNPOSTS[tab] && (
         <p className="text-sm" style={{ color: A.sub }} data-testid={`master-data-${tab}-settings-signpost`}>
-          {copy(SETTINGS_SIGNPOSTS[tab].text)}{" "}
-          <Link to={SETTINGS_SIGNPOSTS[tab].to} className="font-medium text-blue-600 hover:underline">{copy(SETTINGS_SIGNPOSTS[tab].link)}</Link>
+          {copy(SETTINGS_SIGNPOSTS[tab].text)}
+          {canOpenRoute(SETTINGS_SIGNPOSTS[tab].routeId) && <>{" "}<Link to={SETTINGS_SIGNPOSTS[tab].to} className="font-medium text-blue-600 hover:underline max-sm:inline-flex max-sm:min-h-9 max-sm:items-center">{copy(SETTINGS_SIGNPOSTS[tab].link)}</Link></>}
         </p>
       )}
       <ListCard title={copy(view.list)} total={shown} all={all} shown={tab === "customers" ? customerPage.pageRows.length : shown} testId={`master-data-${tab}-list`}>
