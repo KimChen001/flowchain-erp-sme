@@ -44,7 +44,10 @@ type WorkItem = {
   detail: Record<string, any>;
 };
 type DocumentRow = { type: string; id: string; number: string; status: string; partner: string | null; amount: number | null; currency: string; updatedAt: string; canonicalRoute: string };
-type SetupStep = { id: "items" | "suppliers" | "customers" | "opening_stock" | "teammates"; count: number; done: boolean; href: string | null; blocked: "permission" | "unavailable" | null };
+// note: what a step still needs although it reads done or not started
+// (no item linked to a supplier; opening stock imported, not posted).
+type SetupStepNote = { id: "no_item_suppliers" | "opening_stock_to_post"; count?: number; href: string | null };
+type SetupStep = { note?: SetupStepNote; id: "items" | "suppliers" | "customers" | "opening_stock" | "teammates"; count: number; done: boolean; href: string | null; blocked: "permission" | "unavailable" | null };
 type HomeOverview = {
   today: string;
   workItems: WorkItem[];
@@ -285,7 +288,13 @@ function RuntimeHomepage() {
                   {step.done ? <CheckCircle2 size={16} style={{ color: "#0F766E" }} aria-hidden /> : <Circle size={16} style={{ color: A.gray2 }} aria-hidden />}
                   <span>{index + 1}. {t(`step_${step.id}` as TodayCopyKey)}</span>
                 </div>
-                <div className="mt-1 text-xs" style={{ color: step.done ? "#0F766E" : A.sub }}>{step.done ? t("stepDone", { n: step.count }) : t("stepOpen")}</div>
+                <div className="mt-1 text-xs" style={{ color: step.done ? "#0F766E" : A.sub }}>{step.done ? t("stepDone", { n: step.count }) : step.note?.id === "opening_stock_to_post" ? t("stepToPost", { n: step.note.count ?? 0 }) : t("stepOpen")}</div>
+                {step.note ? (
+                  <div className="mt-1 text-xs" style={{ color: A.orange }} data-testid={`first-run-note-${step.note.id}`}>
+                    {t(step.note.id === "no_item_suppliers" ? "noteNoItemSuppliers" : "noteOpeningStockToPost")}
+                    {step.note.href ? <>{" "}<Link to={step.note.href} className={LINK}>{t(step.note.id === "no_item_suppliers" ? "noteLinkItems" : "notePost")}</Link></> : null}
+                  </div>
+                ) : null}
                 {!step.done ? (step.href ? <Link to={step.href} className={`mt-2 inline-block text-xs ${LINK}`}>{t("stepStart")}</Link> : <div className="mt-2 text-xs" style={{ color: A.sub }}>{t(step.blocked === "unavailable" ? "stepUnavailable" : "stepAskAdmin")}</div>) : null}
               </li>
             ))}

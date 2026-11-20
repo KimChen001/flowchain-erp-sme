@@ -1,5 +1,5 @@
 import { capabilityForEnvironment } from './capability-registry.mjs'
-import { CUSTOMER_NAMESPACE } from './master-data-commands.mjs'
+import { CUSTOMER_NAMESPACE, ITEM_SUPPLIER_NAMESPACE } from './master-data-commands.mjs'
 import { firstRunSetupSteps } from './today-work.mjs'
 
 // The first-day checklist's inputs, read one way for every page that shows
@@ -8,21 +8,26 @@ import { firstRunSetupSteps } from './today-work.mjs'
 // firstRunSetupSteps (today-work.mjs) from these, so they cannot disagree.
 //
 //   counts   items, suppliers, customers, items with stock on hand, active
-//            users and pending invitations, in the reader's workspace;
+//            users and pending invitations, in the reader's workspace; and,
+//            for the notes under two steps, the item-supplier links and the
+//            opening-stock adjustments imported but not posted yet;
 //   options  the steps the reader may do (access.home.setup, from
 //            reportReadAccessFor), and whether import and inventory
 //            adjustments are turned on, which decides each step's page.
 
 export async function readFirstRunSetupCounts(prisma, { tenantId, now = new Date() }) {
-  const [items, suppliers, customers, stockedItems, activeUsers, pendingInvitations] = await Promise.all([
+  const [items, suppliers, customers, stockedItems, activeUsers, pendingInvitations, itemSupplierLinks, openingStockToPost] = await Promise.all([
     prisma.item.count({ where: { tenantId } }),
     prisma.supplier.count({ where: { tenantId } }),
     prisma.runtimeRecord.count({ where: { tenantId, namespace: CUSTOMER_NAMESPACE } }),
     prisma.inventoryBalance.count({ where: { tenantId, onHandQuantity: { gt: 0 } } }),
     prisma.user.count({ where: { tenantId, status: 'active' } }),
     prisma.workspaceInvitation.count({ where: { tenantId, status: 'pending', expiresAt: { gt: now } } }),
+    prisma.runtimeRecord.count({ where: { tenantId, namespace: ITEM_SUPPLIER_NAMESPACE } }),
+    // Opening stock imported as draft adjustments (data import), not posted yet.
+    prisma.inventoryAdjustmentDocument.count({ where: { tenantId, reasonCode: 'opening_balance', postingStatus: 'unposted', workflowStatus: { in: ['draft', 'ready'] } } }),
   ])
-  return { items, suppliers, customers, stockedItems, activeUsers, pendingInvitations }
+  return { items, suppliers, customers, stockedItems, activeUsers, pendingInvitations, itemSupplierLinks, openingStockToPost }
 }
 
 export function firstRunSetupOptions(access, env = process.env) {

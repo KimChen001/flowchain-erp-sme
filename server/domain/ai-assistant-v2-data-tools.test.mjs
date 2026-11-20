@@ -851,7 +851,9 @@ test('setup_status reports the first-day checklist exactly as Today builds it, w
   ])
   // The same counts and options give Today's checklist, step for step.
   const today = buildFirstRunChecklist(await readFirstRunSetupCounts(context.prisma, { tenantId: context.tenantId, now: context.now }), firstRunSetupOptions(reportReadAccessFor(context.actor), env))
-  assert.deepEqual(result.steps, today.steps)
+  // Today also shows a note under some steps (no item linked to a supplier,
+  // opening stock waiting to post); the tool's steps are the same without it.
+  assert.deepEqual(result.steps, today.steps.map(({ note, ...step }) => step))
   // LDM-009 has no unit, preferred supplier or threshold: what records_missing_data reports.
   assert.deepEqual(result.gaps, { checked: 3, unit: 1, preferredSupplier: 1, thresholds: 1 })
   // How much the chat takes at once, so an answer can state it from a result.
