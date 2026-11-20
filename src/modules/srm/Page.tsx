@@ -85,6 +85,8 @@ type Relationship = {
   currency: string;
   version: number;
   item?: Item | null;
+  // Fields this reader may not see (referencePrice without procurement.prices.read).
+  restrictedFields?: string[];
 };
 type Item = { itemId: string; sku: string; itemName: string; status: string };
 const request = <T,>(url: string, method = "GET", body?: unknown) =>
@@ -478,6 +480,9 @@ export default function SupplierMasterPage({
       return true;
     } catch (e: any) {
       toast.error(failure(e));
+      // Someone changed it meanwhile: reread, so an open terms form keeps what
+      // was typed on the latest terms and its next save sends their version.
+      if (e instanceof ApiError && e.code === "VERSION_CONFLICT") await openDetail(selected.id);
       return false;
     }
   };
@@ -748,7 +753,8 @@ export default function SupplierMasterPage({
                       itemLabel={`${r.item?.sku || r.itemId}${r.item?.itemName ? ` · ${r.item.itemName}` : ""}`}
                       currency={r.currency || ""}
                       terms={{ leadTimeDays: r.leadTimeDays, minimumOrderQuantity: r.minimumOrderQuantity, referencePrice: r.referencePrice === undefined || r.referencePrice === null || r.referencePrice === 0 ? null : Number(r.referencePrice) }}
-                      onSave={(patch) => updateRelationship(r, patch)}
+                      priceHidden={(r.restrictedFields || []).includes("referencePrice")}
+                      onSave={(changes) => updateRelationship(r, changes)}
                       onCancel={() => setEditingTerms(null)}
                     />
                   )}
