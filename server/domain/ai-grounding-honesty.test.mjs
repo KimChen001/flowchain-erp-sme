@@ -38,6 +38,16 @@ test('a calculation whose values the results and the question do not hold is not
   // Several calculations: each value is checked; a date-only one has none.
   assert.equal(aiCalculationGrounded({ calculations: [{ operation: 'sum', values: [2.95] }, { operation: 'sum', values: [7.5] }] }, { results }), false)
   assert.equal(aiCalculationGrounded({ operation: 'days_between', dates: ['2026-10-01', '2026-10-08'] }, { results }), true)
+  // A span of weeks in words is its days (promised-date-zh: "推迟一周" is
+  // add_days 7, and the date it gives is then a source).
+  for (const question of ['把 Globex 那张逾期订单的交期推迟一周', '推迟一个星期', 'Push it back a week', 'Move it out one week']) {
+    assert.equal(aiCalculationGrounded({ operation: 'add_days', dates: ['2026-11-05'], values: [7] }, { results, question }), true, question)
+  }
+  assert.equal(aiCalculationGrounded({ operation: 'add_days', dates: ['2026-11-05'], values: [14] }, { results, question: '推迟两周' }), true)
+  assert.equal(aiCalculationGrounded({ operation: 'add_days', dates: ['2026-11-05'], values: [21] }, { results, question: 'Delay it 3 weeks' }), true)
+  // Not a span the user gave: still refused.
+  assert.equal(aiCalculationGrounded({ operation: 'add_days', dates: ['2026-11-05'], values: [7] }, { results, question: 'Push it back' }), false)
+  assert.equal(aiCalculationGrounded({ operation: 'add_days', dates: ['2026-11-05'], values: [14] }, { results, question: '推迟一周' }), false)
   // A percent is the share the results hold, written either way.
   assert.equal(aiCalculationGrounded({ operation: 'product', values: [62.5, 4] }, { results: [{ onTime: { percent: 0.625 } }, { count: 4 }] }), true)
 

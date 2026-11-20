@@ -614,12 +614,29 @@ export function aiGroundingItemNamePairs(body, facts, results) {
 // answer's "about £259" was taken as checked, since the calculation's result
 // was a source). A calculation with an input from nowhere is no source.
 const INPUT_NUMBER = /-?\d[\d,]*(?:\.\d+)?/g
+// A span of weeks the user wrote in words counts as its days for a
+// calculation ("把交期推迟一周" is add_days 7). Without it the date add_days
+// gave was not a source, and the answer check flagged it (question sets
+// 2026-11-13 and 11-19, promised-date-zh).
+const WEEKS_IN_WORDS = [
+  [/\b(?:a|one)\s+week\b|一\s*(?:个)?\s*(?:周|星期|礼拜)/i, 7],
+  [/\b(?:two\s+weeks|a\s+fortnight)\b|(?:两|二)\s*(?:个)?\s*(?:周|星期|礼拜)/i, 14],
+  [/\bthree\s+weeks\b|三\s*(?:个)?\s*(?:周|星期|礼拜)/i, 21],
+  [/\bfour\s+weeks\b|四\s*(?:个)?\s*(?:周|星期|礼拜)/i, 28],
+]
+const DIGIT_WEEKS = /(\d+)\s*(?:weeks?\b|周|个星期|星期)/gi
+function weeksAsDays(value) {
+  const days = WEEKS_IN_WORDS.filter(([pattern]) => pattern.test(value)).map(([, count]) => count)
+  for (const match of value.matchAll(DIGIT_WEEKS)) days.push(Number(match[1]) * 7)
+  return days
+}
 export function aiCalculationGrounded(input = {}, { results = [], question = '', conversation = '' } = {}) {
   const values = [...array(input?.values), ...array(input?.calculations).flatMap((entry) => array(entry?.values))].map(Number).filter(Number.isFinite)
   if (!values.length) return true
   const known = [
     ...aiGroundingSources(results).numbers.map((row) => row.value),
     ...[text(question), text(conversation)].flatMap((value) => [...value.matchAll(INPUT_NUMBER)].map((match) => Number(match[0].replace(/,/g, '')))),
+    ...[text(question), text(conversation)].flatMap(weeksAsDays),
   ].filter(Number.isFinite)
   const near = (value) => known.some((candidate) => Math.abs(candidate - value) <= Math.max(0.005, Math.abs(candidate) * 0.0005) || Math.abs(candidate * 100 - value) <= 0.005 || Math.abs(candidate / 100 - value) <= 0.00005)
   return values.every((value) => value === 0 || value === 1 || near(value))
