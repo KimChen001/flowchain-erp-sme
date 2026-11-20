@@ -453,6 +453,9 @@ const listContracts = defineAiTool({
       pricesHidden: !page.access?.prices,
       ...aiToolList(contracts.map((row) => ({
         ...primitives(row, ['number', 'title', 'externalReference', 'type', 'status', 'state', 'startDate', 'endDate', 'signedOn', 'noticeDays', 'counterpartyType', 'totalValue', 'currency']),
+        // Terminated from a day still to come: it ends then, not on its end
+        // date (design audit L9-09). Only on such a contract.
+        ...(row.terminatesOn ? { terminatesOn: row.terminatesOn } : {}),
         supplier: text(row.supplier?.name) || null,
         paymentTerms: row.paymentTermsId ? terms.get(row.paymentTermsId) || { code: row.paymentTermsId } : null,
         renewal: row.renewal && typeof row.renewal === 'object' ? primitives(row.renewal, ['type', 'term', 'termMonths', 'noticeDate']) : row.renewal ?? null,

@@ -48,6 +48,9 @@ const rows = [
   contract('C-T', { status: 'terminated', terminatedOn: new Date('2026-10-25T00:00:00.000Z'), terminationReason: 'Supplier exit', number: 'CT-0000000T' }),
   // terminated from Sep 1: terminated, not on Today.
   contract('C-P', { status: 'terminated', terminatedOn: new Date('2026-09-01T00:00:00.000Z'), terminationReason: 'Merged', number: 'CT-0000000P' }),
+  // terminated from today, Oct 9 in New York (Oct 10 in UTC): terminated from
+  // today, so not on Today either.
+  contract('C-D', { status: 'terminated', terminatedOn: new Date('2026-10-09T00:00:00.000Z'), terminationReason: 'Ended today', number: 'CT-0000000D' }),
 ]
 
 test('contract rows name the number, title, supplier and key date, and open the contract', () => {
@@ -140,6 +143,8 @@ test('a reader who manages contracts sees every contract that needs attention, o
     ['contract_ending', 'C-1'],
     ['contract_notice_due', 'C-2'],
   ])
+  // Terminated from today or a past day: not on Today.
+  assert.equal(payload.workItems.some((item) => ['C-D', 'C-P'].includes(item.recordId)), false)
   // Terminated from Oct 25: on Today until then, dated by that day.
   const terminating = payload.workItems.find((item) => item.recordId === 'C-T')
   assert.deepEqual([terminating.date, terminating.dateKind, terminating.detail.terminatesOn], ['2026-10-25', 'terminates', '2026-10-25'])

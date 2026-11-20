@@ -180,7 +180,9 @@ export function ContractDetailPage({ contractId }: { contractId: string }) {
     if (contract.status === "active" && contract.renewals.length === 0) actions.push(action("Renew", () => setDialog({ kind: "renew" }), "contract-action-renew", <RefreshCw size={13} />));
     // Only while it is in force, by its shown state: not once it has ended,
     // is past its end date or was renewed (design audit L9-09).
-    if (contractMayTerminate(contract)) actions.push(action("Terminate", () => { setDialogIssues([]); setTermination({ terminatedOn: detail.today, reason: "" }); setDialog({ kind: "terminate" }); }, "contract-action-terminate", undefined, "danger"));
+    // The date starts at today, or at the first day it may take when that is
+    // later (a contract not started yet), so the default is never refused.
+    if (contractMayTerminate(contract)) actions.push(action("Terminate", () => { setDialogIssues([]); setTermination({ terminatedOn: [detail.today, terminationFrom].filter((value): value is string => Boolean(value)).sort().at(-1) || detail.today, reason: "" }); setDialog({ kind: "terminate" }); }, "contract-action-terminate", undefined, "danger"));
     actions.push(action(uploading ? "Uploading…" : "Add file", () => fileInput.current?.click(), "contract-action-add-file", <Paperclip size={13} />));
     if (contract.status === "draft") actions.push(action("Delete draft", () => setDialog({ kind: "delete" }), "contract-action-delete", <Trash2 size={13} />, "danger"));
   }
@@ -219,7 +221,7 @@ export function ContractDetailPage({ contractId }: { contractId: string }) {
               {contract.externalReference && <span>{t("Their reference")}: {contract.externalReference}</span>}
               {contract.keyDate && keyKind && <span data-testid="contract-key-date-line">{t(keyKind)} {f.day(contract.keyDate)}</span>}
             </div>
-            {contract.terminatesOn && <p className="mt-2 text-xs" style={{ color: A.sub }} data-testid="contract-terminates-note">{t("Terminated from {date}. It stays in force, and on Today, until then.", { date: f.day(contract.terminatesOn) })}</p>}
+            {contract.terminatesOn && <p className="mt-2 text-xs" style={{ color: A.sub }} data-testid="contract-terminates-note">{t("Termination recorded, effective {date}. It stays in force, and on Today, until then.", { date: f.day(contract.terminatesOn) })}</p>}
           </div>
           {actions.length > 0 && <div className="fc-detail-actions flex flex-wrap items-center gap-2" data-testid="contract-actions">{actions}</div>}
         </div>

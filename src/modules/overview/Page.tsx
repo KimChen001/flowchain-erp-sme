@@ -229,7 +229,8 @@ function RuntimeHomepage() {
         case "purchase_request_to_convert": return [t("requestConvert")];
         case "draft_purchase_order": return [supplier];
         case "contract_notice_due": return [d.title, supplier, d.endDate ? t("renewsUnlessNotice", { date: day(d.endDate) }) : null];
-        case "contract_ending": return [d.title, supplier, d.renewal === "by_agreement" ? t("renewByAgreement") : null];
+        // A termination recorded from a day still to come ends it then; no renewal applies.
+        case "contract_ending": return [d.title, supplier, d.terminatesOn ? t("terminationRecorded") : d.renewal === "by_agreement" ? t("renewByAgreement") : null];
         case "contract_past_end": return [d.title, supplier, d.renewal === "automatic" ? t("recordNewEnd") : t("recordOutcome")];
         default: return [];
       }
