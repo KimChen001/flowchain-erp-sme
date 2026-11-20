@@ -457,7 +457,7 @@ export default function InventoryPage({
   });
   // Balances and warnings: every row the filters show, with the stock
   // status the list shows. Movements come a page at a time from the server,
-  // so they have no export here.
+  // so their export (below) reads every page itself.
   const stockStateText = (item: Item) => {
     const stock = stockStateOf(item);
     return tr(stock === "out" ? "outOfStock" : stock === "replenish" ? "short" : stock === "below_safety" ? "belowSafety" : stock === "on_order" ? "onOrder" : "sufficient");
