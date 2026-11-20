@@ -81,6 +81,7 @@ import { procurementErrorCode, procurementErrorText } from "../procurement/procu
 import { BILLABLE_PO_STATUSES, PurchaseOrderReceiveAction, PurchaseOrderWorkflowActions, poSecondaryButtonClass, receiveOrderPath, recordBillPath, usePurchaseOrderActionNotes, usePurchaseOrderEntryRules } from "./components/PurchaseOrderWorkflowActions";
 import { RecordBillAction } from "../../components/business/BillingEntryActions";
 import { PurchaseOrderPromiseDates } from "./components/PurchaseOrderPromiseDates";
+import { SupplierReplies } from "./supplierReply/SupplierReplies";
 import { statusCodeLabel } from "../../i18n/statusLabels";
 import {
   invoiceVarianceState,
@@ -1638,7 +1639,9 @@ export default function PurchasingOrdersPage({
           />
         </div>
 
-        <PurchaseOrderPromiseDates poId={selectedPO.po} onChanged={loadWorkbench} />
+        {/* Read again when the order changes, as recording a supplier reply's dates does. */}
+        <PurchaseOrderPromiseDates key={`${selectedPO.po}:${selectedPO.version ?? ""}`} poId={selectedPO.po} onChanged={loadWorkbench} />
+        <SupplierReplies orderId={selectedPO.po} orderStatus={String(selectedPO.status || "")} entry="order" onRecorded={loadWorkbench} />
 
         <section
           ref={fulfillmentFocusRef}
