@@ -11,7 +11,8 @@ import { unitLabel } from "../../i18n/unitLabels";
 import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { EntityLink } from "../../components/business/EntityLink";
-import { ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
+import { ExportButton, ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
+import { exportRowsToCsv } from "../../lib/data-export";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
 import { useReorderListCopy } from "./reorderListCopy";
@@ -165,6 +166,13 @@ const COPY = {
   stockStatus: ["Stock status", "库存状态"],
   allStock: ["All stock", "全部库存"],
   sufficient: ["Sufficient", "库存充足"],
+  // The export's own columns (product review 2026-11-20, item 30).
+  exportSku: ["SKU", "SKU"],
+  exportItemName: ["Item name", "物料名称"],
+  exportLocation: ["Location", "库位"],
+  exportUnit: ["Unit", "单位"],
+  exportSafety: ["Safety stock", "安全库存"],
+  exportReorderPoint: ["Reorder point", "再订货点"],
   // Under the reorder point on hand, with open purchase orders keeping the position above it (design audit L7-22).
   onOrder: ["On order", "已有在途采购"],
   onOrderNote: ["Stock on hand is at or below the reorder point; open purchase orders keep the position above it", "现有量等于或低于再订货点，在途采购使库存头寸高于再订货点"],
@@ -437,6 +445,26 @@ export default function InventoryPage({
     return contains(query, row.lotId, row.lot, row.serialId, row.sn, row.id, row.sku, row.itemName)
       && (!status || row.status === status);
   });
+  // Balances and warnings: every row the filters show, with the stock
+  // status the list shows. Movements come a page at a time from the server,
+  // so they have no export here.
+  const stockStateText = (item: Item) => {
+    const stock = stockStateOf(item);
+    return tr(stock === "out" ? "outOfStock" : stock === "replenish" ? "short" : stock === "below_safety" ? "belowSafety" : stock === "on_order" ? "onOrder" : "sufficient");
+  };
+  const exportStock = () => void exportRowsToCsv(view === "warnings" ? "inventory-warnings-export.csv" : "inventory-balances-export.csv", (visible as Item[]).map((item) => ({
+    [tr("exportSku")]: item.sku,
+    [tr("exportItemName")]: item.itemName || item.name || "",
+    [tr("warehouse")]: warehouseName(item.warehouseId || item.defaultWarehouseId) || item.warehouseId || item.defaultWarehouseId || "",
+    [tr("exportLocation")]: item.location || item.locationKey || "",
+    [tr("onHand")]: Number(item.onHandQuantity ?? 0),
+    [tr("reservedQty")]: Number(item.reservedQuantity ?? 0),
+    [tr("available")]: Number(item.availableQuantity ?? 0),
+    [tr("exportUnit")]: item.unit || "",
+    [tr("exportSafety")]: item.safetyStock === undefined || item.safetyStock === null || item.safetyStock === "" ? "" : Number(item.safetyStock),
+    [tr("exportReorderPoint")]: item.reorderPoint === undefined || item.reorderPoint === null || item.reorderPoint === "" ? "" : Number(item.reorderPoint),
+    [tr("status")]: stockStateText(item),
+  })), timezone);
   // One page of rows is drawn; movements arrive a page at a time already.
   const paged = usePagedRows(visible, LIST_PAGE_SIZE, [view, queryString, query, warehouse, stockStatus, status, signalFilter].join("|"));
   const drawn: any[] = view === "movements" ? visible : paged.pageRows;
@@ -578,6 +606,7 @@ export default function InventoryPage({
         actions={<>
           <ResetButton onClick={reset} />
           <RefreshButton onClick={load} />
+          {(view === "overview" || view === "warnings") && state === "ready" && <ExportButton onClick={exportStock} />}
           {view === "warnings" && (
             <Link to="/app/inventory/reorder" data-testid="inventory-warnings-reorder-link" className={listButtonClass.export} title={reorderCopy("fromWarnings")}>
               <ListChecks size={13} />{tr("reorderList")}
