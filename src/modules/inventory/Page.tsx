@@ -462,7 +462,9 @@ export default function InventoryPage({
     const stock = stockStateOf(item);
     return tr(stock === "out" ? "outOfStock" : stock === "replenish" ? "short" : stock === "below_safety" ? "belowSafety" : stock === "on_order" ? "onOrder" : "sufficient");
   };
-  const exportStock = () => void exportRowsToCsv(view === "warnings" ? "inventory-warnings-export.csv" : "inventory-balances-export.csv", (visible as Item[]).map((item) => ({
+  // The export rows for every row the filters match (the list draws only a
+  // page of them through the pager).
+  const stockExportRows = (items: Item[]) => items.map((item) => ({
     [tr("exportSku")]: item.sku,
     [tr("exportItemName")]: item.itemName || item.name || "",
     [tr("warehouse")]: warehouseName(item.warehouseId || item.defaultWarehouseId) || item.warehouseId || item.defaultWarehouseId || "",
@@ -475,7 +477,8 @@ export default function InventoryPage({
     [tr("exportSafety")]: thresholdNumber(item.safetyStock) ?? "",
     [tr("exportReorderPoint")]: thresholdNumber(item.reorderPoint) ?? "",
     [tr("status")]: stockStateText(item),
-  })), timezone);
+  }));
+  const exportStock = () => void exportRowsToCsv(view === "warnings" ? "inventory-warnings-export.csv" : "inventory-balances-export.csv", stockExportRows(visible as Item[]), timezone);
   // Movements: every one the search and filters match, read page after page
   // from the server (fetchAllListRows, up to its limit, as the shipments and
   // sales orders exports read them), worded as the list shows them.

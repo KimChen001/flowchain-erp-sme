@@ -25,7 +25,8 @@ test('the reorder list exports the rows its search and supplier filter show, wit
 
 test('inventory balances and warnings export every row the filters show, with the stock status the list shows', () => {
   const page = read('src/modules/inventory/Page.tsx')
-  assert.match(page, /const exportStock = \(\) => void exportRowsToCsv\(view === "warnings" \? "inventory-warnings-export\.csv" : "inventory-balances-export\.csv", \(visible as Item\[\]\)\.map\(/)
+  assert.match(page, /const exportStock = \(\) => void exportRowsToCsv\(view === "warnings" \? "inventory-warnings-export\.csv" : "inventory-balances-export\.csv", stockExportRows\(visible as Item\[\]\), timezone\);/)
+  assert.match(page, /const stockExportRows = \(items: Item\[\]\) => items\.map\(\(item\) => \(\{/)
   assert.match(page, /\{\(view === "overview" \|\| view === "warnings"\) && state === "ready" && <ExportButton onClick=\{exportStock\} \/>\}/)
   // The balances view reads every page before the list is drawn, so the export is the whole list.
   assert.match(page, /if \(pageRows\.length < BALANCE_PAGE_SIZE \|\| total === null \|\| all\.length >= total\) break;/)
