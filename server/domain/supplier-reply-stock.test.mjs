@@ -3,8 +3,9 @@ import assert from 'node:assert/strict'
 import { supplierReplyStockEffects } from './supplier-reply-stock.mjs'
 
 // The "Stock:" line on a supplier reply card (docs/supplier-reply-dates-design.md
-// §4.6): the projection with the reply's new dates against the order's dates
-// now, day by day, on open sales orders or the recorded shipping rate.
+// §4.6): the first day before the new date that the new dates leave a SKU out
+// of stock, or below its reorder point, while the order's dates now would
+// not; day by day, on open sales orders or the recorded shipping rate.
 
 const today = '2026-11-20'
 const plus = (days) => new Date(Date.parse(`${today}T00:00:00Z`) + days * 86400000).toISOString().slice(0, 10)
@@ -12,6 +13,7 @@ const item = (over = {}) => ({ sku: 'SKU-1040', itemName: 'Bracket', unit: 'pcs'
 // The reply's order, PO-1, with one line 5 days late.
 const line = (over = {}) => ({ lineId: 'L1', purchaseOrderId: 'PO-1', sku: 'SKU-1040', unit: 'pcs', remaining: 60, promisedDate: plus(-5), ...over })
 const run = (over = {}) => supplierReplyStockEffects({ today, purchaseOrderId: 'PO-1', items: [item()], incoming: [line()], demand: [], rates: new Map(), overrides: [{ lineId: 'L1', date: plus(8) }], ...over })
+const brief = (effects) => effects.map((effect) => [effect.kind, effect.from])
 
 test('nothing changes: the stock stays above its reorder point until the new date', () => {
   assert.deepEqual(run({ items: [item({ available: 500 })], rates: new Map([['SKU-1040', 10]]) }), [])
@@ -19,14 +21,20 @@ test('nothing changes: the stock stays above its reorder point until the new dat
   assert.deepEqual(run({ items: [item({ available: 400 })], demand: [{ sku: 'SKU-1040', quantity: 50, promisedDate: plus(3) }] }), [])
 })
 
-test('a stock-out moved earlier: at the shipped rate it runs out before the late line now arrives', () => {
+test('out of stock on the new dates where the late line, due now, would have covered it', () => {
   // 30 available, 10 a day: below 0 on day 3. Due now, the 60 would have covered it.
   const effects = run({ items: [item({ available: 30, reorderPoint: null })], rates: new Map([['SKU-1040', 10]]) })
-  assert.deepEqual(effects, [{ sku: 'SKU-1040', itemName: 'Bracket', unit: 'pcs', kind: 'short', from: plus(3), newDate: plus(8), basis: 'recorded_rate', reorderPoint: null }])
+  assert.deepEqual(effects, [{ sku: 'SKU-1040', itemName: 'Bracket', unit: 'pcs', kind: 'short', from: plus(3), newDate: plus(8), basis: 'recorded_rate', reorderPoint: null, beyondAYear: false }])
   // A line moved from one future day to a later one: the same comparison.
-  const later = run({ items: [item({ available: 30, reorderPoint: null })], rates: new Map([['SKU-1040', 10]]), incoming: [line({ promisedDate: plus(2) })] })
-  assert.equal(later[0].kind, 'short')
-  assert.equal(later[0].from, plus(3))
+  assert.deepEqual(brief(run({ items: [item({ available: 30, reorderPoint: null })], rates: new Map([['SKU-1040', 10]]), incoming: [line({ promisedDate: plus(2) })] })), [['short', plus(3)]])
+})
+
+test('already out on the current dates, longer on the new ones: flagged from the first day the current dates recover', () => {
+  // 30 available, 10 a day, the line moved from day 4 to day 10. Both are out
+  // on day 3; on the current dates the 60 come on day 4, on the new dates the
+  // stock stays out until day 10.
+  const effects = run({ items: [item({ available: 30, reorderPoint: null })], rates: new Map([['SKU-1040', 10]]), incoming: [line({ promisedDate: plus(4) })], overrides: [{ lineId: 'L1', date: plus(10) }] })
+  assert.deepEqual(effects.map((effect) => [effect.kind, effect.from, effect.newDate]), [['short', plus(4), plus(10)]])
 })
 
 test('below the reorder point before the new date, from an open sales order', () => {
@@ -35,8 +43,17 @@ test('below the reorder point before the new date, from an open sales order', ()
   assert.deepEqual(effects.map((effect) => [effect.kind, effect.from, effect.newDate, effect.basis, effect.reorderPoint]), [['below_reorder_point', plus(2), plus(8), 'open_sales_orders', 100]])
   // A sales order already past its day counts today.
   assert.equal(run({ demand: [{ sku: 'SKU-1040', quantity: 30, promisedDate: plus(-1) }] })[0].from, today)
-  // Already below the reorder point either way: nothing the reply changes.
+  // Below the reorder point on the current dates too: nothing the reply changes.
   assert.deepEqual(run({ items: [item({ available: 120, reorderPoint: 300 })], demand: [{ sku: 'SKU-1040', quantity: 30, promisedDate: plus(2) }] }), [])
+})
+
+test('the same stock gives the same answer whatever the line\'s current day: below the reorder point only where the current dates are not', () => {
+  // 80 available under a reorder point of 100. With the 60 due now (late) or
+  // on day 1 (on time), the current dates lift it; the new date does not.
+  assert.deepEqual(brief(run({ items: [item({ available: 80 })], demand: null })), [['below_reorder_point', today]])
+  assert.deepEqual(brief(run({ items: [item({ available: 80 })], demand: null, incoming: [line({ promisedDate: plus(1) })] })), [['below_reorder_point', plus(1)]])
+  // Due on day 9, after the new date: the current dates do not lift it before day 8 either.
+  assert.deepEqual(run({ items: [item({ available: 80 })], demand: null, incoming: [line({ promisedDate: plus(9) })] }), [])
 })
 
 test('a split delivery counts whole on its last part\'s date, the safe side', () => {
@@ -47,10 +64,12 @@ test('a split delivery counts whole on its last part\'s date, the safe side', ()
   assert.deepEqual(run(split).map((effect) => [effect.kind, effect.from, effect.newDate]), [['short', plus(3), plus(10)]])
 })
 
-test('the most severe effect is shown: running out before falling below the reorder point', () => {
-  const effects = run({ items: [item({ available: 105 })], rates: new Map([['SKU-1040', 20]]) })
-  // Below 100 on day 0 (85), short on day 5 (-15).
-  assert.deepEqual(effects.map((effect) => [effect.kind, effect.from]), [['short', plus(5)]])
+test('the first worse day is named by what the new dates leave it at that day', () => {
+  // 105 available, reorder point 100, 20 a day: on the new dates below 100 on
+  // day 0 (85) while the current dates have 145; that is the line.
+  assert.deepEqual(brief(run({ items: [item({ available: 105 })], rates: new Map([['SKU-1040', 20]]) })), [['below_reorder_point', today]])
+  // 5 available: on the new dates out on day 0 (-5), the worse of the two.
+  assert.deepEqual(brief(run({ items: [item({ available: 5 })], rates: new Map([['SKU-1040', 10]]) })), [['short', today]])
 })
 
 test('other orders\' lines: a future one counts on its day, a late or undated one is not guessed', () => {
@@ -63,7 +82,7 @@ test('other orders\' lines: a future one counts on its day, a late or undated on
   assert.equal(run({ ...base, incoming: [line(), line({ lineId: 'X1', purchaseOrderId: 'PO-2', remaining: 100, promisedDate: null })] })[0].from, plus(3))
 })
 
-test('nothing to show: an earlier date, a date today, another unit, a line not on the order, or no item', () => {
+test('nothing to show: an earlier date, a date today, another unit, a line not on the order, no item, a day that does not exist', () => {
   const short = { items: [item({ available: 30, reorderPoint: null })], rates: new Map([['SKU-1040', 10]]) }
   assert.ok(run(short).length)
   // A future line brought forward only helps.
@@ -74,14 +93,24 @@ test('nothing to show: an earlier date, a date today, another unit, a line not o
   assert.deepEqual(run({ ...short, overrides: [{ lineId: 'L9', date: plus(8) }] }), [])
   assert.deepEqual(run({ ...short, items: [] }), [])
   assert.deepEqual(run({ ...short, overrides: [{ lineId: 'L1', date: 'next week' }] }), [])
+  assert.deepEqual(run({ ...short, overrides: [{ lineId: 'L1', date: '2027-02-31' }] }), [])
+  assert.deepEqual(run({ ...short, overrides: [{ lineId: 'L1', date: '2027-13-01' }] }), [])
 })
 
-test('with no demand on either basis, available stock is judged against the reorder point', () => {
+test('with no usable demand on either basis, available stock is judged against the reorder point', () => {
   // 80 available under a reorder point of 100: the late 60 due now would lift it.
   assert.deepEqual(run({ items: [item({ available: 80 })], demand: null }).map((effect) => [effect.kind, effect.from, effect.basis]), [['below_reorder_point', today, null]])
+  // Sales order lines with no day, or reserved in full, are no demand to project.
+  const unusable = [{ sku: 'SKU-1040', quantity: 30, promisedDate: null }, { sku: 'SKU-1040', quantity: 0, promisedDate: plus(1) }]
+  assert.deepEqual(run({ items: [item({ available: 80 })], demand: unusable }).map((effect) => [effect.kind, effect.from, effect.basis]), [['below_reorder_point', today, null]])
 })
 
-test('several SKUs: each its own effect, running out first', () => {
+test('a new date more than a year away is projected for the year and marked so', () => {
+  const effects = run({ items: [item({ available: 30, reorderPoint: null })], rates: new Map([['SKU-1040', 10]]), overrides: [{ lineId: 'L1', date: plus(400) }] })
+  assert.deepEqual(effects.map((effect) => [effect.kind, effect.from, effect.newDate, effect.beyondAYear]), [['short', plus(3), plus(400), true]])
+})
+
+test('several SKUs: each its own effect, out of stock first', () => {
   const items = [item({ available: 30, reorderPoint: null }), item({ sku: 'SKU-2210', itemName: 'Hinge', available: 120 })]
   const incoming = [line(), line({ lineId: 'L2', sku: 'SKU-2210', remaining: 20 })]
   const demand = [{ sku: 'SKU-2210', quantity: 30, promisedDate: plus(1) }]

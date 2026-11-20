@@ -50,13 +50,14 @@ export const SUPPLIER_REPLY_COPY = {
   reasonNote: ["The reason recorded with each date is the supplier's sentence.", "每个交期记录的原因为供应商原话。"],
   // The stock line (#363 §4.6): what the new dates do to stock before they come.
   stockLabel: ["Stock:", "库存："],
-  stock_short: ["{sku} runs out from {from}, before this delivery on {date}.", "{sku} 将自 {from} 起缺货，早于本次交货日 {date}。"],
-  stock_below_reorder_point: ["{sku} falls below its reorder point from {from}, before this delivery on {date}.", "{sku} 将自 {from} 起低于再订货点，早于本次交货日 {date}。"],
+  stock_short: ["{sku} is out of stock from {from}, before this delivery on {date}.", "{sku} 自 {from} 起缺货，早于本次交货日 {date}。"],
+  stock_below_reorder_point: ["{sku} is below its reorder point from {from}, before this delivery on {date}.", "{sku} 自 {from} 起低于再订货点，早于本次交货日 {date}。"],
+  stockBeyondYear: ["The new date is more than a year away; the projection covers the year ahead.", "新交期在一年以后，推算只覆盖未来一年。"],
   stockMore: ["{n} more items are affected.", "另有 {n} 个物料受影响。"],
   stockMoreOne: ["1 more item is affected.", "另有 1 个物料受影响。"],
   stockBasis_open_sales_orders: ["Projected from the stock available today, the open purchase order lines on their dates and the open sales orders on the days promised to customers. The whole line counts on its new date.", "按今天的可用库存、未结采购订单行的交期和未结销售订单承诺给客户的日期推算。整行按新交期计入。"],
   stockBasis_recorded_rate: ["Projected from the stock available today, the open purchase order lines on their dates and the average shipped per day over the last 90 days. The whole line counts on its new date.", "按今天的可用库存、未结采购订单行的交期和近 90 天的日均发货量推算。整行按新交期计入。"],
-  stockBasis_none: ["Projected from the stock available today and the open purchase order lines on their dates, with no demand on record. The whole line counts on its new date.", "按今天的可用库存和未结采购订单行的交期推算，没有需求记录。整行按新交期计入。"],
+  stockBasis_none: ["Projected from the stock available today and the open purchase order lines on their dates: there is no dated sales order demand and no shipping rate on record. The whole line counts on its new date.", "按今天的可用库存和未结采购订单行的交期推算：没有带日期的销售订单需求，也没有发货速度记录。整行按新交期计入。"],
 
   // Needs you, nothing to record, outages (#363 §4.5, §4.9).
   needsYou: ["Needs you: the reply mentions a date FlowChain could not confirm. Check the marked sentence and enter the dates.", "需要你确认：回复中的日期无法自动确认。请查看标记的句子并填写交期。"],

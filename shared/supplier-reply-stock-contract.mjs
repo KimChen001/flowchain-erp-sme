@@ -24,9 +24,10 @@ const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 // One SKU whose stock the new dates make worse before its new date:
 //   kind      short: available stock below zero; below_reorder_point: below
 //             the item's reorder point (more severe first)
-//   from      the first day it is so, on the new dates (the order's dates
-//             now would not have reached it by then)
+//   from      the first day before newDate it is so on the new dates while
+//             it is not on the order's dates now
 //   newDate   the reply's date for the SKU's lines (the last, with several)
+//   beyondAYear  newDate is more than a year away: projected for the year
 //   basis     the demand it was projected on: the open sales orders by the
 //             day promised to the customer, the average shipped per day over
 //             the last 90 days, or null when there is neither (available
@@ -40,6 +41,7 @@ export const supplierReplyStockEffectSchema = z.strictObject({
   newDate: day,
   basis: z.enum(['open_sales_orders', 'recorded_rate']).nullable(),
   reorderPoint: z.number().nullable(),
+  beyondAYear: z.boolean(),
 })
 
 export const supplierReplyStockResponseSchema = z.strictObject({
@@ -50,8 +52,11 @@ export const supplierReplyStockResponseSchema = z.strictObject({
   effects: z.array(supplierReplyStockEffectSchema),
 })
 
+// A real calendar day: 2027-02-31 is none.
+export const isSupplierReplyStockDay = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value ?? '')) && Number.isFinite(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value
+
 // "L1:2026-11-28,L2:2026-12-01" → [{ lineId, date }], or null when it is not
-// that shape.
+// that shape or a day is not a real one.
 export function parseSupplierReplyStockDates(value) {
   const raw = String(value ?? '').trim()
   if (!raw) return []
@@ -59,7 +64,7 @@ export function parseSupplierReplyStockDates(value) {
     const at = entry.lastIndexOf(':')
     return at > 0 ? { lineId: entry.slice(0, at).trim(), date: entry.slice(at + 1).trim() } : null
   })
-  if (entries.length > SUPPLIER_REPLY_STOCK_MAX_LINES || entries.some((entry) => !entry || !entry.lineId || entry.lineId.length > 120 || !/^\d{4}-\d{2}-\d{2}$/.test(entry.date))) return null
+  if (entries.length > SUPPLIER_REPLY_STOCK_MAX_LINES || entries.some((entry) => !entry || !entry.lineId || entry.lineId.length > 120 || !isSupplierReplyStockDay(entry.date))) return null
   return entries
 }
 export const supplierReplyStockDatesParam = (lines) => lines.map((line) => `${line.purchaseOrderLineId}:${line.promisedDate}`).sort().join(',')
