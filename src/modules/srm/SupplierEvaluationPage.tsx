@@ -8,6 +8,7 @@ import { ListSearchCard, RefreshButton, ResetButton, StatusChip, listRowClass, r
 import { useI18n } from "../../i18n/I18n";
 import { useMasterDataWriteAccess } from "../master-data/writeAccess";
 import { supplierCopy } from "./supplierCopy";
+import { SupplierReliabilityCard } from "./SupplierReliabilityCard";
 import { TierChip, TierForm, type Tier } from "./SupplierTier";
 import type { SupplierInsight, SupplierInsights } from "./supplierInsights";
 import { METRIC_HEADER_TIPS, sortSuppliersBy, useSupplierMetricCells, type SupplierSort } from "./supplierMetrics";
@@ -20,7 +21,9 @@ import { METRIC_HEADER_TIPS, sortSuppliersBy, useSupplierMetricCells, type Suppl
 // through the tier endpoint and its audit row, or record a review that keeps
 // it. FlowChain suggests no tier. A Tier 1 supplier whose on time or OTIF is
 // below 80% gets a prompt to review its tier, never a change (design audit
-// L7-37).
+// L7-37). Below the indicators, a block of its own shows how often each
+// supplier moved its promised dates and how its replies went
+// (SupplierReliabilityCard); the indicator columns do not change.
 
 type Person = { id: string; name: string | null };
 type Status = "draft" | "active" | "inactive";
@@ -96,6 +99,8 @@ export default function SupplierEvaluationPage() {
   const [error, setError] = useState(false);
   const [insights, setInsights] = useState<SupplierInsights | null>(null);
   const [insightsFailed, setInsightsFailed] = useState(false);
+  // Refresh reads the reliability block again too.
+  const [reliabilityLoads, setReliabilityLoads] = useState(0);
   const [query, setQuery] = useState("");
   const [tier, setTier] = useState<TierFilter>("");
   const [owner, setOwner] = useState("");
@@ -148,7 +153,7 @@ export default function SupplierEvaluationPage() {
   const shown = sortSuppliersBy(rows, sortBy, insightOf, workspaceCurrency);
   const filtered = Boolean(query || status || tier || owner);
   const resetFilters = () => { setQuery(""); setStatus(""); setTier(""); setOwner(""); };
-  const refresh = () => { load(); loadInsights(); };
+  const refresh = () => { load(); loadInsights(); setReliabilityLoads((n) => n + 1); };
   // The total is every supplier under the search and status; tier and owner narrow what is shown.
   const total = counts?.all ?? rows.length;
   const columns = 10 + (canEdit ? 1 : 0);
@@ -291,6 +296,11 @@ export default function SupplierEvaluationPage() {
           </div>
         )}
       </Card>
+
+      {/* Promised dates and supplier replies: a measure of its own, in the
+          table's order and under its filters; on time and OTIF above stay on
+          the original promise (docs/supplier-reply-dates-design.md §4.12). */}
+      {!error && rows.length > 0 ? <SupplierReliabilityCard suppliers={shown} loadKey={reliabilityLoads} /> : null}
     </div>
   );
 }
