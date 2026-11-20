@@ -763,22 +763,32 @@ function OrderList() {
     filters.delete("page");
     filters.set("sort", value("sort", "updatedAt"));
     filters.set("direction", value("direction", "desc"));
-    const { rows: all } = await fetchAllListRows<Order>("/api/sales/orders", filters, { itemsKey: "orders" });
+    const { rows: all, total: matching, truncated } = await fetchAllListRows<Order>("/api/sales/orders", filters, { itemsKey: "orders" });
+    const number = (value?: string | null) => (value === null || value === undefined || value === "" ? "" : Number(value));
     await exportRowsToCsv("sales-orders-export.csv", all.map((row) => {
-      const total = (row.lines || []).length ? orderTotal(row.lines || []) : null;
+      const lines = row.lines || [];
+      const total = lines.length ? orderTotal(lines) : null;
+      // The totals add up the lines' quantities: in one unit, or "mixed".
+      const units = [...new Set(lines.map((line) => String(line.unit || "").trim()).filter(Boolean))];
       return {
         [say("Sales order", "销售订单")]: row.orderNumber,
         [say("Customer", "客户")]: row.customerName || "",
         [say("Status", "状态")]: say(...SALES_ORDER_STAGES[salesOrderStage(row)].label),
+        // The priced lines' amount, as the list shows it; the lines not priced say so.
         [say("Amount", "金额")]: total?.priced ? total.amount : "",
+        [say("Lines not priced", "未定价行")]: total ? total.unpriced : "",
         [say("Currency", "币种")]: row.currency || "",
-        [say("Promised date", "承诺日期")]: row.promisedDate || "",
-        [say("Ordered", "订购数量")]: row.orderedQuantity ?? "",
-        [say("Reserved", "已预留")]: row.reservedQuantity ?? "",
-        [say("Fulfilled", "已履约")]: row.fulfilledQuantity ?? "",
+        // A calendar day, as the list shows it (stored at a fixed UTC time).
+        [say("Promised date", "承诺日期")]: row.promisedDate ? String(row.promisedDate).slice(0, 10) : "",
+        [say("Ordered", "订购数量")]: number(row.orderedQuantity),
+        [say("Reserved", "已预留")]: number(row.reservedQuantity),
+        [say("Fulfilled", "已履约")]: number(row.fulfilledQuantity),
+        [say("Unit", "单位")]: units.length > 1 ? say("Mixed", "多种单位") : units[0] || "",
         [say("Lines", "行数")]: row.totalLines ?? "",
       };
     }), workspace.timezone || undefined);
+    // Cut at the export's limit: say how many of how many.
+    if (truncated) toast.warning(say(`Exported the first ${all.length} of ${matching} orders. Narrow the filters to export the rest.`, `已导出 ${matching} 张订单中的前 ${all.length} 张。请缩小筛选范围以导出其余订单。`));
   };
   // An order's amount, from its lines as read: ordered quantity × unit price.
   const amountCell = (row: Order) => {

@@ -36,3 +36,19 @@ test('customers export through the master-data export, with the list\'s filters'
     assert.ok(zh.includes(`"${header}": "`), header)
   }
 })
+
+test('the sales order export says what the list says: lines not priced, one unit or mixed, a calendar day, numbers, and a cut', () => {
+  const page = read('src/modules/sales/OutboundWorkbench.tsx')
+  assert.match(page, /\[say\("Lines not priced", "未定价行"\)\]: total \? total\.unpriced : "",/)
+  assert.match(page, /\[say\("Unit", "单位"\)\]: units\.length > 1 \? say\("Mixed", "多种单位"\) : units\[0\] \|\| "",/)
+  assert.match(page, /\[say\("Promised date", "承诺日期"\)\]: row\.promisedDate \? String\(row\.promisedDate\)\.slice\(0, 10\) : "",/)
+  assert.match(page, /\[say\("Ordered", "订购数量"\)\]: number\(row\.orderedQuantity\),/)
+  assert.match(page, /const \{ rows: all, total: matching, truncated \} = await fetchAllListRows<Order>/)
+  assert.match(page, /if \(truncated\) toast\.warning\(say\(`Exported the first \$\{all\.length\} of \$\{matching\} orders\./)
+})
+
+test('the supplier export names the payment term as the page does, and keeps a 0-day lead time', () => {
+  const page = read('src/modules/srm/Page.tsx')
+  assert.match(page, /\[copy\("Payment terms"\)\]: \(paymentTerms \|\| \[\]\)\.find\(\(term\) => term\.id === row\.paymentTermsId \|\| term\.recordId === row\.paymentTermsId\)\?\.label \|\| row\.paymentTermsId \|\| "",/)
+  assert.match(page, /\[copy\("Delivery lead time \(days\)"\)\]: row\.deliveryCycleDays \?\? "",/)
+})

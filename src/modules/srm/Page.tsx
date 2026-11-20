@@ -494,8 +494,10 @@ export default function SupplierMasterPage({
     [copy("Email")]: row.email,
     [copy("Address")]: row.address,
     [copy("Default currency")]: row.defaultCurrency || "",
-    [copy("Payment terms")]: row.paymentTermsId || "",
-    [copy("Delivery lead time (days)")]: row.deliveryCycleDays || "",
+    // The term as the page names it; the stored value when the terms could not load.
+    [copy("Payment terms")]: (paymentTerms || []).find((term) => term.id === row.paymentTermsId || term.recordId === row.paymentTermsId)?.label || row.paymentTermsId || "",
+    // 0 days is a lead time; only a missing one is blank.
+    [copy("Delivery lead time (days)")]: row.deliveryCycleDays ?? "",
   })));
   const supplierPage = usePagedRows(sortedRows, SUPPLIER_PAGE_SIZE, [query, status, category, owner, tab, sortBy].join("|"));
   // Earlier PO prices of each supplied item from this supplier only, in the
