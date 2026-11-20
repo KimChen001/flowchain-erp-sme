@@ -535,10 +535,12 @@ export function createOperationalFinanceReadService({
     )
       summary.availableActions = [...summary.availableActions, "dismiss_duplicate"];
     // Posted receipts of the purchase order that a waiting bill can be linked
-    // to, newest first.
+    // to, newest first. A receipt that accepted nothing (a delivery rejected
+    // in full, L1-14) is not one: a bill linked to it could not move to the
+    // replacement delivery.
     const receiptCandidates = summary.availableActions.includes("link_receipt")
       ? await prisma.receivingDocument.findMany({
-          where: { tenantId: current.tenantId, poId: invoice.relatedPoId, postingStatus: "posted", reversedAt: null },
+          where: { tenantId: current.tenantId, poId: invoice.relatedPoId, postingStatus: "posted", reversedAt: null, lines: { some: { acceptedQty: { gt: 0 } } } },
           select: { id: true, documentNumber: true, postedAt: true },
           orderBy: { postedAt: "desc" },
           take: 20,

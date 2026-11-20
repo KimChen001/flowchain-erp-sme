@@ -107,12 +107,15 @@ const withoutAmount = ({ amount, ...row }) => row
 
 // Posted receipts no supplier invoice covers: none links the receipt
 // (relatedGrnId) or one of its lines (receivingLineId). Valued at the order
-// line's price; a line without one is left out of the value and counted.
+// line's price; a line without one is left out of the value and counted. A
+// receipt that accepted nothing (a delivery rejected in full, design audit
+// L1-14) has nothing to invoice and is left out.
 export function receiptsNotInvoiced(receipts, { linkedReceipts, linkedLines, orderLines, orders, amountsVisible = true, namesVisible = true }) {
   const rows = []
   for (const receipt of array(receipts)) {
     if (linkedReceipts.has(text(receipt.id))) continue
     const lines = array(receipt.lines)
+    if (!lines.some((line) => Number(line.acceptedQty) > 0)) continue
     if (lines.some((line) => linkedLines.has(text(line.id)))) continue
     let value = 0n
     let unpriced = 0
