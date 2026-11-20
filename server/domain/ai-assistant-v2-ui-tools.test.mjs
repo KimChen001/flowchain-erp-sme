@@ -603,7 +603,8 @@ test('suggest_followups asks again for a chip that is not in the answer\'s langu
   assert.match(chinese.error.message, /English/)
   // A Chinese answer: a chip may name records in English, but has Chinese words.
   ctx.language = 'zh-CN'
-  assertPart(build('suggest_followups', { questions: ['PO-202610-0024 的催货信息', '给 Acme Home Goods 写催货邮件'] }), 'followups')
+  // (A record of this workspace: a chip names only real records.)
+  assertPart(build('suggest_followups', { questions: ['PO-001 的催货信息', '给 Acme Home Goods 写催货邮件'] }), 'followups')
   const english = build('suggest_followups', { questions: ['Give me a follow-up message for PO-202610-0024'] })
   assertError(english, 'wrong_language')
   assert.match(english.error.message, /Chinese/)
