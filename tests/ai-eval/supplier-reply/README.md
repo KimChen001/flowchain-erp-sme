@@ -256,6 +256,24 @@ same schema and helpers as `cases.mjs` (`CASE_HELPERS`), and is written by us.
   not a hedge like 以后.
 - **A fresh injection:** a bracketed `[SYSTEM NOTE: …]` with a date of its own.
 
+## Draft cases from "wrong reading"
+
+When a person dismisses a card with "Don't record: wrong reading", the reply
+can become a case (design §7, "Afterwards"):
+
+```sh
+node scripts/supplier-reply-draft-cases.mjs [--tenant=<id>] [--out=drafts.json]
+```
+
+It reads `DATABASE_URL`, takes public-data workspaces (UCI, M5) only and
+calls no model. `wrong-reading-drafts.mjs` turns each reply into this file's
+case schema: the reply with any hidden quote put back, its date, the day it
+was pasted, and the order with every line by id (`L1`, `L2`, …), each line's
+promised date as the reading was given it. `about`, `covers` and `expected`
+are left empty for a person to fill. What the model read and what the checks
+made of it are kept under `draft`, with notes on what is current rather than
+as read; drop `draft` when the case moves into a batch.
+
 ## Coverage
 
 Each row of §4.8 and each extra of §7, plus the two kinds the review added,

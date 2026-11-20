@@ -93,6 +93,16 @@ model that varies), `--list` (the cases and expected figures, nothing asked),
 daniel@example.com (`--emails=`), since each user may ask 30 questions in 10
 minutes; a question the limit turns away is asked again after a minute.
 
+The supplier reply cases (`uci-reply-cases.mjs`, #363 §4.10) ask what Acme
+said about its earliest late order, named `{order}` in the turn and looked up
+as the case is asked. With `--setup` the runner first pastes a reply on that
+order through the app's own route, as the asking user, and dismisses it ("the
+supplier will confirm"), so the order's dates stay as seeded; this writes a
+record, so pass it on a test walkthrough only: the runner refuses it on the
+walkthrough's ports 15231/15232 and 18831/18832 (`setup-guard.mjs`). Without `--setup` those two
+cases are left out and the run says so. The third case checks first that
+Globex's late order has no reply, then asks about it.
+
 ## M5: the data
 
 Real demand, assumed supply side, as in the research instances

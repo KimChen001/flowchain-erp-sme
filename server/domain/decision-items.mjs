@@ -140,6 +140,18 @@ export function decisionSnapshot(row, today) {
   }
 }
 
+// The day the supplier was last chased about this item, or null. It outlives
+// the item coming back and later decisions, since a supplier may still answer
+// that follow-up: Today keeps the reply box on such an order
+// (docs/supplier-reply-dates-design.md §4.2). An item chased before chasedOn
+// was kept still holds "chased" as its decision, set aside or back, with the
+// day in decidedOn.
+export function chasedOnOf(item) {
+  const snapshot = item?.snapshot && typeof item.snapshot === 'object' ? item.snapshot : {}
+  if (isDay(snapshot.chasedOn)) return snapshot.chasedOn
+  return item?.decision === 'chased' && isDay(snapshot.decidedOn) ? snapshot.decidedOn : null
+}
+
 const STOCK_SIGNAL_RANK = Object.freeze({ stock_below_reorder: 0, stock_below_safety: 1, stock_shortage: 2 })
 const stockRank = (signal) => STOCK_SIGNAL_RANK[signal] ?? 0
 
