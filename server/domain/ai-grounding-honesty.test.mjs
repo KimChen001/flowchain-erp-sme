@@ -170,3 +170,10 @@ test('only an earlier calculation of the call grounds a later one', () => {
   const output = { results: [{ operation: 'product', result: 957 }, { operation: 'product', result: 150 }] }
   assert.equal(aiCalculationGrounded(input, { results, question, output }), false)
 })
+
+test('a count the question writes in words is a figure the user gave', () => {
+  const numbers = (answer, question) => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results: [{ minimumOrderQuantity: 50, unitPrice: 6.38 }], question }).problems.filter((row) => row.kind === 'number').map((row) => row.value)
+  // 3 is the user's; 150 = 3 × 50 and £957 = 150 × £6.38 are worked out from it.
+  assert.deepEqual(numbers('That is 3 × 50 = 150 pcs, £957 at £6.38.', 'What would three times the minimum order cost?'), [])
+  assert.deepEqual(numbers('That is 3 × 50 = 150 pcs.', 'What would the minimum order cost?'), ['3', '150'])
+})

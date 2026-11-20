@@ -810,6 +810,10 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
   // A period the question names in words is given in days as well: "再晚一周"
   // makes 7 天 the user's (2026-11-11 on Flash: "7 天约需 143.5 件" was flagged).
   for (const [pattern, days] of PERIOD_WORDS) if (pattern.test(question)) givenNumbers.push(days)
+  // A count or multiple the question writes in words is given as its number:
+  // "three times the minimum order" makes 3 the user's (2026-11-20,
+  // minimum-multiple-en: "3 × 50" was flagged).
+  givenNumbers.push(...countsInWords(text(question)))
   // The answer's figures read from the results or the question, in order, and
   // those no result holds.
   const operands = []
