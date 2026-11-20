@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ElementType, type ReactNode } from "react";
-import { Link } from "react-router";
+import { Link, useLocation } from "react-router";
 import { AlarmClock, ArrowRight, CheckCircle2, ChevronDown, Circle, ListChecks, RefreshCw } from "lucide-react";
 import { A, Card } from "../../components/ui";
 import { StatusChip, listHeadRowStyle, listRowClass, listRowStyle, statusToneOf } from "../../components/ui/listLayout";
@@ -125,6 +125,12 @@ function RuntimeHomepage() {
   const [overview, setOverview] = useState<HomeOverview | null>(null);
   const [state, setState] = useState<"loading" | "loaded" | "error">("loading");
   const [filter, setFilter] = useState<"all" | "overdue">("all");
+  // A link to #today-decisions (Priorities, a late order's page) lands on the
+  // decision cards once they are drawn.
+  const { hash } = useLocation();
+  useEffect(() => {
+    if (state === "loaded" && hash === "#today-decisions") document.getElementById("today-decisions")?.scrollIntoView({ block: "start" });
+  }, [state, hash]);
   // Today's work is one line per kind; the kinds opened, and those showing
   // every row rather than the first GROUP_ROWS.
   const [openKinds, setOpenKinds] = useState<Partial<Record<WorkKind, boolean>>>({});
@@ -344,7 +350,7 @@ function RuntimeHomepage() {
         ) : shown.length === 0 ? (
           <div className="py-10 text-center text-sm" style={{ color: A.sub }}>
             {/* With decisions waiting above, the list is not "nothing to do". */}
-            <p data-testid="today-work-empty">{filter === "overdue" ? t("noOverdueWork") : waiting.length ? t("noOtherWork") : t("noWork")}</p>
+            <p data-testid="today-work-empty">{filter === "overdue" ? (waiting.some((entry) => entry.row.overdueDays > 0) ? t("noOtherOverdueWork") : t("noOverdueWork")) : waiting.length ? t("noOtherWork") : t("noWork")}</p>
             {filter === "all" && !waiting.length ? <div className="mx-auto mt-1 max-w-md text-xs">{t("noWorkHint")}</div> : null}
           </div>
         ) : (

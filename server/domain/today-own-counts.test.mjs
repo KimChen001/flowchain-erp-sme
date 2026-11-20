@@ -29,15 +29,22 @@ test('Today\'s list says so when only decisions wait, and counts only rows beyon
   assert.match(page, /\{t\("moreNotShown", \{ n: notShown \}\)\}/)
   assert.doesNotMatch(page, /workTotal - items\.length/)
   assert.match(page, /waiting\.length \? t\("noOtherWork"\) : t\("noWork"\)/)
+  // The Overdue view says the same when overdue decisions wait above.
+  assert.match(page, /filter === "overdue" \? \(waiting\.some\(\(entry\) => entry\.row\.overdueDays > 0\) \? t\("noOtherOverdueWork"\) : t\("noOverdueWork"\)\)/)
+  assert.match(page, /if \(state === "loaded" && hash === "#today-decisions"\) document\.getElementById\("today-decisions"\)\?\.scrollIntoView/)
+  assert.match(page, /<div id="today-decisions"/)
   const copy = read('src/modules/overview/todayCopy.ts')
   assert.match(copy, /noOtherWork: "Nothing else needs action\. The items waiting for your decision are above\.",/)
   assert.match(copy, /noOtherWork: "没有其他待处理事项。等你决定的事项在上方。",/)
+  assert.match(copy, /noOtherOverdueWork: "Nothing else is overdue\. The overdue items waiting for your decision are above\.",/)
+  assert.match(copy, /noOtherOverdueWork: "没有其他逾期事项。等你决定的逾期事项在上方。",/)
 })
 
 test('Priorities says how many wait for a decision on Today, with a link, instead of "nothing needs attention"', () => {
   const page = read('src/modules/overview/AiSuggestionsPage.tsx')
   assert.match(page, /data-testid="ai-priorities-decisions"/)
-  assert.match(page, /<Link to="\/app\/overview\/risks"[^>]*>\{copy\.openDecisions\} →<\/Link>/)
+  // To the decision cards themselves, which Today scrolls to.
+  assert.match(page, /<Link to="\/app\/overview\/risks#today-decisions"[^>]*>\{copy\.openDecisions\} →<\/Link>/)
   assert.match(page, /!items\.length && !waitingDecisions && <div className="py-8 text-center">/)
   for (const key of ['decisionsOne', 'decisionsMany', 'openDecisions']) {
     const pairs = [...page.matchAll(new RegExp(`    ${key}: "([^"]+)",`, 'g'))].map((match) => match[1])

@@ -109,7 +109,7 @@ export default function AiSuggestionsPage({ onOpenAi }: { onNavigate: NavigateFn
       {state === "error" && <div className="py-8 text-center"><p className="text-sm font-semibold">{copy.failed}</p><button type="button" onClick={() => void load()} className="mt-2 inline-flex items-center gap-1 text-xs text-blue-600"><RefreshCw size={13} />{copy.retry}</button></div>}
       {state === "loaded" && waitingDecisions > 0 && <p className="mt-3 text-xs" style={{ color: A.sub }} data-testid="ai-priorities-decisions">
         {waitingDecisions === 1 ? copy.decisionsOne : fill(copy.decisionsMany, { n: count.format(waitingDecisions) })}{" "}
-        <Link to="/app/overview/risks" className="font-semibold text-blue-600 hover:underline">{copy.openDecisions} →</Link>
+        <Link to="/app/overview/risks#today-decisions" className="font-semibold text-blue-600 hover:underline max-sm:inline-flex max-sm:min-h-9 max-sm:items-center">{copy.openDecisions} →</Link>
       </p>}
       {state === "loaded" && !items.length && !waitingDecisions && <div className="py-8 text-center"><p className="text-sm" style={{ color: A.sub }}>{copy.none}</p><p className="mx-auto mt-1 max-w-md text-xs" style={{ color: A.gray2 }}>{copy.noneNote}</p></div>}
       {state === "loaded" && items.length > 0 && <>
