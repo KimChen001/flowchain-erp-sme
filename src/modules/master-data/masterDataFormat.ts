@@ -52,6 +52,7 @@ const zh: Record<string, string> = {
   "Items": "物料总数", "{count} active": "{count} 个启用", "Inactive items": "停用物料",
   "Kept for history, not offered on new documents": "保留历史记录，新单据中不再提供",
   "No reorder point": "未设再订货点", "Active items the reorder list cannot check": "补货清单无法检查的启用物料",
+  "not in the list": "不在列表中",
   "No preferred supplier": "无首选供应商", "Active items without a supplier to order from": "没有可下单供应商的启用物料",
   "Item search": "物料查询", "Search items by SKU, name, status, type and category.": "按 SKU、名称、状态、类型和分类查询物料。",
   "Reset": "重置", "Export results": "导出当前结果", "Search": "搜索", "Type": "类型", "Filter by type": "按类型筛选",
