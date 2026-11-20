@@ -26,6 +26,8 @@ const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 //             the item's reorder point (more severe first)
 //   from      the first day before newDate it is so on the new dates while
 //             it is not on the order's dates now
+//   outOfStockFrom  below the reorder point first: the later day it is out
+//             of stock on the new dates while not on the current ones, or null
 //   newDate   the reply's date for the SKU's lines (the last, with several)
 //   beyondAYear  newDate is more than a year away: projected for the year
 //   basis     the demand it was projected on: the open sales orders by the
@@ -38,6 +40,7 @@ export const supplierReplyStockEffectSchema = z.strictObject({
   unit: z.string().nullable(),
   kind: z.enum(['short', 'below_reorder_point']),
   from: day,
+  outOfStockFrom: day.nullable(),
   newDate: day,
   basis: z.enum(['open_sales_orders', 'recorded_rate']).nullable(),
   reorderPoint: z.number().nullable(),

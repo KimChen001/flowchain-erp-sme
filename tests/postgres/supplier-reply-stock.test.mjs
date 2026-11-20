@@ -4,7 +4,6 @@ import http from 'node:http'
 import { backfillTenantAuthorization } from '../../server/auth/authorization-backfill.mjs'
 import { createScmServer } from '../../server/bootstrap/scm-server.mjs'
 import { createPrismaClient } from '../../server/persistence/prisma-client.mjs'
-import { supplierReplyStockEffects } from '../../server/domain/supplier-reply-stock.mjs'
 import { readSupplierReplyStockInputs } from '../../server/services/supplier-reply-stock-inputs.mjs'
 import { supplierReplyStockResponseSchema } from '../../shared/supplier-reply-stock-contract.mjs'
 
@@ -13,14 +12,16 @@ import { supplierReplyStockResponseSchema } from '../../shared/supplier-reply-st
 // overdue order, then the stock read with the dates the manual form would
 // record. The bracket has 50 in the order's warehouse and 70 in another, under
 // a reorder point of 100; 60 are overdue on the order. No model is called.
-//   - a reader of every warehouse: 120 available, never below 100: no line;
-//   - a reader limited to some warehouses is refused the card, as purchase
-//     order read is checked without a warehouse; the narrow read for the
-//     order's warehouse alone (50, which the 60 due now would lift to 110)
-//     gives below the reorder point from today on a date ten days on;
+//   - an administrator, who reads every warehouse (the backfill gives them
+//     each one): 120 available, never below 100: no line;
+//   - a buyer limited to the order's warehouse: 50, which the 60 due now
+//     would lift to 110: below the reorder point from today on a date ten
+//     days on;
 //   - a reader of orders but not of inventory: no stock line at all.
-// The ids carry this test's own prefix: test:db:supplier-replies runs it in
-// one database with supplier-replies.test.mjs, whose ids are PO-A, SUP-A...
+// Another order's line with no promised date of its own counts on that
+// order's expected date. The ids carry this test's own prefix:
+// test:db:supplier-replies runs it in one database with
+// supplier-replies.test.mjs, whose ids are PO-A, SUP-A...
 const tenantA = 'supplier-reply-stock-a'
 const tenantB = 'supplier-reply-stock-b'
 const dayOffset = (days) => new Date(Date.now() + days * 86_400_000)
@@ -30,9 +31,8 @@ const id = (tag, name) => `STK-${tag}-${name}`
 async function seedTenant(prisma, tenantId, tag) {
   await prisma.tenant.create({ data: { id: tenantId, name: `Stock workspace ${tag}` } })
   await prisma.user.createMany({ data: [
-    { id: id(tag, 'manager'), tenantId, email: `stock-manager-${tag.toLowerCase()}@example.com`, name: `Manager ${tag}`, role: 'manager' },
+    { id: id(tag, 'admin'), tenantId, email: `stock-admin-${tag.toLowerCase()}@example.com`, name: `Admin ${tag}`, role: 'admin' },
     { id: id(tag, 'buyer'), tenantId, email: `stock-buyer-${tag.toLowerCase()}@example.com`, name: `Buyer ${tag}`, role: 'buyer' },
-    { id: id(tag, 'ops'), tenantId, email: `stock-ops-${tag.toLowerCase()}@example.com`, name: `Operations ${tag}`, role: 'business-specialist' },
   ] })
   await prisma.supplier.create({ data: { id: id(tag, 'SUP'), tenantId, code: id(tag, 'SUP'), name: `Acme ${tag}` } })
   for (const warehouse of ['WH1', 'WH2']) await prisma.warehouse.create({ data: { id: id(tag, warehouse), tenantId, code: id(tag, warehouse), name: `Warehouse ${tag} ${warehouse}`, status: 'active' } })
@@ -51,9 +51,18 @@ async function seedTenant(prisma, tenantId, tag) {
       { id: id(tag, 'PO-L1'), itemId: id(tag, 'ITEM'), sku: 'SKU-1040', itemName: 'Bracket', orderedQuantity: '60.0000', receivedQuantity: '0.0000', unit: 'pcs', unitPrice: '2.5000', amount: '150.0000', originalPromisedDate: dayOffset(-5), metadata: { promisedDate: iso(dayOffset(-5)), targetWarehouseId: id(tag, 'WH1') } },
     ] },
   } })
-  await backfillTenantAuthorization(prisma, tenantId, { actorId: id(tag, 'manager') })
-  // The operations reader sees the order's warehouse only.
-  await prisma.userWarehouseScope.create({ data: { id: id(tag, 'ops-scope'), tenantId, userId: id(tag, 'ops'), warehouseId: id(tag, 'WH1'), accessLevel: 'operate' } })
+  // Another order, expected in 20 days, whose line has no promised date of its own.
+  await prisma.purchaseOrder.create({ data: {
+    id: id(tag, 'PO-2'), number: `PO-202611-00${tag === 'A' ? '43' : '44'}`, tenantId, supplierId: id(tag, 'SUP'), supplierName: `Acme ${tag}`, status: 'issued', currency: 'USD', amount: '200.0000',
+    expectedDate: dayOffset(20), issuedAt: dayOffset(-2), metadata: { targetWarehouseId: id(tag, 'WH2') },
+    lines: { create: [
+      { id: id(tag, 'PO-2-L1'), itemId: id(tag, 'ITEM'), sku: 'SKU-1040', itemName: 'Bracket', orderedQuantity: '80.0000', receivedQuantity: '0.0000', unit: 'pcs', unitPrice: '2.5000', amount: '200.0000', metadata: { targetWarehouseId: id(tag, 'WH2') } },
+    ] },
+  } })
+  // The backfill gives the administrator every warehouse.
+  await backfillTenantAuthorization(prisma, tenantId, { actorId: id(tag, 'admin') })
+  // The buyer reads the order's warehouse only.
+  await prisma.userWarehouseScope.create({ data: { id: id(tag, 'buyer-scope'), tenantId, userId: id(tag, 'buyer'), warehouseId: id(tag, 'WH1'), accessLevel: 'operate' } })
   // A reader of purchase orders who may not read inventory: their one role
   // grants purchase order read alone. The stored role is one sign-in keeps
   // (a session whose role differs from it is stale); permissions come only
@@ -104,8 +113,7 @@ test('the stock read with the manual form\'s dates follows the reader\'s warehou
       return { Authorization: `Bearer ${login.payload.token}` }
     }
     const asBuyer = await signIn('stock-buyer-a@example.com')
-    const asManager = await signIn('stock-manager-a@example.com')
-    const asOps = await signIn('stock-ops-a@example.com')
+    const asAdmin = await signIn('stock-admin-a@example.com')
     const asOrders = await signIn('stock-orders-a@example.com')
     process.env.FLOWCHAIN_DEFAULT_TENANT_ID = tenantB
     const asOther = await signIn('stock-buyer-b@example.com')
@@ -119,37 +127,30 @@ test('the stock read with the manual form\'s dates follows the reader\'s warehou
     const withDate = (day) => `${stock}?dates=${encodeURIComponent(`${id('A', 'PO-L1')}:${day}`)}`
 
     // Nothing proposed and no dates given: nothing to project.
-    const none = await request(port, 'GET', stock, { headers: asManager })
+    const none = await request(port, 'GET', stock, { headers: asAdmin })
     assert.equal(none.status, 200, JSON.stringify(none.payload))
     assert.ok(supplierReplyStockResponseSchema.safeParse(none.payload).success, JSON.stringify(none.payload))
     assert.deepEqual([none.payload.available, none.payload.effects], [true, []])
+    const today = none.payload.asOf
 
-    // Every warehouse: 120 available stays above the reorder point.
-    const all = await request(port, 'GET', withDate(newDate), { headers: asManager })
+    // The administrator reads every warehouse: 120 available, and the other
+    // order's 80 come on its expected date. Never below 100: no line.
+    const inputs = await readSupplierReplyStockInputs({ prisma, tenantId: tenantA, today, timeZone: 'America/New_York', skus: ['SKU-1040'], warehouseIds: [id('A', 'WH1'), id('A', 'WH2')], salesOrdersVisible: true })
+    assert.deepEqual(inputs.items.map((row) => [row.sku, row.available, row.reorderPoint]), [['SKU-1040', 120, 100]])
+    assert.deepEqual(inputs.incoming.map((row) => [row.lineId, row.remaining, row.promisedDate]).sort(), [[id('A', 'PO-2-L1'), 80, iso(dayOffset(20))], [id('A', 'PO-L1'), 60, iso(dayOffset(-5))]].sort())
+    const all = await request(port, 'GET', withDate(newDate), { headers: asAdmin })
     assert.equal(all.status, 200, JSON.stringify(all.payload))
     assert.ok(supplierReplyStockResponseSchema.safeParse(all.payload).success, JSON.stringify(all.payload))
     assert.deepEqual([all.payload.available, all.payload.effects], [true, []])
 
-    // A reader limited to some warehouses: the card's own read refuses them
-    // (purchase order read is checked without a warehouse), and the stock
-    // read with it.
-    const scopedList = await request(port, 'GET', orderPath, { headers: asOps })
-    const scopedStock = await request(port, 'GET', withDate(newDate), { headers: asOps })
-    assert.deepEqual([scopedStock.status, scopedStock.payload.code], [scopedList.status, scopedList.payload.code])
-    // The narrow read itself, in the real database, for the order's warehouse
-    // only: 50 there (70 elsewhere), below the reorder point from today.
-    const today = all.payload.asOf
-    const inWarehouse = await readSupplierReplyStockInputs({ prisma, tenantId: tenantA, today, timeZone: 'America/New_York', skus: ['SKU-1040'], warehouseIds: [id('A', 'WH1')], salesOrdersVisible: true })
-    assert.deepEqual(inWarehouse.items.map((row) => [row.sku, row.available, row.reorderPoint]), [['SKU-1040', 50, 100]])
-    assert.deepEqual(inWarehouse.incoming.map((row) => [row.lineId, row.remaining]), [[id('A', 'PO-L1'), 60]])
-    assert.deepEqual([inWarehouse.demand, inWarehouse.rates.size], [[], 0])
-    const overrides = [{ lineId: id('A', 'PO-L1'), date: newDate }]
-    assert.deepEqual(supplierReplyStockEffects({ today, purchaseOrderId: id('A', 'PO'), ...inWarehouse, overrides }).map((effect) => [effect.kind, effect.from, effect.newDate, effect.basis]), [['below_reorder_point', today, newDate, null]])
-    // Every warehouse: 120.
-    const everywhere = await readSupplierReplyStockInputs({ prisma, tenantId: tenantA, today, timeZone: 'America/New_York', skus: ['SKU-1040'], warehouseIds: null, salesOrdersVisible: true })
-    assert.deepEqual(everywhere.items.map((row) => row.available), [120])
+    // The buyer reads the order's warehouse only: 50, below the reorder point
+    // from today, where the 60 due now would lift it to 110.
+    const scoped = await request(port, 'GET', withDate(newDate), { headers: asBuyer })
+    assert.equal(scoped.status, 200, JSON.stringify(scoped.payload))
+    assert.ok(supplierReplyStockResponseSchema.safeParse(scoped.payload).success, JSON.stringify(scoped.payload))
+    assert.deepEqual(scoped.payload.effects.map((effect) => [effect.sku, effect.kind, effect.from, effect.outOfStockFrom, effect.newDate, effect.reorderPoint, effect.basis]), [['SKU-1040', 'below_reorder_point', today, null, newDate, 100, null]])
     // A date of today changes nothing.
-    assert.deepEqual((await request(port, 'GET', withDate(today), { headers: asManager })).payload.effects, [])
+    assert.deepEqual((await request(port, 'GET', withDate(today), { headers: asBuyer })).payload.effects, [])
 
     // A reader of orders without inventory read: no stock line.
     const hidden = await request(port, 'GET', withDate(newDate), { headers: asOrders })

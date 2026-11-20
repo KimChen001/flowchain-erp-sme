@@ -2,7 +2,8 @@
 // §4.6, the "Stock:" line on the card): for each SKU on the lines the reply
 // moves, the first day before the new date that the SKU is out of stock, or
 // below its reorder point, on the new dates while it would not be on the
-// order's dates now.
+// order's dates now; and, below the reorder point first, the day it then
+// runs out too, so a stock-out is never hidden behind the earlier day.
 //
 // The projection is the one behind the assistant's stock_projection
 // (ai-read-tools.mjs aiStockProjection, ai-assistant-v2-data-tools.mjs), day
@@ -38,22 +39,32 @@ const dayIndex = (day) => Math.round(Date.parse(`${day}T00:00:00Z`) / 86400000)
 const dayOf = (index) => new Date(index * 86400000).toISOString().slice(0, 10)
 const finite = (value) => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value))
 
-// The first day in [start, end) the new dates leave the SKU out of stock or
-// below its reorder point while the current dates do not, named by what the
-// new dates leave it at that day (out of stock is the worse), or null.
-function firstWorseDay({ start, end, available, current, proposed, demandOn, reorderPoint }) {
+// What the new dates do in [start, end) that the current dates do not: the
+// first day the SKU is below its reorder point on the new dates while not on
+// the current ones, and the first day it is out of stock on the new dates
+// while not on the current ones. Out of stock first (it is the worse news),
+// else below the reorder point, with the later stock-out beside it; or null.
+function worseDays({ start, end, available, current, proposed, demandOn, reorderPoint }) {
   let now = available
   let next = available
+  let belowFrom = null
+  let shortFrom = null
   for (let day = start; day < end; day += 1) {
     const out = demandOn(day)
     now += (current.get(day) || 0) - out
     next += (proposed.get(day) || 0) - out
-    const short = next < 0 && !(now < 0)
-    const below = reorderPoint !== null && next < reorderPoint && !(now < reorderPoint)
-    if (short || below) return { kind: next < 0 ? 'short' : 'below_reorder_point', from: day }
+    if (shortFrom === null && next < 0 && !(now < 0)) shortFrom = day
+    if (belowFrom === null && reorderPoint !== null && next < reorderPoint && !(now < reorderPoint)) belowFrom = day
+    if (shortFrom !== null) break
   }
+  if (shortFrom !== null && (belowFrom === null || shortFrom <= belowFrom)) return { kind: 'short', from: shortFrom, outOfStockFrom: null }
+  if (belowFrom !== null) return { kind: 'below_reorder_point', from: belowFrom, outOfStockFrom: shortFrom }
   return null
 }
+// The most severe first: out of stock from the first worse day, then below
+// the reorder point with a stock-out to come, then below it alone; then the
+// earlier day.
+const severity = (effect) => (effect.kind === 'short' ? 0 : effect.outOfStockFrom !== null ? 1 : 2)
 
 // today: the workspace's day. items: [{ sku, itemName, unit, available,
 // reorderPoint }]. incoming: every open purchase order line, [{ lineId,
@@ -104,7 +115,7 @@ export function supplierReplyStockEffects({ today, purchaseOrderId, items = [], 
     }
     const available = finite(item.available) ?? 0
     const reorderPoint = finite(item.reorderPoint) !== null && finite(item.reorderPoint) > 0 ? finite(item.reorderPoint) : null
-    const project = (demandOn) => firstWorseDay({ start, end, available, current, proposed, demandOn, reorderPoint })
+    const project = (demandOn) => worseDays({ start, end, available, current, proposed, demandOn, reorderPoint })
     const found = []
     // Open sales orders with a day and something left to ship unreserved.
     const byDay = new Map()
@@ -128,12 +139,12 @@ export function supplierReplyStockEffects({ today, purchaseOrderId, items = [], 
       if (effect) found.push({ ...effect, basis: null })
     }
     if (!found.length) continue
-    const worst = found.sort((a, b) => (a.kind === b.kind ? a.from - b.from : a.kind === 'short' ? -1 : 1))[0]
+    const worst = found.sort((a, b) => severity(a) - severity(b) || a.from - b.from)[0]
     effects.push({
       sku: text(item.sku), itemName: text(item.itemName) || null, unit: text(item.unit) || null,
-      kind: worst.kind, from: dayOf(worst.from), newDate: dayOf(newDay), basis: worst.basis, reorderPoint,
-      beyondAYear: newDay > horizon,
+      kind: worst.kind, from: dayOf(worst.from), outOfStockFrom: worst.outOfStockFrom === null ? null : dayOf(worst.outOfStockFrom),
+      newDate: dayOf(newDay), basis: worst.basis, reorderPoint, beyondAYear: newDay > horizon,
     })
   }
-  return effects.sort((a, b) => (a.kind === b.kind ? a.from.localeCompare(b.from) : a.kind === 'short' ? -1 : 1) || a.sku.localeCompare(b.sku))
+  return effects.sort((a, b) => severity(a) - severity(b) || a.from.localeCompare(b.from) || a.sku.localeCompare(b.sku))
 }

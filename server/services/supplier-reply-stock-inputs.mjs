@@ -14,7 +14,8 @@ import { recordedItemUnit } from '../repositories/db-master-data-repository.mjs'
 //   - incoming: every committed or pending purchase order with a line of one
 //     of them (as listCommittedPurchaseOrders reads, every warehouse);
 //   - demand, for readers of sales orders: their lines on open sales orders
-//     (not draft or cancelled), each with the day promised to the customer;
+//     (not draft or cancelled, not shipped in full), each with the day
+//     promised to the customer;
 //   - the recorded rate: posted shipments of the last 90 days, one query for
 //     them all, the reorder list's daily demand, unrounded; only for a reader
 //     of every warehouse, as the reorder list and the assistant read it.
@@ -40,7 +41,8 @@ export async function readSupplierReplyStockInputs({ prisma, tenantId, today, ti
     prisma.$queryRaw`SELECT DISTINCT status FROM "PurchaseOrder" WHERE "tenantId" = ${tenantId}`,
     salesOrdersVisible
       ? prisma.salesOrderLine.findMany({
-        where: { sku: { in: keys }, salesOrder: { tenantId, workflowStatus: { notIn: OPEN_EXCLUDED } } },
+        // Open orders still to ship, as countOrdersWithOpenDemand counts them.
+        where: { sku: { in: keys }, salesOrder: { tenantId, workflowStatus: { notIn: OPEN_EXCLUDED }, fulfillmentStatus: { not: 'fully_fulfilled' } } },
         select: { sku: true, orderedQuantity: true, fulfilledQuantity: true, reservedQuantity: true, salesOrder: { select: { id: true, promisedDate: true } } },
       })
       : null,
@@ -68,8 +70,10 @@ export async function readSupplierReplyStockInputs({ prisma, tenantId, today, ti
       inventoryItems: [...stock.values()],
       items: array(records).map((record) => ({ sku: text(record.sku), itemId: text(record.id), itemName: text(record.name), name: text(record.name), reorderPoint: record.reorderPoint, safetyStock: record.safetyStock, recordedUnit: recordedItemUnit(record) })),
       itemUnits: array(records).map((record) => ({ sku: text(record.sku), itemId: text(record.id), unit: recordedItemUnit(record) })),
+      // The expected date as mapPo gives it (an ISO string): a line with no
+      // promised date of its own falls back to it (reportCalendarDay).
       purchaseOrders: array(orders).map((po) => ({
-        id: po.id, status: po.status, expectedDate: po.expectedDate,
+        id: po.id, status: po.status, expectedDate: po.expectedDate?.toISOString?.() || po.expectedDate || null,
         lines: array(po.lines).map((line) => ({ id: line.id, sku: line.sku, itemId: line.itemId, orderedQuantity: String(line.orderedQuantity ?? ''), receivedQuantity: String(line.receivedQuantity ?? ''), unit: line.unit, promisedDate: line.metadata?.promisedDate || null })),
       })),
       salesDemand,

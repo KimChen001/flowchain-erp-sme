@@ -11,12 +11,13 @@ import { supplierReplyText, type SupplierReplyCopyKey } from "./supplierReplyCop
 // Read from the reply's stock route (shared/supplier-reply-stock-contract.mjs)
 // with the dates the card would record, again when they change: after a short
 // pause, the read before cancelled, and not while a date is unfinished or
-// before today (a year typed digit by digit passes 0002, 0020, 0202). The line
-// shown is greyed while a new read runs. Nothing shows when nothing changes,
+// before today (a year typed digit by digit passes 0002, 0020, 0202): the
+// line is hidden then. The line shown is greyed while a new read runs.
+// Nothing shows when nothing changes,
 // when the reader may not read inventory, or when the read fails: the card
 // stands without it.
 
-type Effect = { sku: string; itemName: string | null; kind: "short" | "below_reorder_point"; from: string; newDate: string; basis: "open_sales_orders" | "recorded_rate" | null; beyondAYear: boolean };
+type Effect = { sku: string; itemName: string | null; kind: "short" | "below_reorder_point"; from: string; outOfStockFrom: string | null; newDate: string; basis: "open_sales_orders" | "recorded_rate" | null; beyondAYear: boolean };
 type Answer = { available: boolean; effects: Effect[] };
 // What the read came to, for the card and its tests: reading, waiting for
 // whole dates, shown, nothing to show, or failed.
@@ -59,19 +60,27 @@ export function SupplierReplyStockLine({ reply, lines }: {
     return () => { clearTimeout(timer); controller.abort(); };
   }, [reply, dates, ready]);
 
-  const effects = answer?.available ? answer.effects : [];
+  // While a date is unfinished or before today the line is hidden, not left
+  // greyed: it no longer says anything about the dates on the card.
+  const effects = answer?.available && state !== "waiting" ? answer.effects : [];
   // Settled or waiting with nothing to show: a marker only.
   if (!effects.length) return <span hidden data-testid="supplier-reply-stock-read" data-state={state} />;
   const shown = effects.slice(0, SHOWN);
   const more = effects.length - shown.length;
   // Greyed while the dates changed and the line is being read again.
-  const stale = state === "reading" || state === "waiting";
+  const stale = state === "reading";
+  const sentence = (effect: Effect) => {
+    const sku = effect.itemName ? `${effect.sku} · ${effect.itemName}` : effect.sku;
+    // Below the reorder point first, out of stock later: both, never the stock-out hidden.
+    if (effect.kind === "below_reorder_point" && effect.outOfStockFrom) return t("stock_below_then_short", { sku, from: day(effect.from), out: day(effect.outOfStockFrom), date: day(effect.newDate) });
+    return t(`stock_${effect.kind}` as SupplierReplyCopyKey, { sku, from: day(effect.from), date: day(effect.newDate) });
+  };
   return (
     <div className={`mt-2 rounded-md bg-amber-50 px-2 py-1 text-amber-800 ${stale ? "opacity-50" : ""}`} role="note" aria-busy={stale} data-testid="supplier-reply-stock" data-state={state}>
       <span className="font-medium">{t("stockLabel")}</span>
       {shown.map((effect) => (
         <span key={effect.sku} className="block" data-testid="supplier-reply-stock-effect" data-kind={effect.kind} title={t(`stockBasis_${effect.basis ?? "none"}` as SupplierReplyCopyKey)}>
-          {t(`stock_${effect.kind}` as SupplierReplyCopyKey, { sku: effect.itemName ? `${effect.sku} · ${effect.itemName}` : effect.sku, from: day(effect.from), date: day(effect.newDate) })}
+          {sentence(effect)}
           {effect.beyondAYear ? ` ${t("stockBeyondYear")}` : ""}
         </span>
       ))}

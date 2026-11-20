@@ -46,7 +46,7 @@ function card(orderId: string, over: Record<string, unknown> = {}) {
   expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
   return value;
 }
-const effect = (over: Record<string, unknown> = {}) => ({ sku: "SKU-1040", itemName: "Bracket", unit: "pcs", kind: "below_reorder_point", from: plus(4), newDate: NEW_DATE, basis: "recorded_rate", reorderPoint: 100, beyondAYear: false, ...over });
+const effect = (over: Record<string, unknown> = {}) => ({ sku: "SKU-1040", itemName: "Bracket", unit: "pcs", kind: "below_reorder_point", from: plus(4), outOfStockFrom: null, newDate: NEW_DATE, basis: "recorded_rate", reorderPoint: 100, beyondAYear: false, ...over });
 function stock(effects: unknown[], over: Record<string, unknown> = {}) {
   const value = { contractVersion: SUPPLIER_REPLY_STOCK_CONTRACT_VERSION, asOf: plus(0), available: true, reason: null, effects, ...over };
   const parsed = supplierReplyStockResponseSchema.safeParse(value);
@@ -73,18 +73,24 @@ test.describe("the supplier reply card's stock line", () => {
     const auth = await signIn(page, request);
     await useLanguage(page, "en-US");
     const orderId = await anIssuedOrder(request, auth);
-    const asked = await stub(page, [card(orderId)], () => ({ json: stock([effect(), effect({ sku: "SKU-2210", itemName: null, kind: "short", from: plus(5), basis: "open_sales_orders" })]) }));
+    const asked = await stub(page, [card(orderId)], () => ({ json: stock([
+      effect({ sku: "SKU-2210", itemName: null, kind: "short", from: plus(5), basis: "open_sales_orders" }),
+      effect({ outOfStockFrom: plus(6) }),
+      effect({ sku: "SKU-3300", itemName: null }),
+    ]) }));
     await page.goto(`/app/procurement/orders/${encodeURIComponent(orderId)}`);
     const view = page.getByTestId("supplier-reply-card").first();
     const stockLine = view.getByTestId("supplier-reply-stock");
     await expect(stockLine).toHaveAttribute("data-state", "shown");
     await expect(stockLine).toContainText("Stock:");
+    // Below the reorder point first and out of stock later: both are named.
     await expect(stockLine.getByTestId("supplier-reply-stock-effect")).toHaveText([
-      `SKU-1040 · Bracket is below its reorder point from ${shown(plus(4))}, before this delivery on ${shown(NEW_DATE)}.`,
       `SKU-2210 is out of stock from ${shown(plus(5))}, before this delivery on ${shown(NEW_DATE)}.`,
+      `SKU-1040 · Bracket is below its reorder point from ${shown(plus(4))} and out of stock from ${shown(plus(6))}, before this delivery on ${shown(NEW_DATE)}.`,
+      `SKU-3300 is below its reorder point from ${shown(plus(4))}, before this delivery on ${shown(NEW_DATE)}.`,
     ]);
-    await expect(stockLine.getByTestId("supplier-reply-stock-effect").first()).toHaveAttribute("title", /average shipped per day over the last 90 days/);
-    await expect(stockLine.getByTestId("supplier-reply-stock-effect").last()).toHaveAttribute("title", /open sales orders on the days promised to customers/);
+    await expect(stockLine.getByTestId("supplier-reply-stock-effect").first()).toHaveAttribute("title", /open sales orders on the days promised to customers/);
+    await expect(stockLine.getByTestId("supplier-reply-stock-effect").last()).toHaveAttribute("title", /average shipped per day over the last 90 days/);
     // Asked with the proposal's dates.
     expect(asked).toEqual([`pol-1:${NEW_DATE}`]);
   });
@@ -101,10 +107,11 @@ test.describe("the supplier reply card's stock line", () => {
     const stockLine = view.getByTestId("supplier-reply-stock");
     await expect(stockLine).toHaveAttribute("data-state", "shown");
     expect(asked).toEqual([`pol-1:${NEW_DATE}`]);
-    // A year being typed (0002) is not read; the line shown is greyed.
+    // A year being typed (0002) is not read, and the line, which no longer
+    // speaks for the card's dates, is hidden meanwhile.
     await view.getByTestId("supplier-reply-question").locator('input[type="date"]').fill("0002-12-03");
-    await expect(stockLine).toHaveAttribute("data-state", "waiting");
-    await expect(stockLine).toHaveClass(/opacity-50/);
+    await expect(view.getByTestId("supplier-reply-stock-read")).toHaveAttribute("data-state", "waiting");
+    await expect(stockLine).toHaveCount(0);
     await page.waitForTimeout(600);
     expect(asked).toEqual([`pol-1:${NEW_DATE}`]);
     // A reading picked: read with it.

@@ -146,6 +146,10 @@ function fakePrisma({ shipments = [], warehouses = [{ id: 'WH-1' }, { id: 'WH-2'
         { id: 'L1', sku: 'SKU-1040', itemId: 'I-1', orderedQuantity: '100.0000', receivedQuantity: '40.0000', unit: 'pcs', metadata: { promisedDate: '2026-11-15' } },
         { id: 'L2', sku: 'SKU-1040', itemId: 'I-1', orderedQuantity: '5.0000', receivedQuantity: '0.0000', unit: 'box', metadata: { promisedDate: '2026-11-25' } },
       ] },
+      // A line with no promised date of its own: due on the order's expected date.
+      { id: 'PO-2', status: 'issued', expectedDate: new Date('2026-11-26T00:00:00Z'), lines: [
+        { id: 'M1', sku: 'SKU-1040', itemId: 'I-1', orderedQuantity: '25.0000', receivedQuantity: '0.0000', unit: 'pcs', metadata: {} },
+      ] },
     ]) },
     salesOrderLine: { findMany: record('sales', [
       { sku: 'SKU-1040', orderedQuantity: '30.0000', fulfilledQuantity: '5.0000', reservedQuantity: '5.0000', salesOrder: { id: 'SO-1', promisedDate: new Date('2026-11-22T00:00:00Z') } },
@@ -163,11 +167,15 @@ test('the narrow read: the SKUs\' stock in the reader\'s warehouses, their commi
   assert.deepEqual(calls.balances.where, { tenantId: 'tenant-s', sku: { in: ['SKU-1040'] }, warehouseId: { in: ['WH-1', 'WH-2'] } })
   assert.deepEqual(calls.items.where, { tenantId: 'tenant-s', sku: { in: ['SKU-1040'] } })
   assert.deepEqual(calls.orders.where.status, { in: ['issued', 'pending_approval'] })
-  assert.deepEqual(calls.sales.where.salesOrder.workflowStatus, { notIn: ['draft', 'cancelled', 'canceled'] })
+  assert.deepEqual(calls.sales.where.salesOrder, { tenantId: 'tenant-s', workflowStatus: { notIn: ['draft', 'cancelled', 'canceled'] }, fulfillmentStatus: { not: 'fully_fulfilled' } })
   // On hand 50 + 20 (available where on hand is missing) less 10 reserved.
   assert.deepEqual(read.items, [{ sku: 'SKU-1040', itemName: 'Bracket', unit: 'pcs', available: 60, reorderPoint: 100 }])
-  // The committed line's 60 left; the box line is in another unit and left out.
-  assert.deepEqual(read.incoming, [{ lineId: 'L1', purchaseOrderId: 'PO-1', sku: 'SKU-1040', unit: null, remaining: 60, promisedDate: '2026-11-15' }])
+  // The committed line's 60 left; the box line is in another unit and left
+  // out; the line with no promised date is due on its order's expected date.
+  assert.deepEqual(read.incoming, [
+    { lineId: 'L1', purchaseOrderId: 'PO-1', sku: 'SKU-1040', unit: null, remaining: 60, promisedDate: '2026-11-15' },
+    { lineId: 'M1', purchaseOrderId: 'PO-2', sku: 'SKU-1040', unit: null, remaining: 25, promisedDate: '2026-11-26' },
+  ])
   assert.deepEqual(read.demand, [{ sku: 'SKU-1040', quantity: 20, promisedDate: '2026-11-22' }])
 })
 

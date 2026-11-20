@@ -52,6 +52,7 @@ export const SUPPLIER_REPLY_COPY = {
   stockLabel: ["Stock:", "库存："],
   stock_short: ["{sku} is out of stock from {from}, before this delivery on {date}.", "{sku} 自 {from} 起缺货，早于本次交货日 {date}。"],
   stock_below_reorder_point: ["{sku} is below its reorder point from {from}, before this delivery on {date}.", "{sku} 自 {from} 起低于再订货点，早于本次交货日 {date}。"],
+  stock_below_then_short: ["{sku} is below its reorder point from {from} and out of stock from {out}, before this delivery on {date}.", "{sku} 自 {from} 起低于再订货点，自 {out} 起缺货，早于本次交货日 {date}。"],
   stockBeyondYear: ["The new date is more than a year away; the projection covers the year ahead.", "新交期在一年以后，推算只覆盖未来一年。"],
   stockMore: ["{n} more items are affected.", "另有 {n} 个物料受影响。"],
   stockMoreOne: ["1 more item is affected.", "另有 1 个物料受影响。"],
