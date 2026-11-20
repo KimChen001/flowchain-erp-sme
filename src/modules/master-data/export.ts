@@ -34,16 +34,6 @@ export function exportMasterDataCsv(
         ["Status", copy(item.status === "active" ? "Active" : item.status === "inactive" ? "Inactive" : item.status)],
       ])),
     },
-    // The customer list as it reads (product review 2026-11-20, item 30);
-    // credit and record status in the interface language, values as stored.
-    customers: {
-      filename: "master-data-customers-export.csv",
-      rows: () => (data.customers || []).map((item) => row([
-        ["Customer code", item.code], ["Customer name", item.name], ["Currency", item.currency || ""], ["Contact", item.contact],
-        ["Email", item.email || ""], ["Phone", item.phone], ["Address", item.address], ["Country", item.country || ""],
-        ["Payment terms", item.paymentTerms], ["Credit status", item.creditStatus ? copy(item.creditStatus) : ""], ["Status", copy(item.status)],
-      ])),
-    },
     warehouses: {
       filename: "master-data-warehouse-bins-export.csv",
       rows: () => (data.warehouses || []).map((item) => row([
@@ -64,6 +54,16 @@ export function exportMasterDataCsv(
       rows: () => (data.paymentTerms || []).map((item) => row([
         ["Term code", item.code], ["Term name", item.name], ["Net days", item.netDays], ["Discount rule", item.discountRule],
         ["Due date rule", item.dueDateRule], ["Status", copy(item.status)], ["Description", item.description],
+      ])),
+    },
+    // The customer list as it reads (product review 2026-11-20, item 30);
+    // credit and record status in the interface language, values as stored.
+    customers: {
+      filename: "master-data-customers-export.csv",
+      rows: () => (data.customers || []).map((item) => row([
+        ["Customer code", item.code], ["Customer name", item.name], ["Currency", item.currency || ""], ["Contact", item.contact],
+        ["Email", item.email || ""], ["Phone", item.phone], ["Address", item.address], ["Country", item.country || ""],
+        ["Payment terms", item.paymentTerms], ["Credit status", item.creditStatus ? copy(item.creditStatus) : ""], ["Status", copy(item.status)],
       ])),
     },
   };
