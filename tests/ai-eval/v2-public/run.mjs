@@ -130,7 +130,9 @@ const rateLimited = (answer) => answer.status === 429 || [...answer.errors, ...a
 async function orderFor(session, spec) {
   const orders = await (await fetch(`${base}/api/purchase-orders`, { headers: session.auth })).json().catch(() => [])
   const today = DAY_IN_LONDON.format(new Date())
-  const due = (row) => String(row.expectedDate || row.dueDate || row.promisedDate || '').slice(0, 10)
+  // The list's due day (dueDay, expectedDeliveryDate since the list pages'
+  // rework; the older names kept for an older server).
+  const due = (row) => String(row.dueDay || row.expectedDeliveryDate || row.expectedDate || row.dueDate || row.promisedDate || '').slice(0, 10)
   const match = (Array.isArray(orders) ? orders : [])
     .filter((row) => JSON.stringify([row.supplierName, row.supplier]).toLowerCase().includes(String(spec.supplier).toLowerCase()))
     .filter((row) => ['issued', 'partially_received', 'sent'].includes(String(row.status || '').toLowerCase()) && (!spec.late || (due(row) && due(row) < today)))
@@ -267,8 +269,15 @@ for (const testCase of cases) {
       }
     }
     // The panel's language goes with every turn; a case may expect another one
-    // the user asked for in their words ("用中文说").
-    for (const turn of testCase.turns) answers.push(await ask(session, threadId, turn, testCase.language, answers.at(-1) || null))
+    // the user asked for in their words ("用中文说"). A record a turn names that
+    // cannot be found fails that case, not the run.
+    try {
+      for (const turn of testCase.turns) answers.push(await ask(session, threadId, turn, testCase.language, answers.at(-1) || null))
+    } catch (error) {
+      results.push({ id: testCase.id, kind: testCase.kind, language: testCase.language, round, pass: false, checks: [{ name: 'asked', ok: false, detail: error.message }], turns: testCase.turns.map(turnText), seconds: 0, costUsd: 0, inputTokens: 0, tools: [], model: null, asked: session.email, answer: { text: '' }, earlier: [] })
+      console.log(`FAIL ${testCase.id.padEnd(26)} not asked: ${error.message}`)
+      continue
+    }
     const last = answers.at(-1)
     const score = scoreAnswer(last, testCase.expect, { language: testCase.expect?.language || testCase.language, answers })
     results.push({ id: testCase.id, kind: testCase.kind, language: testCase.language, round, pass: score.pass, checks: score.checks, turns: testCase.turns.map(turnText), seconds: Math.round(answers.reduce((total, row) => total + row.ms, 0) / 1000), costUsd: answers.reduce((total, row) => total + row.costUsd, 0), inputTokens: answers.reduce((total, row) => total + row.inputTokens, 0), tools: last.tools, model: last.model, asked: session.email, answer: last, earlier: answers.slice(0, -1).map((row) => ({ text: row.text, ui: row.ui.map((part) => part.component), refs: row.refs, tools: row.tools })) })
