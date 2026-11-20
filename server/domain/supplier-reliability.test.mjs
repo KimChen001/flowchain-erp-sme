@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { supplierReliabilityResponseSchema } from '../../shared/supplier-reliability-contract.mjs'
-import { buildSupplierReliability, createSupplierReliabilityReadService, supplierReplyOutcome } from './supplier-reliability.mjs'
+import { buildSupplierReliability, createSupplierReliabilityReadService, supplierReliabilityBucket } from './supplier-reliability.mjs'
 import { buildSupplierScorecard } from './supplier-scorecard.mjs'
 
 const window = { from: '2026-08-23', to: '2026-11-20' }
@@ -63,11 +63,22 @@ test('orders outside the window, not sent, cancelled or without a supplier are n
   assert.deepEqual([row.orders, row.revisions], [2, 2])
 })
 
-test('every reply is in one outcome, and the outcomes add up to the replies received', () => {
+// The outcome rule is the export's (supplier-reply-outcome.mjs, #398 review):
+// edits count on proposed lines only, against the dates the reply's
+// revisions wrote; nothing proposed is manual.
+test('every reply is in one outcome, edits judged on proposed lines only, and the outcomes add up to the replies received', () => {
+  const proposed = (lineId, date) => ({ outcome: 'proposed', purchaseOrderLineId: lineId, proposedDate: date })
+  const wrote = (replyId, lineId, date) => ({ replyId, purchaseOrderLineId: lineId, newDate: at(date), createdAt: at('2026-11-12') })
   const replies = [
-    reply('acme', 'recorded', { editedLines: 0, check: { lines: [{ outcome: 'proposed' }] }, decidedAt: at('2026-11-10') }),
-    reply('acme', 'recorded', { editedLines: 2, check: { lines: [{ outcome: 'needs_you' }] }, decidedAt: at('2026-11-11') }),
-    reply('acme', 'not_recorded', { reasonCode: 'wrong_reading', check: { lines: [{ outcome: 'proposed' }] } }),
+    reply('acme', 'recorded', { id: 'R-same', check: { lines: [proposed('L1', '2026-11-20')] }, decidedAt: at('2026-11-10') }),
+    reply('acme', 'recorded', { id: 'R-moved', check: { lines: [proposed('L1', '2026-11-20')] }, decidedAt: at('2026-11-11') }),
+    // Nothing proposed (every line needed the person): typed by hand.
+    reply('acme', 'recorded', { id: 'R-typed', readingStatus: 'ai_off', check: null, decidedAt: at('2026-11-11') }),
+    // A line filled by hand beside a proposal recorded as proposed: no edit.
+    reply('acme', 'recorded', { id: 'R-beside', check: { lines: [proposed('L1', '2026-11-20'), { outcome: 'needs_you', purchaseOrderLineId: 'L2', proposedDate: null }] }, decidedAt: at('2026-11-11') }),
+    // Recorded with no revisions found: never counted as unchanged.
+    reply('acme', 'recorded', { id: 'R-unknown', check: { lines: [proposed('L1', '2026-11-20')] }, decidedAt: at('2026-11-11') }),
+    reply('acme', 'not_recorded', { reasonCode: 'wrong_reading', check: { lines: [proposed('L1', '2026-11-20')] } }),
     reply('acme', 'not_recorded', { reasonCode: 'supplier_will_confirm' }),
     reply('acme', 'not_recorded', { reasonCode: 'something_new' }),
     reply('acme', 'needs_you', { readingStatus: 'ai_off', check: null }),
@@ -78,17 +89,23 @@ test('every reply is in one outcome, and the outcomes add up to the replies rece
     // A superseded paste is never a reply of its own.
     reply('acme', 'superseded'),
   ]
-  const row = build({ replies }).suppliers.acme.replies
-  assert.equal(row.received, 9)
-  assert.equal(row.read, 8)
-  assert.deepEqual(row.outcomes, { recordedUnchanged: 1, recordedEdited: 1, recordedManual: 0, notRecorded: { wrong_reading: 1, supplier_will_confirm: 1, other: 1 }, needsYou: 2, proposed: 1, nothingToRecord: 1 })
-  const { notRecorded, ...rest } = row.outcomes
-  assert.equal(Object.values(rest).reduce((a, b) => a + b, 0) + Object.values(notRecorded).reduce((a, b) => a + b, 0), row.received)
-  // Recorded unchanged, the dismissed wrong reading and the confirmed one: 3 of 8 read.
-  assert.deepEqual(row.withStatedDate, { count: 3, of: 8, share: 0.375 })
-  assert.equal(row.recorded, 2)
-  assert.equal(row.medianHoursToRecord, null)
-  assert.equal(supplierReplyOutcome({ state: 'superseded' }), null)
+  const replyRevisions = [
+    wrote('R-same', 'L1', '2026-11-20'),
+    wrote('R-moved', 'L1', '2026-11-22'),
+    wrote('R-typed', 'L1', '2026-11-25'),
+    wrote('R-beside', 'L1', '2026-11-20'), wrote('R-beside', 'L2', '2026-11-28'),
+  ]
+  const row = build({ replies, replyRevisions }).suppliers.acme.replies
+  assert.equal(row.received, 12)
+  assert.equal(row.read, 10)
+  assert.deepEqual(row.outcomes, { recordedUnchanged: 2, recordedEdited: 2, recordedManual: 1, notRecorded: { wrong_reading: 1, supplier_will_confirm: 1, other: 1 }, needsYou: 2, proposed: 1, nothingToRecord: 1 })
+  // Proposed or confirmed lines: the four with a proposal recorded, the
+  // dismissed wrong reading and the confirmed one, of the 10 read.
+  assert.deepEqual(row.withStatedDate, { count: 6, of: 10, share: 0.6 })
+  assert.equal(row.recorded, 5)
+  assert.equal(row.medianHoursToRecord, 24)
+  assert.equal(supplierReliabilityBucket({ state: 'superseded' }), null)
+  assert.deepEqual(supplierReliabilityBucket({ state: 'not_recorded', reasonCode: null }), { bucket: 'notRecorded', reason: 'other' })
 })
 
 test('the median hours to record appear from 5 recorded replies', () => {
@@ -159,4 +176,26 @@ test('on time stays measured against the original promise, whatever the revision
   assert.equal(reliability.suppliers.acme.revisions.revisions, 1)
   const source = readFileSync(new URL('./supplier-scorecard.mjs', import.meta.url), 'utf8')
   for (const word of ['supplierReply', 'purchaseOrderPromiseRevision', 'supplier-reliability']) assert.equal(source.includes(word), false, word)
+})
+
+// A recorded reply's dates come from its revisions: by revisionIds, else by
+// the revision audit rows whose origin is the reply, so the outcome is never
+// left as "recorded, dates unknown".
+test('the service finds a recorded reply\'s dates by its revisionIds, else by the audit rows\' origin', async () => {
+  const { prisma, actor } = standIn()
+  const proposedLine = { outcome: 'proposed', purchaseOrderLineId: 'PO-1-L1', proposedDate: '2026-11-25' }
+  prisma.supplierReply.findMany = async () => [
+    reply('acme', 'recorded', { id: 'R-ids', revisionIds: ['REV-1'], check: { lines: [proposedLine] } }),
+    reply('acme', 'recorded', { id: 'R-audit', revisionIds: null, check: { lines: [proposedLine] } }),
+  ]
+  const asked = []
+  prisma.auditLog = { findMany: async (query) => { asked.push(query.where); return [{ metadata: { revisionId: 'REV-2', origin: { type: 'supplier_reply', id: 'R-audit' } } }] } }
+  const orderRevisions = prisma.purchaseOrderPromiseRevision.findMany
+  prisma.purchaseOrderPromiseRevision.findMany = async (query) => (query.where.id
+    ? [{ id: 'REV-1', purchaseOrderLineId: 'PO-1-L1', newDate: at('2026-11-25'), createdAt: at('2026-11-12') }, { id: 'REV-2', purchaseOrderLineId: 'PO-1-L1', newDate: at('2026-11-27'), createdAt: at('2026-11-13') }].filter((row) => query.where.id.in.includes(row.id))
+    : orderRevisions(query))
+  const result = supplierReliabilityResponseSchema.parse(await createSupplierReliabilityReadService({ prisma, now: () => new Date('2026-11-20T12:00:00Z') }).read({ actor }))
+  // R-ids recorded as proposed; R-audit at 27 Nov instead of 25 Nov.
+  assert.deepEqual([result.suppliers.acme.replies.outcomes.recordedUnchanged, result.suppliers.acme.replies.outcomes.recordedEdited], [1, 1])
+  assert.deepEqual(asked, [{ tenantId: 't1', action: 'purchase_order_promise_revised', OR: [{ metadata: { path: ['origin', 'id'], equals: 'R-audit' } }] }])
 })
