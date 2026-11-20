@@ -36,6 +36,7 @@ import { handleReceivingRoute } from "../routes/receiving.routes.mjs";
 import { handleReportViewsRoute } from "../routes/report-views.routes.mjs";
 import { handleDecisionItemsRoute } from "../routes/decision-items.routes.mjs";
 import { handleSupplierRepliesRoute } from "../routes/supplier-replies.routes.mjs";
+import { handleSupplierReplyExportRoute } from "../routes/supplier-reply-export.routes.mjs";
 import { handleReportsAnalyticsRoute } from "../routes/reports-analytics.routes.mjs";
 import { handleReviewFirstActionWorkflowRoute } from "../routes/review-first-action-workflow.routes.mjs";
 import { handleRfqsRoute } from "../routes/rfqs.routes.mjs";
@@ -72,6 +73,8 @@ const orderedRouteHandlers = Object.freeze([
   handleReportsAnalyticsRoute,
   handlePilotImportRoute,
   handlePilotOperationsRoute,
+  // The supplier reply outcome export (Settings, settings.export.read).
+  handleSupplierReplyExportRoute,
   handleReportViewsRoute,
   handleReviewFirstActionWorkflowRoute,
   handlePilotWorkspaceRoute,
