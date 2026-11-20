@@ -81,9 +81,16 @@ test.describe("promised dates and supplier replies on Supplier evaluation", () =
     await expect(block).toContainText("Promised dates and supplier replies, 90 days");
     await expect(page.getByTestId("supplier-reliability-note")).toContainText("A measure of its own: on time and OTIF above stay on each order's original promise.");
     // Below the indicator table, whose on time and OTIF columns are as before.
-    const tableBox = await page.getByTestId("supplier-evaluation-table").boundingBox();
+    // A long table scrolls inside a box at most a window tall (src/styles/theme.css,
+    // list tables from 640 px), so the block is measured against that box: the
+    // table's own box runs on below it while its rows scroll.
+    const scrollBox = page.getByTestId("supplier-evaluation-table").locator("xpath=..");
+    await expect(scrollBox).toHaveClass(/overflow-x-auto/);
+    const tableBox = await scrollBox.boundingBox();
     const blockBox = await block.boundingBox();
     expect(blockBox!.y).toBeGreaterThan(tableBox!.y + tableBox!.height);
+    // Not inside the indicator table's card either.
+    await expect(page.getByTestId("supplier-evaluation-table").locator("xpath=ancestor::*[@data-testid='supplier-reliability']")).toHaveCount(0);
     await expect(page.getByTestId("supplier-evaluation-table").locator("thead th")).toContainText(["On time, 90 days", "OTIF, 90 days"]);
     await expect(block.locator("thead th")).toHaveText(["Supplier code", "Supplier name", "Orders due", "Date changes per order", "Average days moved", "Replies received", "Replies with a date", "Reply outcomes"]);
     await expect(block.locator("thead th").nth(3)).toHaveAttribute("title", /A first promise is not a change\./);
