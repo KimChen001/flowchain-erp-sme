@@ -1,4 +1,4 @@
-import { buildPurchaseOrderDocument } from "../../shared/business-documents.mjs";
+import { buildPurchaseOrderDocument, supplierPaymentTerms } from "../../shared/business-documents.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { listItemSupplierRecords, mapItemSupplierRecord } from "./master-data-commands.mjs";
 import { mergeOperationalSettings } from "./workspace-settings-contract.mjs";
@@ -30,11 +30,15 @@ export function createPurchaseOrderDocumentReadService({ prisma, env = process.e
       supplierId ? listItemSupplierRecords(client, tenantId, { supplierId }) : [],
     ]);
     const settings = mergeOperationalSettings(tenant?.operationalSettings).documents;
+    // The workspace's payment terms, to print a recorded term by its name;
+    // read only when the supplier has one recorded.
+    const paymentTerms = supplierPaymentTerms(supplier) ? await client.paymentTerm.findMany({ where: { tenantId }, select: { id: true, code: true, name: true } }) : [];
     return buildPurchaseOrderDocument({
       order,
       supplier,
       warehouse,
       supplierSkus: links.map((row) => mapItemSupplierRecord(row)),
+      paymentTerms,
       letterhead: settings.letterhead,
       template: settings.purchaseOrder,
       documentLanguage: settings.documentLanguage,
