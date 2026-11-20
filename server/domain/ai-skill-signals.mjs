@@ -107,16 +107,21 @@ export function buildAiSkillSignals(facts) {
   // covered, as Today and the inventory pages decide them
   // (shared/inventory-stock-signals.mjs): the stock position there counts
   // open purchase requests and draft orders. An item the list could not
-  // judge, or facts without it, keep the stock record's own status
-  // (product review 2026-11-20, item 8).
+  // facts without the list keep the stock record's own status (product
+  // review 2026-11-20, item 8). An item the list could not judge (a reader
+  // who sees only some warehouses) is "not checked" there, as on Today: it
+  // gets no "below the reorder point" row and is never "covered" (#409
+  // review). An item with no row is above its reorder point, with no
+  // incoming stock counted, as the shared rule reads it.
   const reorderRows = Array.isArray(facts.reorder?.rows) ? new Map(facts.reorder.rows.map((entry) => [String(entry?.sku ?? '').trim(), entry])) : null
   const notJudged = new Set(array(facts.reorder?.notJudged).map((entry) => String(entry?.sku ?? '').trim()))
   for (const row of array(facts.inventory?.rows)) {
     const covered = projection(facts, row.sku, row.incomingApprovedPo)
-    const judged = Boolean(reorderRows) && !notJudged.has(String(row.sku ?? '').trim())
+    const listRead = Boolean(reorderRows)
+    const judged = listRead && !notJudged.has(String(row.sku ?? '').trim())
     const listed = judged ? reorderRows.get(String(row.sku ?? '').trim()) || null : null
-    const orderNow = judged ? Boolean(listed?.orderNow) : row.stockStatus === 'below_reorder_point'
-    const incoming = Number(listed?.incoming ?? row.incomingApprovedPo ?? 0) || 0
+    const orderNow = listRead ? judged && Boolean(listed?.orderNow) : row.stockStatus === 'below_reorder_point'
+    const incoming = Number(listed?.incoming ?? 0) || 0
     const data = { sku: row.sku, itemName: row.itemName, unit: row.unit ?? null, available: row.available, demand: row.openSalesDemand, shortage: row.shortage, incoming: row.incomingApprovedPo, atp: row.availableToPromise, safety: row.safetyStock, reorder: row.reorderPoint, pendingRequests: covered.pendingRequests, purchaseOrderIds: row.purchaseOrderIds, minimum: row.orderMinimum?.quantity ?? null, minimumSupplier: row.orderMinimum?.supplier ?? null }
     if (row.shortage !== null && row.shortage > 0) signals.push(signal('stock_shortage', 'item', row.itemId, row.sku, { ...data, covered: (row.incomingApprovedPo ?? 0) >= row.shortage }))
     if (['out_of_stock', 'below_safety_stock'].includes(row.stockStatus)) {
@@ -124,7 +129,7 @@ export function buildAiSkillSignals(facts) {
       // coming (the inventory pages' "covered by open orders"); without the
       // list, what is available, coming and requested reaches the safety
       // stock.
-      const isCovered = judged ? !orderNow && incoming > 0 : row.safetyStock !== null && (row.available ?? 0) + (row.incomingApprovedPo ?? 0) + covered.pendingRequests >= row.safetyStock
+      const isCovered = listRead ? judged && !orderNow && incoming > 0 : row.safetyStock !== null && (row.available ?? 0) + (row.incomingApprovedPo ?? 0) + covered.pendingRequests >= row.safetyStock
       signals.push(signal('stock_below_safety', 'item', row.itemId, row.sku, { ...data, covered: isCovered }))
     } else if (orderNow) signals.push(signal('stock_below_reorder', 'item', row.itemId, row.sku, { ...data, covered: false }))
   }

@@ -565,7 +565,7 @@ export async function readAiSkillFacts(skillContext, { openPurchaseRequests = fa
     const holds = (permission) => can({ actor, permission, tenantId })
     const standing = holds(APPROVAL_KINDS.purchase_request.permission) ? await approverStanding(prisma, actor, holds, ['purchase_request']) : null
     const approvable = new Set(array(business.purchaseRequests).filter((row) => text(row.status) === 'submitted'
-      && mayApprove(standing, 'purchase_request', array(row.approvalAuthorIds).length ? row.approvalAuthorIds : [row.requesterId, row.requester])).map((row) => text(row.id)))
+      && mayApprove(standing, 'purchase_request', Array.isArray(row.approvalAuthorIds) ? row.approvalAuthorIds : [row.requesterId, row.requester])).map((row) => text(row.id)))
     facts.purchaseRequests.toApprove = facts.purchaseRequests.awaitingApproval.filter((row) => approvable.has(row.id))
     if (openPurchaseRequests) {
       facts.purchaseRequests.open = array(business.purchaseRequests).filter((row) => OPEN_PURCHASE_REQUEST_STATUSES.includes(text(row.status))).map((row) => ({

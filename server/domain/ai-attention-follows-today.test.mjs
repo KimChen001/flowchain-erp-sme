@@ -24,15 +24,16 @@ const signalsOf = (reorder) => buildAiSkillSignals({ asOf: '2026-09-29', invento
 const byType = (signals, type) => signals.filter((row) => row.type === type).map((row) => row.label).sort()
 const coveredOf = (signals, sku) => signals.find((row) => row.type === 'stock_below_safety' && row.label === sku)?.data.covered
 
-test('"below the reorder point" follows the reorder list\'s order now; an item it cannot judge keeps the stock status', () => {
+test('"below the reorder point" follows the reorder list\'s order now; an item it cannot judge is not checked', () => {
   const reorder = {
     rows: [{ sku: 'A', orderNow: false, incoming: 0 }, { sku: 'B', orderNow: true, incoming: 0 }, { sku: 'D', orderNow: false, incoming: 20 }, { sku: 'E', orderNow: true, incoming: 0 }],
     notJudged: [{ sku: 'C' }],
   }
   const signals = signalsOf(reorder)
   // A: an open request covers it on the list; B: the list asks for an order
-  // though the stock record's status is fine; C: not judged, its status holds.
-  assert.deepEqual(byType(signals, 'stock_below_reorder'), ['B', 'C'])
+  // though the stock record's status is fine; C: not judged, so not checked,
+  // as on Today (#409 review), whatever its stock status says.
+  assert.deepEqual(byType(signals, 'stock_below_reorder'), ['B'])
   // Below safety stock on hand either way; covered when the list asks for no
   // order and stock is coming, as the inventory pages say.
   assert.deepEqual(byType(signals, 'stock_below_safety'), ['D', 'E'])
@@ -88,4 +89,12 @@ test('attention_list reads the reorder list once per answer and ranks stock by i
   assert.deepEqual(below.rows.map((row) => row.label), [fine.sku])
   await run({ kind: 'today' })
   assert.equal(reads, 1)
+})
+
+// #409 review: an item with no row on the list counts no incoming stock (the
+// shared rule), and one the list could not judge is never "covered".
+test('stock under its safety level is covered only by the list\'s own row', () => {
+  const below = [stock('F', 'below_safety_stock', { available: 5, incomingApprovedPo: 30 }), stock('G', 'below_safety_stock', { available: 5, incomingApprovedPo: 30 })]
+  const signals = buildAiSkillSignals({ asOf: '2026-09-29', inventory: { rows: below }, reorder: { rows: [], notJudged: [{ sku: 'G' }] } })
+  assert.deepEqual([coveredOf(signals, 'F'), coveredOf(signals, 'G')], [false, false])
 })
