@@ -4,6 +4,7 @@ import { resolveProvisionedActor } from './pilot-identity.mjs'
 import { currentPromisedDay, promiseDay } from './purchase-order-promise-dates.mjs'
 import { reportReadAccessFor } from './report-read-access.mjs'
 import { supplierReplyOutcome, supplierReplyRecordedDates } from './supplier-reply-outcome.mjs'
+import { readRecordedReplyRevisions } from './supplier-reply-revisions.mjs'
 import { daysBetween, localDay, scorecardParameters, scorecardPurchaseOrderStanding } from './supplier-scorecard.mjs'
 
 // Supplier reliability (docs/supplier-reply-dates-design.md §4.12, SR-7):
@@ -178,26 +179,6 @@ export function buildSupplierReliability({ suppliers = [], purchaseOrders = [], 
 }
 
 const UNMEASURED_STATUSES = ['draft', 'pending_approval', 'rejected', 'cancelled']
-const array = (value) => (Array.isArray(value) ? value : [])
-
-// The promise revisions each recorded reply wrote, with its id: by the
-// reply's revisionIds, else by the revision audit rows whose origin is the
-// reply (as the service finds a record already written).
-async function recordedReplyRevisions(prisma, tenantId, replies) {
-  const recorded = replies.filter((reply) => text(reply.state) === 'recorded')
-  if (!recorded.length) return []
-  const owner = new Map()
-  for (const reply of recorded) for (const id of array(reply.revisionIds).map(text).filter(Boolean)) owner.set(id, text(reply.id))
-  const unknown = recorded.filter((reply) => !array(reply.revisionIds).length).map((reply) => text(reply.id))
-  if (unknown.length) {
-    const rows = await prisma.auditLog.findMany({ where: { tenantId, action: 'purchase_order_promise_revised', OR: unknown.map((id) => ({ metadata: { path: ['origin', 'id'], equals: id } })) }, select: { metadata: true } })
-    for (const row of array(rows)) if (text(row.metadata?.revisionId)) owner.set(text(row.metadata.revisionId), text(row.metadata?.origin?.id))
-  }
-  if (!owner.size) return []
-  const rows = await prisma.purchaseOrderPromiseRevision.findMany({ where: { tenantId, id: { in: [...owner.keys()] } }, select: { id: true, purchaseOrderLineId: true, newDate: true, createdAt: true } })
-  return array(rows).map((row) => ({ ...row, replyId: owner.get(text(row.id)) }))
-}
-
 export function createSupplierReliabilityReadService({ prisma, now = () => new Date() } = {}) {
   if (!prisma) throw new Error('prisma is required')
   return {
@@ -230,7 +211,8 @@ export function createSupplierReliabilityReadService({ prisma, now = () => new D
       const revisions = ids.length
         ? await prisma.purchaseOrderPromiseRevision.findMany({ where: { tenantId, purchaseOrderId: { in: ids }, previousDate: { not: null } }, select: { purchaseOrderId: true, previousDate: true, newDate: true } })
         : []
-      const replyRevisions = await recordedReplyRevisions(prisma, tenantId, replies)
+      // The dates recorded replies wrote, found as record_history finds them.
+      const replyRevisions = await readRecordedReplyRevisions(prisma, tenantId, replies)
       return buildSupplierReliability({ suppliers, purchaseOrders, revisions, replies, replyRevisions, window, asOf, visibility })
     },
   }

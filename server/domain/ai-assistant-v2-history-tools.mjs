@@ -2,6 +2,8 @@ import { AI_TOOL_LIMITS, aiStockSku, aiToolList, aiToolPurchaseOrder, aiToolRef,
 import { createInventoryAuthoritativeReadService } from './inventory-authoritative-read-service.mjs'
 import { reportReadAccessFor } from './report-read-access.mjs'
 import { addCalendarDays } from '../../shared/purchase-request-prefill.mjs'
+import { supplierReplyRecordedDates } from './supplier-reply-outcome.mjs'
+import { readRecordedReplyRevisions } from './supplier-reply-revisions.mjs'
 
 // What happened to stock and to sales orders, for questions the assistant
 // answered as "not recorded" though the app records them (design audit
@@ -136,15 +138,24 @@ async function historyRecord(record, { facts, context }) {
 // Supplier replies on a purchase order's history (#363 §4.10: "What did Acme
 // say about PO-0012?" is answered from the history, with no new tool). Their
 // audit rows keep only codes ("…: proposed."), so each reply a row names is
-// read here, at read time, and set once on the row that pasted it (else the
-// newest row that names it): the day it was received, per line the SKU with
+// read here, at read time: the day it was received, per line the SKU with
 // the day it gave or why it went to the person, the supplier's short quote,
-// and the decision with its reason. Values the reading gave that the reply
-// does not hold (dropped lines) are left out. SKUs come from the order as the
-// reader's facts hold it. supplierReplies counts the order's replies, so
-// "none recorded" is said, not guessed.
-const REPLY_DETAILS = AI_TOOL_LIMITS.items
+// the dates recorded, and the decision with its reason. Values the reading
+// gave that the reply does not hold (dropped lines) are left out. SKUs come
+// from the order as the reader's facts hold it. supplierReplies counts the
+// order's replies, so "none recorded" is said, not guessed.
+//
+// Each reply's details go once on a row the result shows (the first
+// AI_TOOL_LIMITS.rows): its paste, else the newest shown row naming it. A
+// reply named only by rows past those is listed in earlierReplies. The newest
+// replies are given in detail up to REPLY_DETAIL_CHARS, so the result stays
+// well under the tool result limit (24,000 characters); replyDetails says how
+// many were (#400 review).
+const REPLY_READ = AI_TOOL_LIMITS.items
+const REPLY_DETAIL_CHARS = 8000
+const SHOWN_ROWS = AI_TOOL_LIMITS.rows
 const dayText = (value) => (value instanceof Date ? value.toISOString().slice(0, 10) : text(value).slice(0, 10)) || null
+const atText = (value) => (value instanceof Date ? value.toISOString() : text(value)).slice(0, 16) || null
 const isReplyRow = (row) => text(row.action).startsWith('supplier_reply_') && Boolean(text(row.metadata?.replyId))
 function replyLine(line, skuOf) {
   const sku = skuOf(line.purchaseOrderLineId) || text(line.ref) || null
@@ -156,22 +167,21 @@ function replyLine(line, skuOf) {
     ...(line.quote ? { quote: text(line.quote).slice(0, AI_TOOL_LIMITS.text) } : {}),
   }
 }
-async function supplierReplyDetails(rows, { context, found }) {
-  const ids = [...new Set(rows.filter(isReplyRow).map((row) => text(row.metadata.replyId)))].slice(0, REPLY_DETAILS)
+// The details of the replies the rows name, newest first, as a Map by id.
+async function supplierReplyDetails(ids, { context, found }) {
   if (!ids.length) return new Map()
   const replies = array(await context.prisma.supplierReply.findMany({
     where: { tenantId: context.tenantId, purchaseOrderId: found.id, id: { in: ids } },
     select: { id: true, receivedOn: true, source: true, state: true, readingStatus: true, check: true, decision: true, reasonCode: true, note: true, revisionIds: true },
   }))
-  const revisionIds = replies.flatMap((reply) => array(reply.revisionIds).map(text)).filter(Boolean)
-  const revisions = revisionIds.length
-    ? array(await context.prisma.purchaseOrderPromiseRevision.findMany({ where: { tenantId: context.tenantId, purchaseOrderId: found.id, id: { in: revisionIds } }, select: { id: true, purchaseOrderLineId: true, newDate: true } }))
-    : []
+  // The dates each recorded reply wrote, found as the reliability measure
+  // finds them.
+  const revisions = await readRecordedReplyRevisions(context.prisma, context.tenantId, replies)
   const lines = [...array(found.order?.openLines), ...array(found.order?.closedLines)]
   const skuOf = (lineId) => text(lines.find((line) => text(line.lineId) === text(lineId))?.sku) || null
-  return new Map(replies.map((reply) => {
-    const own = new Set(array(reply.revisionIds).map(text))
-    const recorded = revisions.filter((row) => own.has(text(row.id))).map((row) => ({ sku: skuOf(row.purchaseOrderLineId), date: dayText(row.newDate) }))
+  const byId = new Map(replies.map((reply) => {
+    const dates = supplierReplyRecordedDates(revisions.filter((row) => row.replyId === reply.id))
+    const recorded = [...dates].slice(0, AI_TOOL_LIMITS.items).map(([lineId, date]) => ({ sku: skuOf(lineId), date }))
     return [reply.id, {
       received: text(reply.receivedOn) || null,
       ...(text(reply.source) && reply.source !== 'paste' ? { source: reply.source } : {}),
@@ -182,16 +192,28 @@ async function supplierReplyDetails(rows, { context, found }) {
       ...(reply.decision ? { decision: { option: text(reply.decision), ...(reply.reasonCode ? { reason: text(reply.reasonCode) } : {}), ...(text(reply.note) ? { note: text(reply.note).slice(0, AI_TOOL_LIMITS.text) } : {}) } } : {}),
     }]
   }))
+  return new Map(ids.filter((id) => byId.has(id)).map((id) => [id, byId.get(id)]))
 }
-// The row each reply's details go on: the paste, else the newest naming it.
-function replyHomes(rows) {
+// Where each reply's details go: { homes: row index -> id, earlier: [{ at,
+// ...details }], detailed, of }. Newest replies first, within the budget.
+function placeReplyDetails(rows, details) {
+  const shown = Math.min(rows.length, SHOWN_ROWS)
   const homes = new Map()
-  for (const [index, row] of rows.entries()) {
-    if (!isReplyRow(row)) continue
-    const id = text(row.metadata.replyId)
-    if (!homes.has(id) || row.action === 'supplier_reply_pasted') homes.set(id, index)
+  const earlier = []
+  let used = 0
+  let detailed = 0
+  for (const [id, detail] of details) {
+    const size = JSON.stringify(detail).length
+    if (detailed && used + size > REPLY_DETAIL_CHARS) continue
+    used += size
+    detailed += 1
+    const naming = [...rows.entries()].filter(([, row]) => isReplyRow(row) && text(row.metadata.replyId) === id)
+    const paste = naming.find(([, row]) => row.action === 'supplier_reply_pasted')
+    const home = paste && paste[0] < shown ? paste[0] : naming.find(([index]) => index < shown)?.[0]
+    if (home !== undefined) homes.set(home, id)
+    else earlier.push({ at: atText((paste || naming[0])[1].createdAt), ...detail })
   }
-  return new Map([...homes].map(([id, index]) => [index, id]))
+  return { homes, earlier, detailed }
 }
 
 // Who changed a record and when, newest first, from the audit log (design
@@ -220,19 +242,22 @@ const recordHistory = defineAiTool({
       order ? context.prisma.supplierReply.count({ where: { tenantId: context.tenantId, purchaseOrderId: found.id, state: { not: 'superseded' } } }) : null,
     ])
     const rows = array(read).slice(0, HISTORY_READ)
-    const replies = order ? await supplierReplyDetails(rows, { context, found }) : new Map()
-    const homes = replyHomes(rows)
+    const named = [...new Set(rows.filter(isReplyRow).map((row) => text(row.metadata.replyId)))]
+    const details = order ? await supplierReplyDetails(named.slice(0, REPLY_READ), { context, found }) : new Map()
+    const { homes, earlier, detailed } = placeReplyDetails(rows, details)
     return {
       record: found.label,
       kind: found.kind,
       ref: aiToolRef(found.kind, found.id, found.label),
       ...(order ? { supplierReplies } : {}),
+      ...(detailed < named.length ? { replyDetails: { detailed, of: named.length } } : {}),
+      ...(earlier.length ? { earlierReplies: earlier } : {}),
       ...(array(read).length > HISTORY_READ ? { partial: { limit: HISTORY_READ } } : {}),
       ...aiToolList(rows.map((row, index) => {
         const before = row.metadata?.before, after = row.metadata?.after
-        const reply = homes.has(index) ? replies.get(homes.get(index)) : null
+        const reply = homes.has(index) ? details.get(homes.get(index)) : null
         return {
-          at: (row.createdAt instanceof Date ? row.createdAt.toISOString() : text(row.createdAt)).slice(0, 16) || null,
+          at: atText(row.createdAt),
           action: text(row.action) || null, summary: text(row.summary).slice(0, AI_TOOL_LIMITS.text) || null, by: text(row.actor?.name) || null,
           ...(sensitive && (before !== undefined || after !== undefined) ? { before: before ?? null, after: after ?? null } : {}),
           ...(reply ? { reply } : {}),
