@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { orderedCurrencyCodes } from "../../lib/currencyOptions";
 import { useWorkspaceCurrency } from "../../lib/useWorkspaceCurrency";
-import { linkedFieldOptions, type LinkedOption } from "./linkedFieldOptions";
+import { linkedFieldOptions, paymentTermOptions, type LinkedOption } from "./linkedFieldOptions";
 import { toast } from "sonner";
 import { Copy, Eye } from "lucide-react";
 import { ApiError, apiJson } from "../../lib/api-client";
@@ -60,7 +60,7 @@ function CustomerForm({ customer = null, onSaved, onCancel }: { customer?: Custo
   const [termOptions, setTermOptions] = useState<LinkedOption[] | null>([]);
   useEffect(() => {
     apiJson<{ options?: Array<{ id: string; code?: string; label?: string }> }>("/api/master-data/payment-terms/select")
-      .then((result) => setTermOptions((result.options || []).map((option) => ({ value: option.code || option.id, label: option.label && option.label !== (option.code || option.id) ? `${option.label} (${option.code || option.id})` : option.code || option.id }))))
+      .then((result) => setTermOptions(paymentTermOptions(result.options)))
       .catch(() => setTermOptions(null));
   }, []);
   const choices = (key: CustomerField): LinkedOption[] | null =>

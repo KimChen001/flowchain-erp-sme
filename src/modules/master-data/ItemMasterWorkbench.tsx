@@ -34,7 +34,7 @@ import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { apiErrorText } from "../../lib/apiErrorText";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import { ItemStockAndOrders } from "./ItemStockAndOrders";
-import { linkedFieldOptions, type LinkedOption } from "./linkedFieldOptions";
+import { linkedFieldOptions, taxCodeOptions as taxCodeOptionsOf, warehouseOptions as warehouseOptionsOf, type LinkedOption } from "./linkedFieldOptions";
 
 export type MasterItem = {
   itemId: string;
@@ -224,11 +224,12 @@ export default function ItemMasterWorkbench({
   const [warehouseOptions, setWarehouseOptions] = useState<LinkedOption[] | null>([]);
   const [taxCodeOptions, setTaxCodeOptions] = useState<LinkedOption[] | null>([]);
   useEffect(() => {
-    apiJson<{ warehouses?: Array<{ id: string; code?: string; name?: string; status?: string }> }>("/api/master-data/warehouses")
-      .then((result) => setWarehouseOptions((result.warehouses || []).filter((row) => row.id && (row.status || "active") === "active").map((row) => ({ value: row.id, label: [row.code, row.name].filter(Boolean).join(" · ") || row.id }))))
+    apiJson<{ warehouses?: Array<{ id?: string; code?: string; name?: string; status?: string }> }>("/api/master-data/warehouses")
+      .then((result) => setWarehouseOptions(warehouseOptionsOf(result.warehouses)))
       .catch(() => setWarehouseOptions(null));
-    apiJson<{ taxCodes?: Array<{ code: string; name?: string; status?: string }> }>("/api/master-data/tax-codes")
-      .then((result) => setTaxCodeOptions((result.taxCodes || []).filter((row) => row.code && (row.status || "active") === "active").map((row) => ({ value: row.code, label: [row.code, row.name].filter(Boolean).join(" · ") }))))
+    // { id: the tax code, label: its name } (mapTaxCode), stored by code.
+    apiJson<{ taxCodes?: Array<{ id?: string; label?: string; status?: string }> }>("/api/master-data/tax-codes")
+      .then((result) => setTaxCodeOptions(taxCodeOptionsOf(result.taxCodes)))
       .catch(() => setTaxCodeOptions(null));
   }, []);
   // Supplier names for the preferred supplier column; ids when unavailable.
