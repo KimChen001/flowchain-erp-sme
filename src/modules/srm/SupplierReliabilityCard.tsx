@@ -9,7 +9,7 @@ import { formatCalendarDay } from "../../lib/format";
 import { SUPPLIER_RELIABILITY_ROUTE, supplierReliabilityResponseSchema } from "../../../shared/supplier-reliability-contract.mjs";
 import { supplierCopy } from "./supplierCopy";
 import {
-  notRecordedReplies, openReplies, recordedReplies, reliabilityRows,
+  manualReplies, notRecordedReplies, openReplies, recordedReplies, reliabilityRows,
   type ReliabilityReplies, type ReliabilityRevisions, type SupplierReliability,
 } from "./supplierReliability";
 
@@ -97,6 +97,7 @@ export function SupplierReliabilityCard({ suppliers, loadKey = 0 }: { suppliers:
     const lines = [
       t("Recorded as read: {n}", { n: outcomes.recordedUnchanged }),
       t("Recorded after an edit: {n}", { n: outcomes.recordedEdited }),
+      t("Recorded by hand: {n}", { n: outcomes.recordedManual }),
       t("Not recorded, wrong reading: {n}", { n: outcomes.notRecorded.wrong_reading }),
       t("Not recorded, supplier will confirm: {n}", { n: outcomes.notRecorded.supplier_will_confirm }),
       t("Not recorded, other reason: {n}", { n: outcomes.notRecorded.other }),
@@ -109,6 +110,7 @@ export function SupplierReliabilityCard({ suppliers, loadKey = 0 }: { suppliers:
     ];
     const summary = [
       t("{n} recorded", { n: recordedReplies(outcomes) }),
+      manualReplies(outcomes) ? t("{n} recorded by hand", { n: manualReplies(outcomes) }) : null,
       notRecordedReplies(outcomes) ? t("{n} not recorded", { n: notRecordedReplies(outcomes) }) : null,
       openReplies(outcomes) ? t("{n} open", { n: openReplies(outcomes) }) : null,
     ].filter(Boolean).join(" · ");

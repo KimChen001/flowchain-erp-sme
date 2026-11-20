@@ -1,8 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { SUPPLIER_RELIABILITY_CONTRACT_VERSION, supplierReliabilityResponseSchema } from '../../shared/supplier-reliability-contract.mjs'
-import { notRecordedReplies, openReplies, recordedReplies, reliabilityRows } from '../../src/modules/srm/supplierReliability.ts'
+import { SUPPLIER_RELIABILITY_CONTRACT_VERSION, supplierReliabilityOutcomesSchema, supplierReliabilityResponseSchema } from '../../shared/supplier-reliability-contract.mjs'
+import { manualReplies, notRecordedReplies, openReplies, recordedReplies, reliabilityRows } from '../../src/modules/srm/supplierReliability.ts'
 import { supplierCopy, supplierCopyPairs } from '../../src/modules/srm/supplierCopy.ts'
 
 // The promised dates and supplier replies block on Supplier evaluation
@@ -14,9 +14,9 @@ const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), '
 const card = read('src/modules/srm/SupplierReliabilityCard.tsx')
 const page = read('src/modules/srm/SupplierEvaluationPage.tsx')
 
-const outcomes = { recordedUnchanged: 2, recordedEdited: 1, notRecorded: { wrong_reading: 1, supplier_will_confirm: 1, other: 0 }, needsYou: 1, proposed: 1, nothingToRecord: 1 }
+const outcomes = { recordedUnchanged: 2, recordedEdited: 1, recordedManual: 1, notRecorded: { wrong_reading: 1, supplier_will_confirm: 1, other: 0 }, needsYou: 1, proposed: 1, nothingToRecord: 1 }
 const revisions = (orders, over = {}) => ({ orders, revisedOrders: 0, revisions: 0, perOrder: orders >= 5 ? 0 : null, averageDaysMoved: null, movedLater: { count: 0, of: 0, share: null }, ...over })
-const replies = (received, over = {}) => ({ received, read: received, withStatedDate: { count: 0, of: received, share: null }, outcomes: { ...outcomes, recordedUnchanged: 0, recordedEdited: 0, notRecorded: { wrong_reading: 0, supplier_will_confirm: 0, other: 0 }, needsYou: 0, proposed: 0, nothingToRecord: received }, recorded: 0, medianHoursToRecord: null, ...over })
+const replies = (received, over = {}) => ({ received, read: received, withStatedDate: { count: 0, of: received, share: null }, outcomes: { ...outcomes, recordedUnchanged: 0, recordedEdited: 0, recordedManual: 0, notRecorded: { wrong_reading: 0, supplier_will_confirm: 0, other: 0 }, needsYou: 0, proposed: 0, nothingToRecord: received }, recorded: 0, medianHoursToRecord: null, ...over })
 const response = (suppliers, visibility = { revisions: true, replies: true }) => {
   const value = { contractVersion: SUPPLIER_RELIABILITY_CONTRACT_VERSION, asOf: '2026-11-20', window: { from: '2026-08-23', to: '2026-11-20', days: 90 }, minimumSample: 5, visibility, suppliers }
   assert.ok(supplierReliabilityResponseSchema.safeParse(value).success)
@@ -45,11 +45,19 @@ test('a part the reader may not read lists nobody by it', () => {
   assert.match(card, /const headers = \[\.\.\.\(showRevisions \? REVISION_HEADERS : \[\]\), \.\.\.\(showReplies \? REPLY_HEADERS : \[\]\)\];/)
 })
 
-test('reply outcomes group into recorded, not recorded and open, and add up to the replies received', () => {
+test('reply outcomes group into recorded, recorded by hand, not recorded and open, and add up to the replies received', () => {
   assert.equal(recordedReplies(outcomes), 3)
+  assert.equal(manualReplies(outcomes), 1)
   assert.equal(notRecordedReplies(outcomes), 2)
   assert.equal(openReplies(outcomes), 2)
-  assert.equal(recordedReplies(outcomes) + notRecordedReplies(outcomes) + openReplies(outcomes) + outcomes.nothingToRecord, 8)
+  assert.equal(recordedReplies(outcomes) + manualReplies(outcomes) + notRecordedReplies(outcomes) + openReplies(outcomes) + outcomes.nothingToRecord, 9)
+  // Every outcome the contract has is grouped, so none drops out of the cell.
+  const groups = { recordedUnchanged: 'recorded', recordedEdited: 'recorded', recordedManual: 'manual', notRecorded: 'not recorded', needsYou: 'open', proposed: 'open', nothingToRecord: 'tooltip' }
+  assert.deepEqual(Object.keys(supplierReliabilityOutcomesSchema.shape).sort(), Object.keys(groups).sort())
+  // Recorded by hand shows in the cell and in the tooltip.
+  assert.match(card, /t\("Recorded by hand: \{n\}", \{ n: outcomes\.recordedManual \}\)/)
+  assert.match(card, /manualReplies\(outcomes\) \? t\("\{n\} recorded by hand", \{ n: manualReplies\(outcomes\) \}\) : null/)
+  assert.equal(supplierCopy('{n} recorded by hand', 'zh-CN'), '手动记录 {n}')
 })
 
 test('every word on the block is in English and Chinese, with its placeholders', () => {

@@ -24,18 +24,20 @@ async function suppliersOf(request: APIRequestContext, auth: { headers: Record<s
   return suppliers;
 }
 
-const outcomes = { recordedUnchanged: 2, recordedEdited: 1, notRecorded: { wrong_reading: 1, supplier_will_confirm: 0, other: 0 }, needsYou: 1, proposed: 0, nothingToRecord: 1 };
+// Six replies, each in one outcome: 2 as read, 1 edited, 1 typed by hand
+// (nothing was proposed), 1 not recorded, 1 waiting for the person.
+const outcomes = { recordedUnchanged: 2, recordedEdited: 1, recordedManual: 1, notRecorded: { wrong_reading: 1, supplier_will_confirm: 0, other: 0 }, needsYou: 1, proposed: 0, nothingToRecord: 0 };
 const busy = {
   revisions: { orders: 8, revisedOrders: 3, revisions: 5, perOrder: 0.625, averageDaysMoved: 4.2, movedLater: { count: 4, of: 5, share: 0.8 } },
-  replies: { received: 6, read: 5, withStatedDate: { count: 4, of: 5, share: 0.8 }, outcomes, recorded: 3, medianHoursToRecord: 5.5 },
+  replies: { received: 6, read: 5, withStatedDate: { count: 4, of: 5, share: 0.8 }, outcomes, recorded: 4, medianHoursToRecord: 5.5 },
 };
 const small = {
   revisions: { orders: 2, revisedOrders: 1, revisions: 1, perOrder: null, averageDaysMoved: null, movedLater: { count: 1, of: 1, share: null } },
-  replies: { received: 1, read: 1, withStatedDate: { count: 1, of: 1, share: null }, outcomes: { ...outcomes, recordedUnchanged: 1, recordedEdited: 0, notRecorded: { wrong_reading: 0, supplier_will_confirm: 0, other: 0 }, needsYou: 0, nothingToRecord: 0 }, recorded: 1, medianHoursToRecord: null },
+  replies: { received: 1, read: 1, withStatedDate: { count: 1, of: 1, share: null }, outcomes: { ...outcomes, recordedUnchanged: 1, recordedEdited: 0, recordedManual: 0, notRecorded: { wrong_reading: 0, supplier_will_confirm: 0, other: 0 }, needsYou: 0 }, recorded: 1, medianHoursToRecord: null },
 };
 const quiet = {
   revisions: { orders: 0, revisedOrders: 0, revisions: 0, perOrder: null, averageDaysMoved: null, movedLater: { count: 0, of: 0, share: null } },
-  replies: { received: 0, read: 0, withStatedDate: { count: 0, of: 0, share: null }, outcomes: { recordedUnchanged: 0, recordedEdited: 0, notRecorded: { wrong_reading: 0, supplier_will_confirm: 0, other: 0 }, needsYou: 0, proposed: 0, nothingToRecord: 0 }, recorded: 0, medianHoursToRecord: null },
+  replies: { received: 0, read: 0, withStatedDate: { count: 0, of: 0, share: null }, outcomes: { recordedUnchanged: 0, recordedEdited: 0, recordedManual: 0, notRecorded: { wrong_reading: 0, supplier_will_confirm: 0, other: 0 }, needsYou: 0, proposed: 0, nothingToRecord: 0 }, recorded: 0, medianHoursToRecord: null },
 };
 const hide = <T extends Record<string, unknown>>(row: T, part: "revisions" | "replies") => ({ ...row, [part]: null });
 
@@ -69,12 +71,12 @@ test.describe("promised dates and supplier replies on Supplier evaluation", () =
     await expect(block.locator("thead th").nth(3)).toHaveAttribute("title", /A first promise is not a change\./);
 
     const busyRow = block.getByTestId(`supplier-reliability-row-${first.id}`);
-    await expect(busyRow.locator("td")).toHaveText([/.+/, first.name, "8", "0.6", "+4.2 days80% later", "6", "80%", "3 recorded · 1 not recorded · 1 open"]);
+    await expect(busyRow.locator("td")).toHaveText([/.+/, first.name, "8", "0.6", "+4.2 days80% later", "6", "80%", "3 recorded · 1 recorded by hand · 1 not recorded · 1 open"]);
     await expect(busyRow.locator("td").nth(3).locator("span")).toHaveAttribute("title", "Orders due: 8. Orders with a date change: 3. Date changes: 5.");
     const tooltip = await busyRow.getByTestId("supplier-reliability-outcomes").getAttribute("title");
     expect(tooltip!.split("\n")).toEqual([
-      "Recorded as read: 2", "Recorded after an edit: 1", "Not recorded, wrong reading: 1", "Not recorded, supplier will confirm: 0",
-      "Not recorded, other reason: 0", "Needs you: 1", "Proposed, not decided: 0", "Nothing to record: 1", "Median time to record: 5.5 hours",
+      "Recorded as read: 2", "Recorded after an edit: 1", "Recorded by hand: 1", "Not recorded, wrong reading: 1", "Not recorded, supplier will confirm: 0",
+      "Not recorded, other reason: 0", "Needs you: 1", "Proposed, not decided: 0", "Nothing to record: 0", "Median time to record: 5.5 hours",
     ]);
 
     // Under 5: "—", with the counts and the minimum in the tooltip.
@@ -102,8 +104,8 @@ test.describe("promised dates and supplier replies on Supplier evaluation", () =
     await expect(block.locator("thead th")).toHaveText(["供应商编号", "供应商名称", "到期订单", "每单交期变更次数", "平均变动天数", "收到的回复", "给出交期的回复", "回复处理结果"]);
     const row = block.getByTestId(`supplier-reliability-row-${first.id}`);
     await expect(row.getByTestId("supplier-reliability-moved")).toHaveText("+4.2 天80% 为推迟");
-    await expect(row.getByTestId("supplier-reliability-outcomes")).toHaveText("已记录 3 · 未记录 1 · 待处理 1");
-    expect((await row.getByTestId("supplier-reliability-outcomes").getAttribute("title"))!.split("\n")[0]).toBe("按读取结果记录：2");
+    await expect(row.getByTestId("supplier-reliability-outcomes")).toHaveText("已记录 3 · 手动记录 1 · 未记录 1 · 待处理 1");
+    expect((await row.getByTestId("supplier-reliability-outcomes").getAttribute("title"))!.split("\n").slice(0, 3)).toEqual(["按读取结果记录：2", "修改后记录：1", "手动记录：1"]);
   });
 
   test("a part the reader may not read is left out, never shown as zeros; neither part, no block", async ({ page, request }) => {

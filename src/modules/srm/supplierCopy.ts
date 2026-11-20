@@ -118,6 +118,8 @@ const zh: Record<string, string> = {
   'A percentage needs {n} replies read.': '至少读取 {n} 条回复才计算百分比。',
   'Recorded as read: {n}': '按读取结果记录：{n}',
   'Recorded after an edit: {n}': '修改后记录：{n}',
+  'Recorded by hand: {n}': '手动记录：{n}',
+  '{n} recorded by hand': '手动记录 {n}',
   'Not recorded, wrong reading: {n}': '未记录（读取有误）：{n}',
   'Not recorded, supplier will confirm: {n}': '未记录（供应商将确认）：{n}',
   'Not recorded, other reason: {n}': '未记录（其他原因）：{n}',

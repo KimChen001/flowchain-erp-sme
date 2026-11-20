@@ -13,9 +13,13 @@ export type ReliabilityRevisions = {
   averageDaysMoved: number | null;
   movedLater: ReliabilityShare;
 };
+// recordedUnchanged and recordedEdited record a proposal; recordedManual
+// records dates the person typed when nothing was proposed (AI off, a failed
+// reading, every line needing the person).
 export type ReliabilityOutcomes = {
   recordedUnchanged: number;
   recordedEdited: number;
+  recordedManual: number;
   notRecorded: { wrong_reading: number; supplier_will_confirm: number; other: number };
   needsYou: number;
   proposed: number;
@@ -53,5 +57,6 @@ export function reliabilityRows<T extends { id: string }>(shown: T[], data: Supp
 
 // Each reply is in exactly one outcome; these group them for the cell.
 export const recordedReplies = (outcomes: ReliabilityOutcomes) => outcomes.recordedUnchanged + outcomes.recordedEdited;
+export const manualReplies = (outcomes: ReliabilityOutcomes) => outcomes.recordedManual;
 export const notRecordedReplies = (outcomes: ReliabilityOutcomes) => outcomes.notRecorded.wrong_reading + outcomes.notRecorded.supplier_will_confirm + outcomes.notRecorded.other;
 export const openReplies = (outcomes: ReliabilityOutcomes) => outcomes.needsYou + outcomes.proposed;
