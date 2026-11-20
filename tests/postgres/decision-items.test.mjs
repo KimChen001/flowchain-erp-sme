@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import { createScmServer } from '../../server/bootstrap/scm-server.mjs'
 import { createPrismaClient, disconnectPrismaClient } from '../../server/persistence/prisma-client.mjs'
+import { createDecisionItemRepository } from '../../server/repositories/decision-item-repository.mjs'
 
 // Decision items on Today (docs/drafted-decisions-design.md), through the real
 // server and database: Today raises an item for each drafted row, with its
@@ -142,26 +143,40 @@ test('Today raises decision items with drafts, remembers decisions and closes it
     assert.deepEqual(audit.map((row) => [row.action, row.metadata.decision ?? row.metadata.previousDecision]), [['decision_item_decided', 'not_now'], ['decision_item_reopened', 'not_now'], ['decision_item_decided', 'chased']])
     home = await today()
     assert.equal(home.decisions.setAside.find((entry) => entry.key === poKey).chasedOn, home.today)
+    const item = await prisma.decisionItem.findFirst({ where: { tenantId: tenantA, activeKey: poKey } })
+    assert.equal(item.snapshot.chasedOn, home.today)
 
     // 6b. Three workdays on with no receipt, the chased order comes back,
     // still saying when it was chased, so Today keeps the reply box on it
     // (docs/supplier-reply-dates-design.md §4.2). The chase is moved a week
-    // back rather than the clock forward.
+    // back rather than the clock forward, and chasedOn is taken off, as on an
+    // item chased before it was kept: the decision day stands in for it.
     const chasedOn = new Date(Date.parse(`${home.today}T00:00:00Z`) - 7 * 86_400_000).toISOString().slice(0, 10)
-    const item = await prisma.decisionItem.findFirst({ where: { tenantId: tenantA, activeKey: poKey } })
-    await prisma.decisionItem.update({ where: { id: item.id }, data: { snapshot: { ...item.snapshot, decidedOn: chasedOn, chasedOn } } })
+    const { chasedOn: _kept, ...older } = item.snapshot
+    await prisma.decisionItem.update({ where: { id: item.id }, data: { snapshot: { ...older, decidedOn: chasedOn } } })
     home = await today()
     const back = home.decisions.waiting.find((entry) => entry.key === poKey)
     assert.equal(back.returned, true)
     assert.equal(back.chasedOn, chasedOn)
     assert.equal(back.draft.type, 'supplier_follow_up')
-    // Set aside again as "Not now": the chase day stays with it.
+    // Set aside again as "Not now": the chase day is written down and stays.
     const later = await request(port, 'POST', '/api/decision-items/decide', { headers: asA, body: { key: poKey, option: 'not_now', returnOn } })
     assert.equal(later.status, 200, JSON.stringify(later.payload))
     home = await today()
     assert.deepEqual([home.decisions.setAside.find((entry) => entry.key === poKey)].map((entry) => [entry.decision, entry.chasedOn]), [['not_now', chasedOn]])
+    assert.equal((await prisma.decisionItem.findFirst({ where: { tenantId: tenantA, activeKey: poKey } })).snapshot.chasedOn, chasedOn)
     // The request was never chased.
     assert.equal(home.decisions.waiting.find((entry) => entry.key === prKey).chasedOn, null)
+
+    // 6c. A reopen planned from a read taken before the latest decision does
+    // not undo it: here a person reopened the order and chased it again in
+    // between.
+    const stale = await prisma.decisionItem.findFirst({ where: { tenantId: tenantA, activeKey: poKey } })
+    assert.equal((await request(port, 'POST', '/api/decision-items/reopen', { headers: asA, body: { key: poKey } })).status, 200)
+    assert.equal((await request(port, 'POST', '/api/decision-items/decide', { headers: asA, body: { key: poKey, option: 'chased' } })).status, 200)
+    await createDecisionItemRepository({ prisma }).applySync(tenantA, { create: [], reopen: [stale], close: [] }, { today: home.today })
+    const kept = await prisma.decisionItem.findFirst({ where: { tenantId: tenantA, activeKey: poKey } })
+    assert.deepEqual([kept.state, kept.decision, kept.snapshot.chasedOn], ['decided', 'chased', home.today])
 
     // 7. Converting the request takes its row off Today at once; "accepted"
     // is still taken, but only with the orders the request records it made.
