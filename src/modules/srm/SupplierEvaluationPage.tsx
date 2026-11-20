@@ -300,7 +300,8 @@ export default function SupplierEvaluationPage() {
       {/* Promised dates and supplier replies: a measure of its own, in the
           table's order and under its filters; on time and OTIF above stay on
           the original promise (docs/supplier-reply-dates-design.md §4.12). */}
-      {!error && rows.length > 0 ? <SupplierReliabilityCard suppliers={shown} loadKey={reliabilityLoads} /> : null}
+      {/* Kept mounted while hidden, so a search with no match does not read it again. */}
+      <SupplierReliabilityCard suppliers={shown} loadKey={reliabilityLoads} hidden={error || rows.length === 0} />
     </div>
   );
 }

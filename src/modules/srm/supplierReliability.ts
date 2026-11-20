@@ -60,3 +60,23 @@ export const recordedReplies = (outcomes: ReliabilityOutcomes) => outcomes.recor
 export const manualReplies = (outcomes: ReliabilityOutcomes) => outcomes.recordedManual;
 export const notRecordedReplies = (outcomes: ReliabilityOutcomes) => outcomes.notRecorded.wrong_reading + outcomes.notRecorded.supplier_will_confirm + outcomes.notRecorded.other;
 export const openReplies = (outcomes: ReliabilityOutcomes) => outcomes.needsYou + outcomes.proposed;
+
+// The cell's parts: every group with a reply in it, so the parts add up to
+// the replies received (a supplier that sent only auto-replies reads
+// "2 with nothing to record", never "0 recorded").
+export type OutcomePart = "recorded" | "manual" | "notRecorded" | "open" | "nothingToRecord";
+export function outcomeParts(outcomes: ReliabilityOutcomes): Array<{ part: OutcomePart; n: number }> {
+  const groups: Array<[OutcomePart, number]> = [
+    ["recorded", recordedReplies(outcomes)],
+    ["manual", manualReplies(outcomes)],
+    ["notRecorded", notRecordedReplies(outcomes)],
+    ["open", openReplies(outcomes)],
+    ["nothingToRecord", outcomes.nothingToRecord],
+  ];
+  return groups.filter(([, n]) => n > 0).map(([part, n]) => ({ part, n }));
+}
+
+// What the block can say a quiet supplier lacks: only what the reader may see.
+export type ReliabilityScope = "both" | "orders" | "replies";
+export const reliabilityScope = (visibility: SupplierReliability["visibility"]): ReliabilityScope =>
+  visibility.revisions && visibility.replies ? "both" : visibility.revisions ? "orders" : "replies";
