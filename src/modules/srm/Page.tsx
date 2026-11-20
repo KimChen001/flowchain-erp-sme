@@ -12,7 +12,7 @@ import { toast } from "sonner";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { A, Card, Chip, Field, inputStyle, useConfirm } from "../../components/ui";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
-import { ListSearchCard, PrimaryButton, RefreshButton, ResetButton, StatusChip, statusToneOf, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, listTableCardsRef, rowActionClass } from "../../components/ui/listLayout";
+import { ExportButton, ListSearchCard, PrimaryButton, RefreshButton, ResetButton, StatusChip, statusToneOf, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, listTableCardsRef, rowActionClass } from "../../components/ui/listLayout";
 import { EntityLink } from "../../components/business/EntityLink";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
@@ -21,6 +21,7 @@ import { PriceHistoryFacts, priceHistoryKey, usePoPrice, usePriceHistory } from 
 import { ListPager, usePagedRows } from "../procurement/listPaging";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import { apiErrorText } from "../../lib/apiErrorText";
+import { exportRowsToCsv } from "../../lib/data-export";
 import { METRIC_HEADER_TIPS } from "./supplierMetrics";
 import { DataImportLink } from "../master-data/DataImportLink";
 import { useRouteAvailability } from "../../app/routeAvailability";
@@ -479,6 +480,23 @@ export default function SupplierMasterPage({
   };
   const insightOf = (id: string): SupplierInsight | undefined => insights?.suppliers[id];
   const sortedRows = sortSuppliersBy(rows, sortBy, insightOf, spendCurrency);
+  // The suppliers the filters and tab show, in the list's order (product
+  // review 2026-11-20, item 30). Contact and commercial terms only: tax and
+  // bank details stay on the supplier's page.
+  const exportSuppliers = () => void exportRowsToCsv("suppliers-export.csv", sortedRows.map((row) => ({
+    [copy("Supplier code")]: row.supplierCode,
+    [copy("Supplier name")]: row.supplierName,
+    [copy("Status")]: copy(statusLabel[row.status]),
+    [copy("Categories")]: (row.categories || []).join(", "),
+    [copy("Business owner")]: row.businessOwner?.name || "",
+    [copy("Contact name")]: row.contactName,
+    [copy("Phone")]: row.telephone,
+    [copy("Email")]: row.email,
+    [copy("Address")]: row.address,
+    [copy("Default currency")]: row.defaultCurrency || "",
+    [copy("Payment terms")]: row.paymentTermsId || "",
+    [copy("Delivery lead time (days)")]: row.deliveryCycleDays || "",
+  })));
   const supplierPage = usePagedRows(sortedRows, SUPPLIER_PAGE_SIZE, [query, status, category, owner, tab, sortBy].join("|"));
   // Earlier PO prices of each supplied item from this supplier only, in the
   // link currency and the item's unit, in one request. Display only.
@@ -761,6 +779,7 @@ export default function SupplierMasterPage({
         actions={<>
           <ResetButton onClick={resetFilters} />
           <RefreshButton onClick={load} />
+          <ExportButton onClick={exportSuppliers} />
           <DataImportLink type="suppliers" className={listButtonClass.secondary} />
           {writes.suppliers && <PrimaryButton onClick={startCreate} testId="supplier-new">{copy("新增供应商")}</PrimaryButton>}
         </>}

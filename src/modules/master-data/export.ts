@@ -1,5 +1,6 @@
 import { toast } from "sonner";
 import { exportRowsToCsv } from "../../lib/data-export";
+import type { CustomerMaster } from "./standardData";
 import type { PaymentTerm, TaxCode, WarehouseBin } from "../../types/scm";
 import type { MasterItem } from "./ItemMasterWorkbench";
 
@@ -7,13 +8,13 @@ import type { MasterItem } from "./ItemMasterWorkbench";
 export type ItemExportRow = MasterItem & { preferredSupplierName: string };
 
 type Copy = (value: string, params?: Record<string, string | number>) => string;
-export type ExportableMasterDataTab = "items" | "warehouses" | "tax-codes" | "payment-terms";
+export type ExportableMasterDataTab = "items" | "customers" | "warehouses" | "tax-codes" | "payment-terms";
 
 // Column headers and yes/no cells follow the interface language, so an
 // English workspace gets an English spreadsheet. Values stay as stored.
 export function exportMasterDataCsv(
   tab: ExportableMasterDataTab,
-  data: { items?: ItemExportRow[]; warehouses?: WarehouseBin[]; taxCodes?: TaxCode[]; paymentTerms?: PaymentTerm[] },
+  data: { items?: ItemExportRow[]; customers?: CustomerMaster[]; warehouses?: WarehouseBin[]; taxCodes?: TaxCode[]; paymentTerms?: PaymentTerm[] },
   copy: Copy,
 ) {
   const yesNo = (value: boolean) => copy(value ? "Yes" : "No");
@@ -31,6 +32,16 @@ export function exportMasterDataCsv(
         ["Lead time (days)", item.purchaseLeadTimeDays > 0 ? item.purchaseLeadTimeDays : ""], ["Batch managed", yesNo(item.batchManaged)], ["Serial managed", yesNo(item.serialManaged)],
         ["QA required", ""], ["Default supplier", item.preferredSupplierName], ["Default tax code", item.taxCodeId],
         ["Status", copy(item.status === "active" ? "Active" : item.status === "inactive" ? "Inactive" : item.status)],
+      ])),
+    },
+    // The customer list as it reads (product review 2026-11-20, item 30);
+    // credit and record status in the interface language, values as stored.
+    customers: {
+      filename: "master-data-customers-export.csv",
+      rows: () => (data.customers || []).map((item) => row([
+        ["Customer code", item.code], ["Customer name", item.name], ["Currency", item.currency || ""], ["Contact", item.contact],
+        ["Email", item.email || ""], ["Phone", item.phone], ["Address", item.address], ["Country", item.country || ""],
+        ["Payment terms", item.paymentTerms], ["Credit status", item.creditStatus ? copy(item.creditStatus) : ""], ["Status", copy(item.status)],
       ])),
     },
     warehouses: {

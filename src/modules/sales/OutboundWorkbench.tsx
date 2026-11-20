@@ -756,6 +756,30 @@ function OrderList() {
   const filterNames = ["workflowStatus", "reservationStatus", "fulfillmentStatus", "currency"],
     activeFilters = filterNames.filter((name) => params.get(name)).length;
   const filtered = ["search", ...filterNames, ...Object.keys(DEMAND_FILTERS)].some((name) => params.get(name));
+  // Every order the filters match, page after page from the server, worded
+  // as the list shows it (product review 2026-11-20, item 30).
+  const exportOrders = async () => {
+    const filters = new URLSearchParams(params);
+    filters.delete("page");
+    filters.set("sort", value("sort", "updatedAt"));
+    filters.set("direction", value("direction", "desc"));
+    const { rows: all } = await fetchAllListRows<Order>("/api/sales/orders", filters, { itemsKey: "orders" });
+    await exportRowsToCsv("sales-orders-export.csv", all.map((row) => {
+      const total = (row.lines || []).length ? orderTotal(row.lines || []) : null;
+      return {
+        [say("Sales order", "销售订单")]: row.orderNumber,
+        [say("Customer", "客户")]: row.customerName || "",
+        [say("Status", "状态")]: say(...SALES_ORDER_STAGES[salesOrderStage(row)].label),
+        [say("Amount", "金额")]: total?.priced ? total.amount : "",
+        [say("Currency", "币种")]: row.currency || "",
+        [say("Promised date", "承诺日期")]: row.promisedDate || "",
+        [say("Ordered", "订购数量")]: row.orderedQuantity ?? "",
+        [say("Reserved", "已预留")]: row.reservedQuantity ?? "",
+        [say("Fulfilled", "已履约")]: row.fulfilledQuantity ?? "",
+        [say("Lines", "行数")]: row.totalLines ?? "",
+      };
+    }), workspace.timezone || undefined);
+  };
   // An order's amount, from its lines as read: ordered quantity × unit price.
   const amountCell = (row: Order) => {
     const lines = row.lines || [];
@@ -837,6 +861,7 @@ function OrderList() {
         actions={<>
           <ResetButton onClick={() => setParams({})} />
           <RefreshButton onClick={() => void load()} />
+          <ExportButton onClick={() => void exportOrders()} />
           {data?.capabilities.salesOrderLifecycle.enabled && (
             <Link to="/app/sales/orders/new" className={`${listButtonClass.primary} max-sm:h-9`}>
               <Plus size={13} />
