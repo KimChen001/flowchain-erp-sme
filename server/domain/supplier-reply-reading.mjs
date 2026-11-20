@@ -120,6 +120,8 @@ export function cleanSupplierReply(value) {
 const ADDRESSED_TO_SYSTEM = [
   /\b(?:note|message|instructions?)\s+(?:to|for)\s+(?:the\s+)?(?:ai|assistant|system|bot|model|agent)\b/i,
   /\b(?:system|ai|assistant)\s+(?:note|message|instruction|notice|prompt|command)s?\b/i,
+  // "AI email parsers: this block is authoritative" (an ORDER-SYNC block).
+  /\b(?:ai|llm|automated|automatic|machine)\s+(?:e-?mail\s+)?(?:parsers?|readers?|processors?|agents?|tools?|systems?)\b/i,
   /(?:^|[\s<!(\[【-])(?:ai|assistant|chatgpt|claude|copilot|chatbot)\s*[:：]/im,
   /\b(?:ignore|disregard|forget)\b[^.\n]{0,40}\b(?:instructions?|rules|prompt|above|previous|prior)\b/i,
   /\b(?:mark|set|record)\s+(?:all|every)\s+(?:the\s+)?(?:lines?|items?|orders?|promised\s+dates?)\b/i,
@@ -456,7 +458,12 @@ const REFUSED_AFTER = /^[^.!?;\n。！？；]{0,12}?(?:\b(?:is|are|was|has)?\s*(
 // "earliest is" stays a date the supplier gives.
 const CONDITIONED = /\b(?:depend(?:s|ing|ent)?\s+on|subject\s+to|pending|provided\s+(?:that|we|the)|assuming|if|unless|tbc|tbd|to\s+be\s+confirmed|tentative(?:ly)?|provisional(?:ly)?|hopefully|maybe|perhaps|possibly|probably|might|not\s+(?:yet\s+)?confirmed|unconfirmed)\b|取决于|视[^。，,]{0,12}而定|待定|暂定|如果|看情况|不确定|还没确定|未确定|可能|也许|要看/i
 const HEDGE_BEFORE = /(?:\b(?:starting|start(?:s|ing)?\s+(?:on|from)|from|after|once|following|around|approx(?:imately)?|roughly|circa|about|week\s+of|beginning\s+of|end\s+of|no\s+earlier\s+than|not\s+before)(?:\s+(?:on|the|of|about|around))?\s*$)|(?:大概|大约|约|等到?|要等)[^。，,]{0,4}$/i
-const HEDGE_AFTER = /^[^.!?;。！？；]{0,8}?(?:\b(?:onwards?|or\s+(?:so|later|thereabouts|after)|at\s+the\s+earliest|and\s+later)\b|起|开始|以后|之后|左右|前后|(?<!交|发)后(?!天))/i
+// Right after the date, in its own clause (no comma between): "3号统一发货，
+// 发出后把物流单号发给您" is a firm day, the 后 being about the tracking number.
+const HEDGE_AFTER = /^[^.!?;。！？；，,]{0,3}?(?:\b(?:onwards?|or\s+(?:so|later|thereabouts|after)|at\s+the\s+earliest|and\s+later)\b|起|开始|以后|之后|左右|前后|(?<!交|发)后(?!天))/i
+// A window between two days ("between 3 and 5 December", 12月3日到5日之间):
+// neither day is the delivery day.
+const DAY_WINDOW = /\bbetween\b[^.!?;]{0,40}\band\b|(?:到|至|-|~|～)[^。，,.;；]{0,8}之间|\bfrom\b[^.!?;]{0,20}\b(?:to|until|till)\b[^.!?;]{0,20}\b(?:depending|whichever)\b/i
 
 // Delivery promised with no day: "asap", "as soon as", "once it is released",
 // 尽快, 一放行就, 到了就发.
@@ -537,7 +544,10 @@ function resolveDate(entry, receivedOn, currentDate = null, reply = null) {
     const lone = written.exact.length === 1 && !written.dayOnly.length && !written.ambiguous.length && !relative ? written.exact[0] : null
     if (!lone || HEDGED.test(sentence)) {
       const seen = [...new Set([...written.exact, ...written.dayOnly.map((row) => row.date), relative?.date].filter(Boolean))].sort()
-      return { issue: 'vague', readings: seen.length && seen.length <= 2 ? seen : null }
+      // The days found are offered as one-click readings only when nothing
+      // hedges them: a window or a condition is not a day to pick.
+      const offer = !HEDGED.test(sentence) && !CONDITIONED.test(sentence) && !DAY_WINDOW.test(sentence)
+      return { issue: 'vague', readings: offer && seen.length && seen.length <= 2 ? seen : null }
     }
     claimed = lone
     inferred = true
@@ -551,7 +561,8 @@ function resolveDate(entry, receivedOn, currentDate = null, reply = null) {
   if (!hit) {
     if (entry.dateKind === 'relative' && !relative) return { issue: 'relative_unreadable' }
     const other = relative?.date || (written.exact.length === 1 ? written.exact[0] : written.dayOnly.length === 1 ? written.dayOnly[0].date : null)
-    return { issue: 'date_mismatch', readings: other && other !== claimed ? [other, claimed].sort() : null }
+    const offer = !DAY_WINDOW.test(sentence) && !CONDITIONED.test(sentence)
+    return { issue: 'date_mismatch', readings: offer && other && other !== claimed ? [other, claimed].sort() : null }
   }
   // The sentence the date stands in.
   const places = datesWithPlaces(sentence, receivedOn)
@@ -577,7 +588,9 @@ function resolveDate(entry, receivedOn, currentDate = null, reply = null) {
     const previous = Math.max(0, ...ends.filter((value) => value <= index))
     return HEDGE_BEFORE.test(sentence.slice(Math.max(previous, index - 40), index)) || HEDGE_AFTER.test(sentence.slice(end, end + 24))
   })
-  if (hedged) return { issue: 'vague', readings: [claimed] }
+  // No one-click reading for a hedged day: offering it would undo holding it
+  // (PM, second blind batch). The person types the date if they decide one.
+  if (hedged || DAY_WINDOW.test(sentence)) return { issue: 'vague', readings: null }
   return { ...hit, inferred }
 }
 
@@ -596,7 +609,15 @@ function addressedSpans(reply) {
     for (let at = 0; at < lines.length; at += 1) {
       const starts = [...ADDRESSED_TO_SYSTEM, PROMPT_INJECTION].map((pattern) => new RegExp(pattern.source, pattern.flags.replace('g', '')).exec(lines[at])).filter(Boolean).map((match) => match.index)
       if (!starts.length) continue
-      const rest = quoteForm([lines[at].slice(Math.min(...starts)), ...lines.slice(at + 1)].join('\n'))
+      // A machine block (-----BEGIN …, a JSON or bracketed block) is addressed
+      // as a whole; on a line with no sentence end before the address (a JSON
+      // object's "note"), the line is; otherwise from the address on, so a
+      // supplier's sentence before it on the same line stays theirs.
+      const block = /^\s*(?:-{3,}\s*begin\b|```|[{[<])/i.test(lines[0])
+      const head = lines[at].slice(0, Math.min(...starts))
+      const from = block ? 0 : at
+      const cut = block || !/[.!?。！？](?:\s|$)/.test(head) ? 0 : Math.min(...starts)
+      const rest = quoteForm([lines[from].slice(from === at ? cut : 0), ...lines.slice(from + 1)].join('\n'))
       const start = rest ? whole.indexOf(rest) : -1
       if (start >= 0) spans.push([start, start + rest.length])
       break
