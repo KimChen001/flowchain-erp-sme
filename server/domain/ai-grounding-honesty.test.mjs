@@ -45,6 +45,7 @@ test('a calculation whose values the results and the question do not hold is not
   }
   assert.equal(aiCalculationGrounded({ operation: 'add_days', dates: ['2026-11-05'], values: [14] }, { results, question: '推迟两周' }), true)
   assert.equal(aiCalculationGrounded({ operation: 'add_days', dates: ['2026-11-05'], values: [21] }, { results, question: 'Delay it 3 weeks' }), true)
+  assert.equal(aiCalculationGrounded({ operation: 'add_days', dates: ['2026-11-05'], values: [7] }, { results, question: 'What happens if Acme delays another week?' }), true)
   // Not a span the user gave: still refused.
   assert.equal(aiCalculationGrounded({ operation: 'add_days', dates: ['2026-11-05'], values: [7] }, { results, question: 'Push it back' }), false)
   assert.equal(aiCalculationGrounded({ operation: 'add_days', dates: ['2026-11-05'], values: [14] }, { results, question: '推迟一周' }), false)
@@ -112,4 +113,18 @@ test('stock_position gives available to promise without what overdue orders stil
   // LDM-002: nothing overdue, so the two agree.
   assert.deepEqual([row('LDM-002').availableToPromise, row('LDM-002').availableToPromiseWithoutOverdue], [200, 200])
   assert.equal(row('LDM-003').availableToPromiseWithoutOverdue, null)
+})
+
+// Question set 2026-11-20: "What should I reorder this week?" answered "order
+// by 27 Nov" (today + 7), flagged in every run; so did "if Acme delays
+// another week". A span of weeks the user named reaches a day from today.
+test('a date a span of weeks in the question reaches from today is one the user gave', () => {
+  const dates = (answer, question, conversation = '') => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results: [], question, conversation, today: '2026-11-20' }).problems.filter((row) => row.kind === 'date').map((row) => row.value)
+  assert.deepEqual(dates('Order 60 by 27 Nov 2026.', 'What should I reorder this week?'), [])
+  assert.deepEqual(dates('11 月 27 日前下单', '这周要补什么货？'), [])
+  assert.deepEqual(dates('It would arrive around 27 Nov.', 'What happens if Acme delays another week?'), [])
+  assert.deepEqual(dates('Two weeks from now is 4 Dec.', 'and in two weeks?', 'What should I reorder?'), [])
+  // No span named: the day is not the user's.
+  assert.equal(dates('Order 60 by 27 Nov 2026.', 'What should I reorder?').length, 1)
+  assert.equal(dates('Order 60 by 28 Nov 2026.', 'What should I reorder this week?').length, 1)
 })

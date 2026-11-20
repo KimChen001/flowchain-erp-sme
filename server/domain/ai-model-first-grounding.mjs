@@ -619,12 +619,21 @@ const INPUT_NUMBER = /-?\d[\d,]*(?:\.\d+)?/g
 // gave was not a source, and the answer check flagged it (question sets
 // 2026-11-13 and 11-19, promised-date-zh).
 const WEEKS_IN_WORDS = [
-  [/\b(?:a|one)\s+week\b|一\s*(?:个)?\s*(?:周|星期|礼拜)/i, 7],
+  [/\b(?:a|one|another)\s+week\b|\b(?:this|next)\s+week\b|一\s*(?:个)?\s*(?:周|星期|礼拜)|(?:这|本|下)\s*(?:个)?\s*(?:周|星期|礼拜)/i, 7],
   [/\b(?:two\s+weeks|a\s+fortnight)\b|(?:两|二)\s*(?:个)?\s*(?:周|星期|礼拜)/i, 14],
   [/\bthree\s+weeks\b|三\s*(?:个)?\s*(?:周|星期|礼拜)/i, 21],
   [/\bfour\s+weeks\b|四\s*(?:个)?\s*(?:周|星期|礼拜)/i, 28],
 ]
 const DIGIT_WEEKS = /(\d+)\s*(?:weeks?\b|周|个星期|星期)/gi
+// The days a span of weeks in the user's words reaches from today: "what
+// should I reorder this week?" answered "order by 27 Nov" (today + 7), and
+// "if Acme delays another week" with the week after today (question set
+// 2026-11-20: reorder-en, reorder-zh and acme-week-en flagged the date in
+// every run).
+function daysAfter(day, days) {
+  const at = Date.parse(`${day}T12:00:00Z`)
+  return Number.isFinite(at) ? new Date(at + days * 86_400_000).toISOString().slice(0, 10) : null
+}
 function weeksAsDays(value) {
   const days = WEEKS_IN_WORDS.filter(([pattern]) => pattern.test(value)).map(([, count]) => count)
   for (const match of value.matchAll(DIGIT_WEEKS)) days.push(Number(match[1]) * 7)
@@ -657,7 +666,14 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
   // Record numbers and names may also come from the conversation so far.
   const named = fold(`${question}\n${conversation}`)
   const given = aiGroundingSources([question], { dayFirst })
-  if (today) { sources.days.add(today); sources.months.add(today.slice(0, 7)) }
+  if (today) {
+    sources.days.add(today)
+    sources.months.add(today.slice(0, 7))
+    for (const days of new Set(weeksAsDays(`${text(question)}\n${text(conversation)}`))) {
+      const day = daysAfter(today, days)
+      if (day) { sources.days.add(day); sources.months.add(day.slice(0, 7)) }
+    }
+  }
   // The highest item number of the answer's own numbered lists, quoted ones
   // (a drafted message) included: "steps 1 and 2" points into them.
   const listItems = Math.max(0, ...[...figuresText(body).matchAll(LIST_ITEM)].map((match) => Number(match[1])))
