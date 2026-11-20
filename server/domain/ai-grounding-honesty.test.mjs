@@ -89,6 +89,30 @@ test('a follow-up chip with a figure the records and the question do not hold is
   assert.equal(tool.build({ questions: ['Which suppliers are late?'] }, ctx).component, 'followups')
 })
 
+// 2026-11-19 question set (late-table-en): a chip named SKU-123, the
+// instructions' example, which no record holds. A record a chip names must be
+// one this conversation or the workspace holds.
+test('a follow-up chip naming a record nobody read or holds is refused; real ones pass', () => {
+  const tool = AI_ASSISTANT_V2_UI_TOOLS.find((entry) => entry.name === 'suggest_followups')
+  const facts = { inventory: { rows: [{ sku: 'LDM-001', itemName: 'Bracket' }, { sku: '85123A', itemName: 'T-Light Holder' }], masterOnly: [] }, purchaseOrders: { index: [{ id: 'po-1', orderNumber: 'PO-202610-0022' }] } }
+  const ctx = {
+    language: 'en-US', userText: 'Show the late purchase orders as a table', facts,
+    results: new Map([['tu_1', { tool: 'list_purchase_orders', output: { rows: [{ orderNumber: 'PO-202610-0024', sku: 'LDM-001' }] } }]]),
+    earlierResults: [{ rows: [{ orderNumber: 'PO-202609-0007' }] }],
+    conversation: 'What about RFQ-202611-0003?',
+  }
+  const built = tool.build({ questions: ['Draft a request for SKU-123'] }, ctx)
+  assert.equal(built.error?.code, 'ungrounded_record')
+  assert.match(built.error.message, /SKU-123/)
+  // Read in this answer, read earlier, said in the conversation, or a record
+  // of the workspace the results did not repeat.
+  for (const question of ['Chase PO-202610-0024', 'Show PO-202609-0007 again', 'Compare quotes on RFQ-202611-0003', 'Draft a request for 85123A', 'Open PO-202610-0022']) {
+    assert.equal(tool.build({ questions: [question] }, ctx).component, 'followups', question)
+  }
+  // A chip with no record at all is unaffected.
+  assert.equal(tool.build({ questions: ['Which suppliers are late?'] }, ctx).component, 'followups')
+})
+
 // L5-17: availableToPromise counts overdue lines as arriving; the question set
 // expects what a customer can be promised without them.
 test('stock_position gives available to promise without what overdue orders still owe', async () => {

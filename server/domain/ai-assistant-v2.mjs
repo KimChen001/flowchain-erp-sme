@@ -1228,7 +1228,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       const partId = `p${parts.length + 1}`
       let built
       try {
-        built = await tool.build(checked.args, { results: answerResults, facts, actor: context.actor, language, threadId, messageId, partId, userNamedSkus, agreeable, lastFormSkus, userText, question, prisma: context.prisma, tenantId: context.tenantId, workspaceCurrency: context.tenant?.currency || null, orderPlan: latestOrderPlan(thread.results) })
+        built = await tool.build(checked.args, { results: answerResults, earlierResults, conversation, facts, actor: context.actor, language, threadId, messageId, partId, userNamedSkus, agreeable, lastFormSkus, userText, question, prisma: context.prisma, tenantId: context.tenantId, workspaceCurrency: context.tenant?.currency || null, orderPlan: latestOrderPlan(thread.results) })
       } catch {
         return { ok: false, error: 'tool_failed' }
       }
