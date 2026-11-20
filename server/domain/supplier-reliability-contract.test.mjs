@@ -29,7 +29,7 @@ test('the reliability response parses, with null parts for what the reader may n
 
 test('a share under the minimum sample is null, never left out', () => {
   const small = structuredClone(response)
-  small.suppliers['sup-acme'].revisions.movedLater = { count: 1, of: 2, share: null }
+  small.suppliers['sup-acme'].revisions = { orders: 2, revisedOrders: 1, revisions: 2, perOrder: null, averageDaysMoved: null, movedLater: { count: 1, of: 2, share: null } }
   assert.ok(supplierReliabilityResponseSchema.safeParse(small).success)
   delete small.suppliers['sup-acme'].revisions.movedLater.share
   assert.equal(supplierReliabilityResponseSchema.safeParse(small).success, false)
@@ -42,6 +42,23 @@ test('unknown fields and outcome codes are refused', () => {
   const reason = structuredClone(response)
   reason.suppliers['sup-acme'].replies.outcomes.notRecorded.duplicate = 1
   assert.equal(supplierReliabilityResponseSchema.safeParse(reason).success, false)
+})
+
+// The totals the page relies on are checked, so a server that drifts shows
+// the page's alert instead of figures that do not add up (#399 review).
+test('outcomes that do not add up, a stated-date share of other replies, or moves of other revisions are refused', () => {
+  const mismatched = (change) => { const copy = structuredClone(response); change(copy.suppliers['sup-acme']); return supplierReliabilityResponseSchema.safeParse(copy) }
+  const outcomes = mismatched((row) => { row.replies.outcomes.needsYou += 1 })
+  assert.equal(outcomes.success, false)
+  assert.deepEqual(outcomes.error.issues.map((issue) => issue.path.slice(-2)), [['replies', 'outcomes']])
+  const stated = mismatched((row) => { row.replies.withStatedDate = { count: 4, of: 6, share: 0.667 } })
+  assert.deepEqual(stated.error.issues.map((issue) => issue.path.slice(-2)), [['withStatedDate', 'of']])
+  const moved = mismatched((row) => { row.revisions.movedLater = { count: 4, of: 6, share: 0.667 } })
+  assert.deepEqual(moved.error.issues.map((issue) => issue.path.slice(-2)), [['movedLater', 'of']])
+  // And recorded is the recorded outcomes, read never exceeds received.
+  assert.equal(mismatched((row) => { row.replies.recorded = 4 }).success, false)
+  assert.equal(mismatched((row) => { row.replies.read = 7; row.replies.withStatedDate.of = 7 }).success, false)
+  assert.ok(mismatched(() => {}).success)
 })
 
 test('the window and minimum sample are the scorecard\'s, so the page shows one rule', () => {
