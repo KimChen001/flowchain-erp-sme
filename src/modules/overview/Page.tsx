@@ -295,7 +295,8 @@ function RuntimeHomepage() {
                     {step.note.href ? <>{" "}<Link to={step.note.href} className={LINK}>{t(step.note.id === "no_item_suppliers" ? "noteLinkItems" : "notePost")}</Link></> : null}
                   </div>
                 ) : null}
-                {!step.done ? (step.href ? <Link to={step.href} className={`mt-2 inline-block text-xs ${LINK}`}>{t("stepStart")}</Link> : <div className="mt-2 text-xs" style={{ color: A.sub }}>{t(step.blocked === "unavailable" ? "stepUnavailable" : "stepAskAdmin")}</div>) : null}
+                {/* Drafts waiting to post: the note's link, not Start (which would import again). */}
+                {!step.done && step.note?.id !== "opening_stock_to_post" ? (step.href ? <Link to={step.href} className={`mt-2 inline-block text-xs ${LINK}`}>{t("stepStart")}</Link> : <div className="mt-2 text-xs" style={{ color: A.sub }}>{t(step.blocked === "unavailable" ? "stepUnavailable" : "stepAskAdmin")}</div>) : null}
               </li>
             ))}
           </ol>

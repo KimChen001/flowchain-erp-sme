@@ -9,25 +9,30 @@ import { firstRunSetupSteps } from './today-work.mjs'
 //
 //   counts   items, suppliers, customers, items with stock on hand, active
 //            users and pending invitations, in the reader's workspace; and,
-//            for the notes under two steps, the item-supplier links and the
-//            opening-stock adjustments imported but not posted yet;
+//            for the notes under two steps, the items' suppliers (active
+//            item-supplier links, and items with a preferred supplier) and
+//            the opening-stock adjustments drafted but not posted yet;
 //   options  the steps the reader may do (access.home.setup, from
 //            reportReadAccessFor), and whether import and inventory
 //            adjustments are turned on, which decides each step's page.
 
 export async function readFirstRunSetupCounts(prisma, { tenantId, now = new Date() }) {
-  const [items, suppliers, customers, stockedItems, activeUsers, pendingInvitations, itemSupplierLinks, openingStockToPost] = await Promise.all([
+  const [items, suppliers, customers, stockedItems, activeUsers, pendingInvitations, links, itemsWithPreferred, openingStockToPost] = await Promise.all([
     prisma.item.count({ where: { tenantId } }),
     prisma.supplier.count({ where: { tenantId } }),
     prisma.runtimeRecord.count({ where: { tenantId, namespace: CUSTOMER_NAMESPACE } }),
     prisma.inventoryBalance.count({ where: { tenantId, onHandQuantity: { gt: 0 } } }),
     prisma.user.count({ where: { tenantId, status: 'active' } }),
     prisma.workspaceInvitation.count({ where: { tenantId, status: 'pending', expiresAt: { gt: now } } }),
-    prisma.runtimeRecord.count({ where: { tenantId, namespace: ITEM_SUPPLIER_NAMESPACE } }),
-    // Opening stock imported as draft adjustments (data import), not posted yet.
+    // Active links only (a link set inactive names no supplier); read, not
+    // counted, since active is a field of the stored record.
+    prisma.runtimeRecord.findMany({ where: { tenantId, namespace: ITEM_SUPPLIER_NAMESPACE }, select: { payload: true } }),
+    prisma.item.count({ where: { tenantId, preferredSupplierId: { not: null } } }),
+    // Opening stock drafted as adjustments (imported or by hand), not posted yet.
     prisma.inventoryAdjustmentDocument.count({ where: { tenantId, reasonCode: 'opening_balance', postingStatus: 'unposted', workflowStatus: { in: ['draft', 'ready'] } } }),
   ])
-  return { items, suppliers, customers, stockedItems, activeUsers, pendingInvitations, itemSupplierLinks, openingStockToPost }
+  const activeLinks = (links || []).filter((row) => row?.payload?.active !== false).length
+  return { items, suppliers, customers, stockedItems, activeUsers, pendingInvitations, itemSupplierSources: activeLinks + itemsWithPreferred, openingStockToPost }
 }
 
 export function firstRunSetupOptions(access, env = process.env) {
