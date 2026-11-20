@@ -346,6 +346,9 @@ export function createReceivingPostingCommandService({ prisma, now = () => new D
         const updatedPoLines = new Map(purchaseOrder.lines.map((line) => [line.id, { ...line }]))
 
         for (const plan of plans) {
+          // A line rejected in full moves no stock and leaves its PO line
+          // open (design audit L1-14); the receipt keeps the rejection.
+          if (plan.accepted <= 0n) continue
           const quantity = decimalString(plan.accepted)
           const movement = await tx.inventoryMovement.create({
             data: {

@@ -34,6 +34,52 @@ test('database receiving posting is atomic, idempotent, tenant-scoped, and concu
       }
     })
 
+    // Design audit L1-14: a delivery rejected in full is recorded with nothing
+    // accepted. It moves no stock, leaves its PO line open, keeps the rejected
+    // quantity on the receipt, and reverses without moving stock either.
+    await t.test('a line rejected in full posts no stock and leaves its PO line open; the receipt keeps the rejection', async () => {
+      const scenario = await seedReceivingScenario(prisma, { ordered: ['10', '5'], accepted: ['4', '0'], rejected: ['0', '5'] })
+      try {
+        const service = createReceivingPostingCommandService({ prisma })
+        const result = await service.postReceiving({ receivingDocumentId: scenario.receivingDocumentId, idempotencyKey: 'post-one-rejected' }, { identity: scenario.actor })
+        assert.equal(result.receivingDocument.postingStatus, 'posted')
+        // One movement, for the accepted line only.
+        assert.deepEqual(result.movements.map((movement) => [movement.sku, movement.quantityIn]), [[scenario.items[0].sku, '4.0000']])
+        assert.equal(await prisma.inventoryMovement.count({ where: { tenantId: scenario.tenantId, sku: scenario.items[1].sku } }), 0)
+        assert.equal(await prisma.inventoryBalance.count({ where: { tenantId: scenario.tenantId, sku: scenario.items[1].sku } }), 0)
+        // The rejected line's PO line is still open in full.
+        const poLines = await prisma.purchaseOrderLine.findMany({ where: { purchaseOrderId: scenario.poId }, orderBy: { id: 'asc' } })
+        assert.deepEqual(poLines.map((line) => [line.sku, String(line.receivedQuantity)]).sort(), [[scenario.items[0].sku, '4'], [scenario.items[1].sku, '0']].sort())
+        assert.equal(result.purchaseOrder.status, 'partially_received')
+        // The receipt keeps the rejected quantity.
+        const rejectedLine = await prisma.receivingLine.findFirst({ where: { receivingDocumentId: scenario.receivingDocumentId, sku: scenario.items[1].sku } })
+        assert.deepEqual([String(rejectedLine.acceptedQty), String(rejectedLine.rejectedQty)], ['0', '5'])
+      } finally {
+        await cleanupReceivingScenario(prisma, scenario)
+      }
+    })
+
+    await t.test('a delivery rejected in full posts nothing to stock, leaves the order as it was, and reverses without moving stock', async () => {
+      const scenario = await seedReceivingScenario(prisma, { ordered: ['5'], accepted: ['0'], rejected: ['5'] })
+      try {
+        const service = createReceivingPostingCommandService({ prisma })
+        const result = await service.postReceiving({ receivingDocumentId: scenario.receivingDocumentId, idempotencyKey: 'post-all-rejected' }, { identity: scenario.actor })
+        assert.equal(result.receivingDocument.postingStatus, 'posted')
+        assert.deepEqual(result.movements, [])
+        assert.equal(await prisma.inventoryMovement.count({ where: { tenantId: scenario.tenantId } }), 0)
+        assert.equal(await prisma.inventoryBalance.count({ where: { tenantId: scenario.tenantId } }), 0)
+        assert.equal(result.purchaseOrder.status, 'issued')
+        assert.equal(String((await prisma.purchaseOrderLine.findFirst({ where: { purchaseOrderId: scenario.poId } })).receivedQuantity), '0')
+        // Nothing was accepted, so no movement is missing: the reversal goes
+        // through and moves nothing.
+        const reversed = await service.reverseReceiving({ receivingDocumentId: scenario.receivingDocumentId, idempotencyKey: 'reverse-all-rejected', reason: 'Recorded on the wrong order' }, { identity: scenario.actor })
+        assert.equal(reversed.receivingDocument.postingStatus, 'reversed')
+        assert.equal(await prisma.inventoryMovement.count({ where: { tenantId: scenario.tenantId } }), 0)
+      } finally {
+        await cleanupReceivingScenario(prisma, scenario)
+      }
+    })
+
     await t.test('actor provisioning is fail-closed outside test/local bootstrap', async () => {
       const scenario = await seedReceivingScenario(prisma)
       try {

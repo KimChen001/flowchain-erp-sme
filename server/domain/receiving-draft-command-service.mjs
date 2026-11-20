@@ -71,7 +71,10 @@ function receivableLine(line) {
 
 // Validates the requested lines against the PO. Accepted quantity is what goes
 // to stock; rejected quantity stays out of stock and needs a reason. The
-// accepted total per PO line may not exceed what is still open on it.
+// accepted total per PO line may not exceed what is still open on it. A
+// delivery rejected in full is recorded too, with nothing accepted (design
+// audit L1-14): the receipt keeps the rejection and its reason, for the
+// supplier's record and a claim, and nothing goes to stock.
 function buildLines(po, inputLines, warehouseId, idFactory) {
   const poLines = new Map(po.lines.map((line) => [line.id, line]))
   const acceptedByPoLine = new Map()
@@ -82,8 +85,8 @@ function buildLines(po, inputLines, warehouseId, idFactory) {
     const accepted = quantityUnits(value.acceptedQuantity ?? value.acceptedQty, 'acceptedQuantity')
     const rejected = quantityUnits(value.rejectedQuantity ?? value.rejectedQty, 'rejectedQuantity')
     const damaged = quantityUnits(value.damagedQuantity, 'damagedQuantity')
-    if (accepted <= 0n) fail('RECEIVING_VALIDATION_FAILED', 'Accepted quantity must be greater than zero.', 422, { purchaseOrderLineId: source.id })
-    if (rejected < 0n || damaged < 0n) fail('RECEIVING_VALIDATION_FAILED', 'Rejected and damaged quantities cannot be negative.', 422, { purchaseOrderLineId: source.id })
+    if (accepted < 0n || rejected < 0n || damaged < 0n) fail('RECEIVING_VALIDATION_FAILED', 'Accepted, rejected and damaged quantities cannot be negative.', 422, { purchaseOrderLineId: source.id })
+    if (accepted === 0n && rejected === 0n) fail('RECEIVING_QUANTITY_REQUIRED', 'Enter an accepted quantity, a rejected quantity, or both.', 422, { purchaseOrderLineId: source.id })
     const rejectionReason = text(value.rejectionReason)
     if (rejected > 0n && !rejectionReason) fail('RECEIVING_REJECTION_REASON_REQUIRED', 'A reason is required for rejected quantity.', 422, { purchaseOrderLineId: source.id })
     const acceptedOnLine = (acceptedByPoLine.get(source.id) || 0n) + accepted

@@ -30,6 +30,9 @@ test('preview and command share the authoritative receiving transaction policy',
       ['inactive warehouse', async (prismaClient, scenario) => prismaClient.warehouse.update({ where: { id: scenario.warehouseId }, data: { status: 'inactive' } })],
       ['mismatched item and SKU', async (prismaClient, scenario) => prismaClient.receivingLine.update({ where: { id: scenario.receivingLines[0].id }, data: { sku: `wrong-${randomUUID()}` } })],
       ['negative rejected quantity', async (prismaClient, scenario) => prismaClient.receivingLine.update({ where: { id: scenario.receivingLines[0].id }, data: { rejectedQty: '-1' } })],
+      // Nothing accepted is allowed only with a rejected quantity (L1-14).
+      ['neither accepted nor rejected', async (prismaClient, scenario) => prismaClient.receivingLine.update({ where: { id: scenario.receivingLines[0].id }, data: { acceptedQty: '0', rejectedQty: '0' } })],
+      ['negative accepted quantity', async (prismaClient, scenario) => prismaClient.receivingLine.update({ where: { id: scenario.receivingLines[0].id }, data: { acceptedQty: '-1', rejectedQty: '2' } })],
       ['missing PO line reference', async (prismaClient, scenario) => prismaClient.receivingLine.update({ where: { id: scenario.receivingLines[0].id }, data: { purchaseOrderLineId: null } })],
     ]
     for (const [name, mutate] of cases) {

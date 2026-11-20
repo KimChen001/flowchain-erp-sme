@@ -65,6 +65,27 @@ test("mobile receiving and canonical posting share exact four-decimal quantity s
       assert.equal(String((await prisma.inventoryMovement.findFirst({ where: { tenantId, relatedGrnId: draft.entityId } })).quantityIn), "0.0001");
     });
 
+    // Design audit L1-14: a delivery rejected in full is recorded, with its
+    // reason, and posts nothing to stock or to the PO line.
+    await t.test("a delivery rejected in full is drafted with its reason, posted, and moves no stock or PO quantity", async () => {
+      const source = await seedPo(prisma, "rejected", "5.0000");
+      const input = (suffix, line) => ({ poId: source.poId, warehouseId, idempotencyKey: `decimal-create-rejected-${suffix}`, lines: [{ purchaseOrderLineId: source.lineId, damagedQuantity: "0", warehouseId, location: "A-01", ...line }] });
+      const before = await prisma.receivingDocument.count({ where: { tenantId } });
+      await assert.rejects(() => mobile.createReceivingDraft(input("none", { acceptedQuantity: "0", rejectedQuantity: "0" }), context), (error) => error.code === "RECEIVING_QUANTITY_REQUIRED" && error.status === 422);
+      await assert.rejects(() => mobile.createReceivingDraft(input("no-reason", { acceptedQuantity: "0", rejectedQuantity: "5" }), context), (error) => error.code === "RECEIVING_REJECTION_REASON_REQUIRED" && error.status === 422);
+      assert.equal(await prisma.receivingDocument.count({ where: { tenantId } }), before);
+      const draft = await mobile.createReceivingDraft(input("ok", { acceptedQuantity: "0", rejectedQuantity: "5", rejectionReason: "Crushed in transit" }), context);
+      const submitted = await mobile.submitReceivingDraft(draft.entityId, { expectedVersion: 0, idempotencyKey: "decimal-submit-rejected" }, context);
+      assert.equal((await mobile.previewReceiving(draft.entityId, context)).allowed, true);
+      const posted = await mobile.postReceiving(draft.entityId, { expectedVersion: submitted.receivingDocument.version, idempotencyKey: "decimal-post-rejected" }, context);
+      assert.equal(posted.receivingDocument.postingStatus, "posted");
+      assert.equal(String((await prisma.purchaseOrderLine.findUnique({ where: { id: source.lineId } })).receivedQuantity), "0");
+      assert.equal(await prisma.inventoryMovement.count({ where: { tenantId, relatedGrnId: draft.entityId } }), 0);
+      assert.equal(await prisma.inventoryBalance.count({ where: { tenantId, sku: "DEC-rejected" } }), 0);
+      const line = await prisma.receivingLine.findFirst({ where: { receivingDocumentId: draft.entityId } });
+      assert.deepEqual([String(line.acceptedQty), String(line.rejectedQty), line.metadata?.rejectionReason], ["0", "5", "Crushed in transit"]);
+    });
+
     await t.test("five-decimal input is rejected instead of silently rounded", async () => {
       const source = await seedPo(prisma, "precision", "1.0000");
       const before = await prisma.receivingDocument.count({ where: { tenantId } });
