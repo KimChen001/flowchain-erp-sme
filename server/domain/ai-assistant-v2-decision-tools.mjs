@@ -1,4 +1,5 @@
 import { readTodayForReader, todayDecisions } from '../services/today-read-service.mjs'
+import { APPROVAL_ROW_PERMISSIONS } from './today-work.mjs'
 import { AI_TOOL_LIMITS, aiToolPurchaseOrder, aiToolRef, defineAiTool } from './ai-read-tool-contract.mjs'
 
 // The assistant's view of Today's decision items (docs/drafted-decisions-design.md
@@ -106,7 +107,24 @@ function waitingCounts(waiting) {
   return { waitingByKind: byKind, heldInvoices: { total: held.length, withDifference, byCause, priceAboveOrder } }
 }
 
-export function decisionItemsResult(decisions, { include = 'waiting', limit = 10 } = {}, { today = null } = {}) {
+// The approvals waiting for this user on Today, beside the decisions: the
+// same rows the Today page shows them (only those they may give). The
+// decisions hold the four prepared kinds only, so "what is waiting for my
+// approval?" answered from them alone said none was (2026-11-20 question
+// set, sme-waiting-approval-en: "None of them is an approval step assigned
+// to you" with two requests and an order waiting for the asker).
+function approvalsOf(workRows, take) {
+  const rows = array(workRows).filter((row) => Object.hasOwn(APPROVAL_ROW_PERMISSIONS, row?.kind))
+  return {
+    approvalsTotal: rows.length,
+    approvals: rows.slice(0, take).map((row) => ({
+      kind: row.kind, label: row.label || row.recordId, name: row.name || null, date: row.date || null, dateKind: row.dateKind || null,
+      ref: aiToolRef(row.entityType, row.recordId, row.label || row.recordId),
+    })),
+  }
+}
+
+export function decisionItemsResult(decisions, { include = 'waiting', limit = 10 } = {}, { today = null, workRows = null } = {}) {
   const waiting = array(decisions.waiting)
   const setAside = array(decisions.setAside)
   const take = Math.min(Math.max(Number(limit) || 10, 1), AI_TOOL_LIMITS.maxRows)
@@ -117,6 +135,7 @@ export function decisionItemsResult(decisions, { include = 'waiting', limit = 10
     waitingTotal: waiting.length,
     setAsideTotal: setAside.length,
     ...waitingCounts(waiting),
+    ...(Array.isArray(workRows) && include !== 'set_aside' ? approvalsOf(workRows, take) : {}),
     ...(include !== 'set_aside' ? {
       waiting: waiting.slice(0, take).map((entry) => ({ ...rowOf(entry), returned: entry.returned === true, prepared: preparedOf(entry.draft, today) })),
     } : {}),
@@ -161,7 +180,7 @@ export const decisionItemsTool = defineAiTool({
   async run(args, { context }) {
     const read = await readDecisions(context)
     if (read.error) return read
-    return decisionItemsResult(read.decisions, args, { today: read.reader?.today || context.today || null })
+    return decisionItemsResult(read.decisions, args, { today: read.reader?.today || context.today || null, workRows: read.reader?.work?.all ?? null })
   },
 })
 
