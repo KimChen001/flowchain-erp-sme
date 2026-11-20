@@ -448,7 +448,7 @@ only in warehouses you have access to (section 10).
 ## 7. Reports and the supplier scorecard
 
 **Reports** has **Business overview**, **Procurement analytics**, **Sales
-analytics**, **Inventory analytics**, **Invoice analytics**, **Supplier
+analytics**, **Inventory analytics**, **Supplier invoice analytics**, **Supplier
 analytics** and the **Report library**.
 
 **On every dashboard:**
