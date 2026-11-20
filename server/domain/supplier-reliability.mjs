@@ -195,7 +195,10 @@ export function createSupplierReliabilityReadService({ prisma, now = () => new D
         prisma.supplier.findMany({ where: { tenantId }, select: { id: true }, orderBy: [{ id: 'asc' }] }),
         orders
           ? prisma.purchaseOrder.findMany({
-            where: { tenantId, supplierId: { not: null }, status: { notIn: UNMEASURED_STATUSES } },
+            // Only orders that can have a line dated in the window: one whose
+            // original promise falls in it, or one without an original
+            // promise (dated by its current date, checked below).
+            where: { tenantId, supplierId: { not: null }, status: { notIn: UNMEASURED_STATUSES }, OR: [{ lines: { some: { originalPromisedDate: { gte: new Date(`${window.from}T00:00:00Z`), lte: new Date(`${window.to}T23:59:59.999Z`) } } } }, { lines: { some: { originalPromisedDate: null } } }] },
             select: { id: true, supplierId: true, status: true, expectedDate: true, issuedAt: true, metadata: true, lines: { select: { id: true, originalPromisedDate: true, metadata: true, receivedQuantity: true } } },
             orderBy: [{ id: 'asc' }],
           })

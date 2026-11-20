@@ -93,9 +93,10 @@ export const supplierReliabilityRepliesSchema = z.strictObject({
   // (proposed, or the current date confirmed), of the read replies.
   withStatedDate: shareOf,
   outcomes: supplierReliabilityOutcomesSchema,
-  // Replies whose dates were recorded, and the median hours from when the
-  // reply was entered in FlowChain to when its dates were recorded, to one
-  // decimal; null when recorded is under the minimum sample.
+  // Replies whose dates were recorded, and the median hours from paste (when
+  // the reply was entered in FlowChain; receivedOn is only a day) to when its
+  // dates were recorded, to one decimal; null when recorded is under the
+  // minimum sample.
   recorded: count,
   medianHoursToRecord: z.number().nonnegative().nullable(),
 }).superRefine((row, ctx) => {

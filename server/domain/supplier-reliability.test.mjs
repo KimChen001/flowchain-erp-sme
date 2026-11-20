@@ -1,6 +1,5 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import { supplierReliabilityResponseSchema } from '../../shared/supplier-reliability-contract.mjs'
 import { buildSupplierReliability, createSupplierReliabilityReadService, supplierReliabilityBucket } from './supplier-reliability.mjs'
 import { buildSupplierScorecard } from './supplier-scorecard.mjs'
@@ -129,10 +128,10 @@ test('a reader without purchase order access gets null parts and nothing is coun
 
 // A stand-in database that answers the reads the service makes, and keeps
 // what each was asked.
-function standIn({ permissions = ['procurement.purchase_order.read'] } = {}) {
+function standIn({ permissions = ['procurement.purchase_order.read'], timezone = 'Europe/London' } = {}) {
   const asked = {}
   const prisma = {
-    tenant: { findUnique: async () => ({ timezone: 'Europe/London' }) },
+    tenant: { findUnique: async () => ({ timezone }) },
     supplier: { findMany: async () => [{ id: 'acme' }] },
     purchaseOrder: { findMany: async (query) => { asked.orders = query; return [order('PO-1', 'acme', '2026-11-01')] } },
     purchaseOrderPromiseRevision: { findMany: async (query) => { asked.revisions = query; return [revision('PO-1', '2026-11-01', '2026-11-04')] } },
@@ -143,11 +142,17 @@ function standIn({ permissions = ['procurement.purchase_order.read'] } = {}) {
 }
 
 test('the service reads the scorecard\'s 90 days in the workspace timezone and leaves superseded replies out', async () => {
-  const { prisma, actor, asked } = standIn()
-  const service = createSupplierReliabilityReadService({ prisma, now: () => new Date('2026-11-20T23:30:00Z') })
+  const { prisma, actor, asked } = standIn({ timezone: 'America/New_York' })
+  const service = createSupplierReliabilityReadService({ prisma, now: () => new Date('2026-11-21T03:30:00Z') })
   const result = supplierReliabilityResponseSchema.parse(await service.read({ actor }))
-  // 23:30 UTC is 23:30 in London on 20 Nov.
+  // 03:30 UTC on 21 Nov is 22:30 on 20 Nov in New York: a UTC day would be 21 Nov.
   assert.deepEqual([result.asOf, result.window], ['2026-11-20', { from: '2026-08-23', to: '2026-11-20', days: 90 }])
+  // Orders are read only when a line can be dated in the window.
+  assert.deepEqual(asked.orders.where.OR, [{ lines: { some: { originalPromisedDate: { gte: new Date('2026-08-23T00:00:00Z'), lte: new Date('2026-11-20T23:59:59.999Z') } } } }, { lines: { some: { originalPromisedDate: null } } }])
+  // Kathmandu (UTC+5:45): 18:20 UTC on 20 Nov is already 21 Nov there.
+  const east = standIn({ timezone: 'Asia/Kathmandu' })
+  const ahead = await createSupplierReliabilityReadService({ prisma: east.prisma, now: () => new Date('2026-11-20T18:20:00Z') }).read({ actor: east.actor })
+  assert.deepEqual([ahead.asOf, ahead.window.from], ['2026-11-21', '2026-08-24'])
   assert.deepEqual(asked.replies.where, { tenantId: 't1', receivedOn: { gte: '2026-08-23', lte: '2026-11-20' }, state: { not: 'superseded' } })
   assert.deepEqual(asked.revisions.where, { tenantId: 't1', purchaseOrderId: { in: ['PO-1'] }, previousDate: { not: null } })
   assert.deepEqual([result.suppliers.acme.revisions.revisions, result.suppliers.acme.replies.outcomes.proposed], [1, 1])
@@ -162,20 +167,22 @@ test('without purchase order read the service reads no orders, revisions or repl
 })
 
 // The scorecard stays on the original promise (#363 §4.12): a date the
-// supplier moved later does not make a late delivery on time, and the
-// scorecard reads nothing this measure reads.
+// supplier moved later does not make a late delivery on time, and reading the
+// measure over the same rows leaves the scorecard's output as it was.
 test('on time stays measured against the original promise, whatever the revisions say', () => {
   const promised = { id: 'PO-R', supplierId: 'acme', supplierName: 'Acme', currency: 'GBP', status: 'fully_received', issuedAt: at('2026-10-01'), expectedDate: null, metadata: {}, lines: [{ id: 'PO-R-L1', sku: 'SKU-1', itemName: 'Holder', unit: 'pcs', orderedQuantity: 10, receivedQuantity: 10, amount: 100, originalPromisedDate: at('2026-11-02'), metadata: { promisedDate: '2026-11-12' } }] }
   const receipts = [{ id: 'GRN-1', poId: 'PO-R', postedAt: '2026-11-09T12:00:00Z', lines: [{ purchaseOrderLineId: 'PO-R-L1', acceptedQty: 10, rejectedQty: 0 }] }]
-  const scorecard = buildSupplierScorecard({ purchaseOrders: [promised], receipts, suppliers: [{ id: 'acme', name: 'Acme' }], period: window, asOfDay: window.to, timeZone: 'Europe/London' })
+  const score = () => buildSupplierScorecard({ purchaseOrders: [promised], receipts, suppliers: [{ id: 'acme', name: 'Acme' }], period: window, asOfDay: window.to, timeZone: 'Europe/London', generatedAt: '2026-11-20T12:00:00.000Z' })
+  const scorecard = score()
   const [row] = scorecard.suppliers
   // Received 9 Nov: 7 days after the original 2 Nov, before the revised 12 Nov.
   assert.equal(row.obligations[0].onTime, false)
   assert.equal(row.obligations[0].daysLate, 7)
   const reliability = buildSupplierReliability({ suppliers: [{ id: 'acme' }], purchaseOrders: [promised], revisions: [revision('PO-R', '2026-11-02', '2026-11-12', 'supplier_reply')], window, asOf: window.to, visibility: visible })
   assert.equal(reliability.suppliers.acme.revisions.revisions, 1)
-  const source = readFileSync(new URL('./supplier-scorecard.mjs', import.meta.url), 'utf8')
-  for (const word of ['supplierReply', 'purchaseOrderPromiseRevision', 'supplier-reliability']) assert.equal(source.includes(word), false, word)
+  // Same rows, same scorecard: the measure changed nothing it read.
+  assert.deepEqual(score(), scorecard)
+  assert.deepEqual([scorecard.suppliers[0].metrics.onTime.count, scorecard.suppliers[0].metrics.onTime.of], [0, 1])
 })
 
 // A recorded reply's dates come from its revisions: by revisionIds, else by
