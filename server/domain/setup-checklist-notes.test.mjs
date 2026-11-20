@@ -44,7 +44,7 @@ test('the post permission comes from the reader\'s roles', () => {
 })
 
 test('the counts check items with a preferred supplier first, then active links a page at a time, stopping at the first', async () => {
-  const fake = ({ preferred, links }) => {
+  const stubPrisma = ({ preferred, links }) => {
     const calls = []
     const counter = (name, value) => ({ count: async (args) => { calls.push([name, 'count', args.where]); return typeof value === 'function' ? value(args.where) : value } })
     const prisma = {
@@ -63,21 +63,21 @@ test('the counts check items with a preferred supplier first, then active links 
   }
   const linkRows = (n, activeAt = -1) => Array.from({ length: n }, (_, at) => ({ id: `L${String(at).padStart(4, '0')}`, payload: { active: at === activeAt } }))
   // Items with a preferred supplier: no link is read.
-  const withPreferred = fake({ preferred: 2, links: linkRows(500) })
+  const withPreferred = stubPrisma({ preferred: 2, links: linkRows(500) })
   const result = await readFirstRunSetupCounts(withPreferred.prisma, { tenantId: 'T1', now: new Date('2026-11-20T00:00:00Z') })
   assert.deepEqual([result.itemSupplierSources, result.openingStockToPost], [2, 4])
   assert.equal(withPreferred.calls.filter(([, method]) => method === 'findMany').length, 0)
   assert.deepEqual(withPreferred.calls.find(([name, , where]) => name === 'item' && where.preferredSupplierId)[2], { tenantId: 'T1', preferredSupplierId: { not: null } })
   assert.deepEqual(withPreferred.calls.find(([name]) => name === 'inventoryAdjustmentDocument')[2], { tenantId: 'T1', reasonCode: 'opening_balance', postingStatus: 'unposted', workflowStatus: { in: ['draft', 'ready'] } })
   // None preferred: links read 200 at a time, stopping at the first active one (in the second page).
-  const scanned = fake({ preferred: 0, links: linkRows(1000, 250) })
+  const scanned = stubPrisma({ preferred: 0, links: linkRows(1000, 250) })
   assert.equal((await readFirstRunSetupCounts(scanned.prisma, { tenantId: 'T1' })).itemSupplierSources, 1)
   const pages = scanned.calls.filter(([, method]) => method === 'findMany').map(([, , args]) => args)
   assert.equal(pages.length, 2)
   assert.deepEqual([pages[0].where, pages[0].take, pages[0].select], [{ tenantId: 'T1', namespace: 'master-data.item-suppliers' }, 200, { id: true, payload: true }])
   assert.deepEqual([pages[1].cursor, pages[1].skip], [{ id: 'L0199' }, 1])
   // Only inactive links: every page read, none active.
-  const inactive = fake({ preferred: 0, links: linkRows(450) })
+  const inactive = stubPrisma({ preferred: 0, links: linkRows(450) })
   assert.equal((await readFirstRunSetupCounts(inactive.prisma, { tenantId: 'T1' })).itemSupplierSources, 0)
   assert.equal(inactive.calls.filter(([, method]) => method === 'findMany').length, 3)
 })
