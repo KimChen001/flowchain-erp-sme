@@ -32,11 +32,26 @@ export function assistantV2EarlierTurns(conversationContext) {
   return turns.slice(-TURNS)
 }
 
-// What the asking user's role cannot see (the facts' limitations): whole
-// sources, and the amounts on sources it can see. null when nothing is hidden.
-export function assistantV2Hidden(facts) {
+// The money sources the assistant's tools read, each with the permission
+// that opens it; the tools are left out for a role without it. A role that
+// cannot see one has it named in hiddenForRole, so the answer says the role
+// cannot see it rather than that a tool is missing (2026-11-20 question set:
+// a buyer asking for the month's margin got "the gross_profit report isn't
+// offered to me").
+const MONEY_SOURCES = Object.freeze([
+  ['sales_and_margins', 'finance.customer_invoice.read'],
+  ['receivables', 'finance.receivable.read'],
+  ['supplier_payables', 'finance.payable.read'],
+])
+
+// What the asking user's role cannot see (the facts' limitations, and the
+// money sources its permissions leave out): whole sources, and the amounts on
+// sources it can see. null when nothing is hidden.
+export function assistantV2Hidden(facts, context = null) {
   const limitations = array(facts?.limitations)
-  const sources = [...new Set(limitations.filter((row) => row.code === 'hidden_by_permission').flatMap((row) => array(row.sources)))]
+  const codes = context?.actor?.permissionCodes
+  const moneyHidden = typeof codes?.has === 'function' ? MONEY_SOURCES.filter(([, permission]) => !codes.has(permission)).map(([source]) => source) : []
+  const sources = [...new Set([...limitations.filter((row) => row.code === 'hidden_by_permission').flatMap((row) => array(row.sources)), ...moneyHidden])]
   const amountsOn = [...new Set(limitations.filter((row) => row.code === 'amounts_hidden').map((row) => text(row.what)).filter(Boolean))]
   return sources.length || amountsOn.length ? { sources, amountsOn } : null
 }
