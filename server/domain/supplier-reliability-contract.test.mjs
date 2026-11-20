@@ -1,0 +1,56 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import {
+  SUPPLIER_RELIABILITY_CONTRACT_VERSION, SUPPLIER_RELIABILITY_ROUTE, SUPPLIER_RELIABILITY_RULES,
+  supplierReliabilityErrorSchema, supplierReliabilityResponseSchema,
+} from '../../shared/supplier-reliability-contract.mjs'
+import { SUPPLIER_SCORECARD_RULES } from './supplier-scorecard.mjs'
+
+const outcomes = { recordedUnchanged: 2, recordedEdited: 1, notRecorded: { wrong_reading: 1, supplier_will_confirm: 0, other: 0 }, needsYou: 1, proposed: 0, nothingToRecord: 1 }
+const response = {
+  contractVersion: SUPPLIER_RELIABILITY_CONTRACT_VERSION,
+  asOf: '2026-11-20',
+  window: { from: '2026-08-23', to: '2026-11-20', days: 90 },
+  minimumSample: 5,
+  visibility: { revisions: true, replies: true },
+  suppliers: {
+    'sup-acme': {
+      revisions: { orders: 8, revisedOrders: 3, revisions: 5, perOrder: 0.625, averageDaysMoved: 4.2, movedLater: { count: 4, of: 5, share: 0.8 } },
+      replies: { received: 6, read: 5, withStatedDate: { count: 4, of: 5, share: 0.8 }, outcomes, recorded: 3, medianHoursToRecord: null },
+    },
+    'sup-hidden': { revisions: null, replies: null },
+  },
+}
+
+test('the reliability response parses, with null parts for what the reader may not read', () => {
+  assert.equal(supplierReliabilityResponseSchema.parse(response).suppliers['sup-acme'].revisions.revisions, 5)
+  assert.equal(supplierReliabilityResponseSchema.parse(response).suppliers['sup-hidden'].replies, null)
+})
+
+test('a share under the minimum sample is null, never left out', () => {
+  const small = structuredClone(response)
+  small.suppliers['sup-acme'].revisions.movedLater = { count: 1, of: 2, share: null }
+  assert.ok(supplierReliabilityResponseSchema.safeParse(small).success)
+  delete small.suppliers['sup-acme'].revisions.movedLater.share
+  assert.equal(supplierReliabilityResponseSchema.safeParse(small).success, false)
+})
+
+test('unknown fields and outcome codes are refused', () => {
+  const extra = structuredClone(response)
+  extra.suppliers['sup-acme'].replies.outcomes.recordedLate = 1
+  assert.equal(supplierReliabilityResponseSchema.safeParse(extra).success, false)
+  const reason = structuredClone(response)
+  reason.suppliers['sup-acme'].replies.outcomes.notRecorded.duplicate = 1
+  assert.equal(supplierReliabilityResponseSchema.safeParse(reason).success, false)
+})
+
+test('the window and minimum sample are the scorecard\'s, so the page shows one rule', () => {
+  assert.equal(SUPPLIER_RELIABILITY_RULES.windowDays, SUPPLIER_SCORECARD_RULES.periodDays)
+  assert.equal(SUPPLIER_RELIABILITY_RULES.minimumSample, SUPPLIER_SCORECARD_RULES.minimumSample)
+  assert.equal(SUPPLIER_RELIABILITY_ROUTE, '/api/master-data/supplier-reliability')
+})
+
+test('errors use the flat code and message body', () => {
+  assert.ok(supplierReliabilityErrorSchema.safeParse({ code: 'SUPPLIER_RELIABILITY_UNAVAILABLE', message: 'Try again.' }).success)
+  assert.equal(supplierReliabilityErrorSchema.safeParse({ code: 'SOMETHING_ELSE', message: 'x' }).success, false)
+})
