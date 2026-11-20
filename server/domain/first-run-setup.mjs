@@ -16,23 +16,42 @@ import { firstRunSetupSteps } from './today-work.mjs'
 //            reportReadAccessFor), and whether import and inventory
 //            adjustments are turned on, which decides each step's page.
 
+// Whether any active item-supplier link exists: active is a field of the
+// stored record, so links are read a page at a time, stopping at the first
+// active one (a large workspace never reads them all).
+const LINK_PAGE = 200
+async function anyActiveItemSupplierLink(prisma, tenantId) {
+  for (let cursor = null; ;) {
+    const page = await prisma.runtimeRecord.findMany({
+      where: { tenantId, namespace: ITEM_SUPPLIER_NAMESPACE },
+      select: { id: true, payload: true },
+      orderBy: { id: 'asc' },
+      take: LINK_PAGE,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    })
+    if ((page || []).some((row) => row?.payload?.active !== false)) return true
+    if (!page || page.length < LINK_PAGE) return false
+    cursor = page[page.length - 1].id
+  }
+}
+
 export async function readFirstRunSetupCounts(prisma, { tenantId, now = new Date() }) {
-  const [items, suppliers, customers, stockedItems, activeUsers, pendingInvitations, links, itemsWithPreferred, openingStockToPost] = await Promise.all([
+  const [items, suppliers, customers, stockedItems, activeUsers, pendingInvitations, itemsWithPreferred, openingStockToPost] = await Promise.all([
     prisma.item.count({ where: { tenantId } }),
     prisma.supplier.count({ where: { tenantId } }),
     prisma.runtimeRecord.count({ where: { tenantId, namespace: CUSTOMER_NAMESPACE } }),
     prisma.inventoryBalance.count({ where: { tenantId, onHandQuantity: { gt: 0 } } }),
     prisma.user.count({ where: { tenantId, status: 'active' } }),
     prisma.workspaceInvitation.count({ where: { tenantId, status: 'pending', expiresAt: { gt: now } } }),
-    // Active links only (a link set inactive names no supplier); read, not
-    // counted, since active is a field of the stored record.
-    prisma.runtimeRecord.findMany({ where: { tenantId, namespace: ITEM_SUPPLIER_NAMESPACE }, select: { payload: true } }),
+    // An item with a preferred supplier can name one (a purchase request offers it).
     prisma.item.count({ where: { tenantId, preferredSupplierId: { not: null } } }),
     // Opening stock drafted as adjustments (imported or by hand), not posted yet.
     prisma.inventoryAdjustmentDocument.count({ where: { tenantId, reasonCode: 'opening_balance', postingStatus: 'unposted', workflowStatus: { in: ['draft', 'ready'] } } }),
   ])
-  const activeLinks = (links || []).filter((row) => row?.payload?.active !== false).length
-  return { items, suppliers, customers, stockedItems, activeUsers, pendingInvitations, itemSupplierSources: activeLinks + itemsWithPreferred, openingStockToPost }
+  // itemSupplierSources is above 0 when some item can name a supplier: the
+  // cheap count first; the link scan only when it is 0.
+  const itemSupplierSources = itemsWithPreferred > 0 ? itemsWithPreferred : (await anyActiveItemSupplierLink(prisma, tenantId)) ? 1 : 0
+  return { items, suppliers, customers, stockedItems, activeUsers, pendingInvitations, itemSupplierSources, openingStockToPost }
 }
 
 export function firstRunSetupOptions(access, env = process.env) {

@@ -43,23 +43,43 @@ test('the post permission comes from the reader\'s roles', () => {
   assert.equal(reportReadAccessFor(actorWith(['inventory.adjustment.read'])).home.setup.postOpeningStock, false)
 })
 
-test('the counts read active item-supplier links, items with a preferred supplier and unposted opening-stock drafts, in the workspace', async () => {
-  const calls = []
-  const counter = (name, value) => ({ count: async (args) => { calls.push([name, 'count', args.where]); return typeof value === 'function' ? value(args.where) : value } })
-  const prisma = {
-    item: counter('item', (where) => (where.preferredSupplierId ? 1 : 3)), supplier: counter('supplier', 2), inventoryBalance: counter('inventoryBalance', 0),
-    user: counter('user', 1), workspaceInvitation: counter('workspaceInvitation', 0), inventoryAdjustmentDocument: counter('inventoryAdjustmentDocument', 4),
-    runtimeRecord: {
-      count: async (args) => { calls.push(['runtimeRecord', 'count', args.where]); return 0 },
-      findMany: async (args) => { calls.push(['runtimeRecord', 'findMany', args.where]); return [{ payload: { active: true } }, { payload: { active: false } }, { payload: {} }] },
-    },
+test('the counts check items with a preferred supplier first, then active links a page at a time, stopping at the first', async () => {
+  const fake = ({ preferred, links }) => {
+    const calls = []
+    const counter = (name, value) => ({ count: async (args) => { calls.push([name, 'count', args.where]); return typeof value === 'function' ? value(args.where) : value } })
+    const prisma = {
+      item: counter('item', (where) => (where.preferredSupplierId ? preferred : 3)), supplier: counter('supplier', 2), inventoryBalance: counter('inventoryBalance', 0),
+      user: counter('user', 1), workspaceInvitation: counter('workspaceInvitation', 0), inventoryAdjustmentDocument: counter('inventoryAdjustmentDocument', 4),
+      runtimeRecord: {
+        count: async (args) => { calls.push(['runtimeRecord', 'count', args.where]); return 0 },
+        findMany: async (args) => {
+          calls.push(['runtimeRecord', 'findMany', args])
+          const start = args.cursor ? links.findIndex((row) => row.id === args.cursor.id) + (args.skip || 0) : 0
+          return links.slice(start, start + args.take)
+        },
+      },
+    }
+    return { prisma, calls }
   }
-  const result = await readFirstRunSetupCounts(prisma, { tenantId: 'T1', now: new Date('2026-11-20T00:00:00Z') })
-  // Two active links (a missing flag is active) and one item with a preferred supplier; the inactive link is not a source.
-  assert.deepEqual([result.itemSupplierSources, result.openingStockToPost], [3, 4])
-  assert.deepEqual(calls.find(([name, method]) => name === 'runtimeRecord' && method === 'findMany')[2], { tenantId: 'T1', namespace: 'master-data.item-suppliers' })
-  assert.deepEqual(calls.find(([name, , where]) => name === 'item' && where.preferredSupplierId)[2], { tenantId: 'T1', preferredSupplierId: { not: null } })
-  assert.deepEqual(calls.find(([name]) => name === 'inventoryAdjustmentDocument')[2], { tenantId: 'T1', reasonCode: 'opening_balance', postingStatus: 'unposted', workflowStatus: { in: ['draft', 'ready'] } })
+  const linkRows = (n, activeAt = -1) => Array.from({ length: n }, (_, at) => ({ id: `L${String(at).padStart(4, '0')}`, payload: { active: at === activeAt } }))
+  // Items with a preferred supplier: no link is read.
+  const withPreferred = fake({ preferred: 2, links: linkRows(500) })
+  const result = await readFirstRunSetupCounts(withPreferred.prisma, { tenantId: 'T1', now: new Date('2026-11-20T00:00:00Z') })
+  assert.deepEqual([result.itemSupplierSources, result.openingStockToPost], [2, 4])
+  assert.equal(withPreferred.calls.filter(([, method]) => method === 'findMany').length, 0)
+  assert.deepEqual(withPreferred.calls.find(([name, , where]) => name === 'item' && where.preferredSupplierId)[2], { tenantId: 'T1', preferredSupplierId: { not: null } })
+  assert.deepEqual(withPreferred.calls.find(([name]) => name === 'inventoryAdjustmentDocument')[2], { tenantId: 'T1', reasonCode: 'opening_balance', postingStatus: 'unposted', workflowStatus: { in: ['draft', 'ready'] } })
+  // None preferred: links read 200 at a time, stopping at the first active one (in the second page).
+  const scanned = fake({ preferred: 0, links: linkRows(1000, 250) })
+  assert.equal((await readFirstRunSetupCounts(scanned.prisma, { tenantId: 'T1' })).itemSupplierSources, 1)
+  const pages = scanned.calls.filter(([, method]) => method === 'findMany').map(([, , args]) => args)
+  assert.equal(pages.length, 2)
+  assert.deepEqual([pages[0].where, pages[0].take, pages[0].select], [{ tenantId: 'T1', namespace: 'master-data.item-suppliers' }, 200, { id: true, payload: true }])
+  assert.deepEqual([pages[1].cursor, pages[1].skip], [{ id: 'L0199' }, 1])
+  // Only inactive links: every page read, none active.
+  const inactive = fake({ preferred: 0, links: linkRows(450) })
+  assert.equal((await readFirstRunSetupCounts(inactive.prisma, { tenantId: 'T1' })).itemSupplierSources, 0)
+  assert.equal(inactive.calls.filter(([, method]) => method === 'findMany').length, 3)
 })
 
 test('Today shows the notes, hides Start while drafts wait, in both languages', () => {
