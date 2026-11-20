@@ -53,8 +53,10 @@ export function SupplierReliabilityCard({ suppliers, loadKey = 0, hidden = false
   hidden?: boolean;
 }) {
   const { language, locale } = useI18n();
+  // A count filled into a sentence is written in the workspace's regional
+  // format too ("1,250 suppliers"), whatever the interface language.
   const t = (value: string, values: Record<string, string | number> = {}) =>
-    Object.entries(values).reduce((text, [key, filled]) => text.split(`{${key}}`).join(String(filled)), supplierCopy(value, language));
+    Object.entries(values).reduce((text, [key, filled]) => text.split(`{${key}}`).join(typeof filled === "number" ? new Intl.NumberFormat(locale).format(filled) : filled), supplierCopy(value, language));
   const [data, setData] = useState<SupplierReliability | null>(null);
   const [failed, setFailed] = useState(false);
 

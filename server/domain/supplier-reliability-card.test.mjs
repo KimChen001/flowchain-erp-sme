@@ -114,8 +114,10 @@ test('every word on the block is in English and Chinese, with its placeholders',
   }
   assert.equal(supplierCopy('Average days moved', 'zh-CN'), '平均变动天数')
   assert.equal(supplierCopy('平均变动天数', 'en-US'), 'Average days moved')
-  // Numbers and dates follow the workspace locale, never the interface language.
+  // Numbers and dates follow the workspace locale, never the interface
+  // language, also a count filled into a sentence (the quiet line, tooltips).
   assert.match(card, /new Intl\.NumberFormat\(locale, options\)/)
+  assert.match(card, /join\(typeof filled === "number" \? new Intl\.NumberFormat\(locale\)\.format\(filled\) : filled\)/)
   assert.match(card, /formatCalendarDay\(data\.window\.from, locale\)/)
 })
 

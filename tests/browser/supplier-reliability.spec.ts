@@ -120,7 +120,8 @@ test.describe("promised dates and supplier replies on Supplier evaluation", () =
     // A Chinese interface in a workspace written in British format.
     await useLanguage(page, "zh-CN", "en-GB");
     const [first] = await suppliersOf(request, auth);
-    await stubReliability(page, () => ({ json: reliability({ [first.id]: busy }) }));
+    // 1,250 orders due: a count large enough to be grouped.
+    await stubReliability(page, () => ({ json: reliability({ [first.id]: { ...busy, revisions: { ...busy.revisions, orders: 1250, perOrder: 0.004 } } }) }));
     await page.goto("/app/master-data/supplier-evaluation");
     const block = page.getByTestId("supplier-reliability");
     await expect(block).toContainText("承诺交期变更与供应商回复（90 天）");
@@ -128,6 +129,8 @@ test.describe("promised dates and supplier replies on Supplier evaluation", () =
     // The window in the workspace's format (en-GB), not the interface's (zh-CN: 2026年8月23日).
     await expect(page.getByTestId("supplier-reliability-note")).toContainText("23 Aug 2026 至 20 Nov 2026。");
     const row = block.getByTestId(`supplier-reliability-row-${first.id}`);
+    // A count in a tooltip sentence is grouped in that format too.
+    await expect(row.locator("td").nth(3).locator("span")).toHaveAttribute("title", "到期订单：1,250。有交期变更的订单：3。交期变更：5。");
     await expect(row.getByTestId("supplier-reliability-moved")).toHaveText("+4.2 天80% 为推迟");
     await expect(row.getByTestId("supplier-reliability-outcomes")).toHaveText("已记录 3 · 手动记录 1 · 未记录 1 · 待处理 1");
     expect((await row.getByTestId("supplier-reliability-outcomes").getAttribute("title"))!.split("\n").slice(0, 3)).toEqual(["按读取结果记录：2", "修改后记录：1", "手动记录：1"]);
