@@ -361,10 +361,11 @@ test('the UCI figures with purchase requests, orders still being filled and revi
 // #363 §4.10: a supplier reply read back from the order's history. The
 // reply cases come last, asked by the manager; the reply is pasted first
 // (setup) and names a day 14 days after the day asked.
-test('the supplier reply cases come last: the reply pasted first, its day, and an order with none', () => {
+test('the supplier reply cases follow the records cases: the reply pasted first, its day, and an order with none', () => {
   const facts = uciFacts(smallPlan(), { today: '2026-11-20' })
   const cases = buildUciCases(facts)
-  const replies = cases.slice(-3)
+  const start = cases.findIndex((row) => row.id === 'reply-said-en')
+  const replies = cases.slice(start, start + 3)
   assert.deepEqual(replies.map((row) => row.id), ['reply-said-en', 'reply-said-zh', 'reply-none-en'])
   assert.ok(replies.every((row) => row.asUser === 'kim@example.com' && row.setup))
   const [en, zh, none] = replies

@@ -14,6 +14,7 @@ import { buildUciMoneyCases } from './uci-money-cases.mjs'
 import { buildUciPathCases } from './uci-path-cases.mjs'
 import { buildUciRecordsCases } from './uci-records-cases.mjs'
 import { buildUciReplyCases } from './uci-reply-cases.mjs'
+import { buildUciSmeCases } from './uci-sme-cases.mjs'
 
 const round = (value, places = 2) => Math.round(value * 10 ** places) / 10 ** places
 const EN_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
@@ -226,9 +227,11 @@ export function buildUciCases(facts) {
   // not left to its place in the list. The money cases and margin-en are
   // asked by the manager, who sees amounts and margins; the path cases name
   // their own user. The records cases (design audit C12) come last and name
-  // their user too. The supplier reply cases (#363 §4.10) follow them, each
-  // naming its user.
-  return [...cases, ...buildUciConversationCases(facts), ...buildUciConstraintCases(facts), ...buildUciMoneyCases(facts, { last }), ...actions, ...buildUciPathCases(facts, { last }), ...buildUciRecordsCases(facts, { manager: UCI_MANAGER }), ...buildUciReplyCases(facts, { manager: UCI_MANAGER })]
+  // their user too. The supplier reply cases (#363 §4.10) follow them, then
+  // the SME buyer questions written by us (2026-11-20), each naming its user.
+  const replies = buildUciReplyCases(facts, { manager: UCI_MANAGER })
+  const supplierReply = replies.find((row) => row.setup?.supplierReply)?.setup.supplierReply
+  return [...cases, ...buildUciConversationCases(facts), ...buildUciConstraintCases(facts), ...buildUciMoneyCases(facts, { last }), ...actions, ...buildUciPathCases(facts, { last }), ...buildUciRecordsCases(facts, { manager: UCI_MANAGER }), ...replies, ...buildUciSmeCases(facts, { manager: UCI_MANAGER, buyer: UCI_BUYER, supplierReply })]
     .map((row) => (row.asUser || !(MANAGER_KINDS.has(row.kind) || row.id === 'margin-en') ? row : { ...row, asUser: UCI_MANAGER }))
     .map((row) => (UCI_LOOKUPS.has(row.id) ? { ...row, expect: { ...row.expect, brief: true } } : row))
     .map((row) => (UCI_REQUIRED_TOOLS[row.id] ? { ...row, expect: { ...row.expect, calls: UCI_REQUIRED_TOOLS[row.id] } } : row))
