@@ -30,7 +30,7 @@ const REPORT_ENGLISH: Record<string, string> = {
   "采购分析": "Procurement analytics", "跟踪已承诺采购支出与未结采购订单": "Track committed purchasing spend and open purchase orders", "逾期采购订单": "Overdue purchase orders",
   "销售分析": "Sales analytics", "跟踪销售订单与未履约需求": "Track sales orders and unfulfilled demand", "风险销售订单": "Sales orders at risk",
   "库存分析": "Inventory analytics", "查看在手库存与存在短缺的 SKU": "Review on-hand inventory and SKUs with shortages", "风险库存": "Inventory at risk",
-  "发票分析": "Invoice analytics", "查看已提交采购发票金额": "Review submitted supplier invoice amounts", "待处理发票": "Open invoices",
+  "发票分析": "Invoice analytics", "采购发票分析": "Supplier invoice analytics", "查看已提交采购发票金额": "Review submitted supplier invoice amounts", "待处理发票": "Open invoices",
   "供应商分析": "Supplier analytics", "查看供应商记录与已承诺采购支出": "Review supplier records and committed purchasing spend", "供应商绩效": "Supplier performance",
   "调整当前视图": "Customize view", "指标口径": "Metric definitions", "导出": "Export", "保存视图": "Save view", "开始日期": "Start date", "结束日期": "End date", "公司": "Company", "比较方式": "Comparison", "不比较": "No comparison", "上期": "Previous period", "同比": "Year over year", "更多筛选": "More filters", "清除筛选": "Clear filters",
   "全部公司": "All companies", "全部仓库": "All warehouses", "全部供应商": "All suppliers", "全部客户": "All customers", "全部品类": "All categories", "全部币种": "All currencies", "仓库": "Warehouse", "供应商": "Supplier", "客户": "Customer", "品类": "Category", "币种": "Currency",
@@ -56,7 +56,7 @@ const VIEW_COPY: Record<DashboardView, { label: string; subtitle: string; detail
   procurement: { label: "采购分析", subtitle: "跟踪已承诺采购支出与未结采购订单", detailTitle: "逾期采购订单" },
   sales: { label: "销售分析", subtitle: "跟踪销售订单与未履约需求", detailTitle: "风险销售订单" },
   inventory: { label: "库存分析", subtitle: "查看在手库存与存在短缺的 SKU", detailTitle: "风险库存" },
-  finance: { label: "发票分析", subtitle: "查看已提交采购发票金额", detailTitle: "待处理发票" },
+  finance: { label: "采购发票分析", subtitle: "查看已提交采购发票金额", detailTitle: "待处理发票" },
   suppliers: { label: "供应商分析", subtitle: "查看供应商记录与已承诺采购支出", detailTitle: "供应商绩效" },
 };
 // Filters the report service applies. An old link or saved view may still carry
