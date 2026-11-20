@@ -31,7 +31,7 @@ export function buildUciReplyCases(facts, { manager }) {
     match: `will ship on ${words(stated)}`,
     dismiss: { reason: 'supplier_will_confirm' },
   }
-  const said = { mentions: [named(hero)], dates: [stated], brief: true }
+  const said = { mentions: [named(hero)], dates: [{ label: 'the day the reply names', date: stated }], brief: true }
   return [
     { id: 'reply-said-en', kind: 'supplier', language: 'en-US', asUser: manager, setup: { supplierReply },
       turns: [{ text: 'What did Acme say about {order}?', order: lateAcme }],

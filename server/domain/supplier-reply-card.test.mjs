@@ -175,7 +175,11 @@ test('every code the card shows has English and Chinese words', () => {
 
 test('the paste box sits on a chased overdue item and on the order page; buttons need the revise permission', () => {
   const today = read('src/modules/overview/DecisionCards.tsx')
-  assert.match(today, /entry\.row\.kind === "purchase_order_overdue" && entry\.decision === "chased" && !entry\.row\.detail\?\.notIssued \? <SupplierReplies orderId=\{entry\.row\.recordId\} entry="today" onRecorded=\{onChanged\} \/> : null/)
+  // Chased: set aside, or back on Today after the follow-up (chasedOn), and
+  // only an order the supplier has.
+  assert.match(today, /entry\.row\.kind === "purchase_order_overdue" && \(entry\.decision === "chased" \|\| Boolean\(entry\.chasedOn\)\) && !entry\.row\.detail\?\.notIssued;/)
+  assert.match(today, /\{takesSupplierReply\(entry\) \? <SupplierReplies orderId=\{entry\.row\.recordId\} entry="today" onRecorded=\{onChanged\} \/> : null\}/)
+  assert.match(today, /\{takesSupplierReply\(entry\) \? <div className="mt-1\.5"><SupplierReplies orderId=\{row\.recordId\} entry="today" onRecorded=\{onChanged\} \/><\/div> : null\}/)
   const page = read('src/modules/purchasing/Page.tsx')
   assert.match(page, /<SupplierReplies orderId=\{selectedPO\.po\} orderStatus=\{String\(selectedPO\.status \|\| ""\)\} entry="order" onRecorded=\{loadWorkbench\} \/>/)
   // The promised dates are read again after a recording changes the order.

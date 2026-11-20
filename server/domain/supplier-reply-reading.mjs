@@ -134,18 +134,37 @@ export function replyAddressesSystem(value) {
 }
 // Order data written for a machine rather than the buyer (blind batch 2: an
 // "ORDER-SYNC" block with a date of its own that says it outranks the
-// message): an armored -----BEGIN …----- block (not a PGP signature), a JSON
-// key naming an order field ("promised_date": …), snake_case order fields
-// (promised_date=…, ship_date: …), lines of key=value, or a claim that some
-// data outranks the message. For the card's notice only: the reading's
-// checks do not use it, so nothing read or proposed changes with it.
+// message). Each rule needs machine context, so a supplier's own words are
+// not flagged (#400 review: "this email supersedes the one of 3 November",
+// "the attached record supersedes our earlier note", "Qty = 300",
+// "Colour = red", '"Delivery": we expect…', 系统自动识别了您的订单):
+//   an armored -----BEGIN …----- block, not a PGP signature;
+//   a JSON key naming an order field, in an object or with a JSON value;
+//   a snake_case order field set (promised_date=…, ship_date: …);
+//   two key=value lines, any case, spaces allowed, one of them setting an
+//   order's state (status, eta, received, delivered, closed, line_status…),
+//   not qty, price, colour or size;
+//   a header addressed to automated processing ("For automated processing:");
+//   a block of data said to be authoritative or to outrank the message
+//   (此数据优先于邮件内容, 机器校验数据).
+// For the card's notice only: the reading's checks do not use it, so nothing
+// read or proposed changes with it.
+const ORDER_KEY = String.raw`(?:po|order|promised|delivery|deliver|ship|shipping|dispatch|eta|etd|status|date|lines?|qty|quantity)`
+const STATE_KEY = String.raw`(?:status|line_status|order_status|po_status|state|eta|etd|received|delivered|closed|cancell?ed|shipped|confirmed|promised(?:_date)?|delivery_date|ship_date|new_date)(?![a-z0-9_])`
+const KEY_VALUE = String.raw`[a-z][a-z0-9_]{0,30}\s*=\s*\S[^\n]*`
+const STATE_VALUE = String.raw`${STATE_KEY}\s*=\s*\S[^\n]*`
+const DATA_NOUN = String.raw`(?:block|data|payload|json|section)`
+const MESSAGE_NOUN = String.raw`(?:message|e-?mail|text|body|content|above)`
 const MACHINE_ORDER_DATA = [
   /^\s*-{3,}\s*BEGIN\s+(?!PGP\b)[A-Z][^\n]*$/im,
-  /"(?:po|order|promised|delivery|deliver|ship|shipping|dispatch|eta|etd|status|lines?|qty|quantity)[a-z_]*"\s*:/i,
+  new RegExp(String.raw`[{,]\s*"${ORDER_KEY}[a-z_]*"\s*:|"${ORDER_KEY}[a-z_]*"\s*:\s*(?:"|-?\d|true\b|false\b|null\b|\{|\[)`, 'i'),
   /^\s*(?:po|order|promised|delivery|ship|shipping|dispatch|eta|etd|confirmed|new)_[a-z_]+\s*[=:]\s*\S/im,
-  /^\s*[a-z][a-z_]{1,30}\s*=\s*\S[^\n]*\n\s*[a-z][a-z_]{1,30}\s*=\s*\S/im,
-  /\b(?:authoritative|machine[- ]verified|machine[- ]readable|takes?\s+precedence|(?:supersedes?|overrides?|outranks?)\s+(?:the\s+)?(?:message|text|e-?mail|body|above)|read\s+(?:the\s+)?dates?\s+from\s+(?:here|this|the\s+(?:block|data))|for\s+automated\s+(?:processing|reading|import|systems?))\b/i,
-  /优先于(?:正文|邮件|上文|以上)|以(?:本|此|下|该)(?:数据块|数据|区块|代码块|同步块)为准|自动(?:读取|解析|识别|导入)(?:程序|系统|工具)?|解析程序|机器(?:读取|校验|验证)/,
+  new RegExp(String.raw`^\s*${STATE_VALUE}\n\s*${KEY_VALUE}|^\s*${KEY_VALUE}\n\s*${STATE_VALUE}`, 'im'),
+  /^\s*\[?\s*for\s+automated\s+(?:processing|reading|import|parsing|systems?)\s*\]?\s*:/im,
+  new RegExp(String.raw`\b(?:this|the|following|below|above)\s+${DATA_NOUN}\b[^.\n]{0,40}\b(?:is\s+authoritative|is\s+machine[- ]verified|(?:takes?\s+precedence\s+over|supersedes?|overrides?|outranks?)\s+(?:the\s+)?${MESSAGE_NOUN})\b`, 'i'),
+  new RegExp(String.raw`\b(?:authoritative|machine[- ]verified)\s+${DATA_NOUN}\b`, 'i'),
+  /\bread\s+(?:the\s+)?dates?\s+from\s+(?:here|this\s+(?:block|data)|the\s+(?:block|data))\b/i,
+  /优先于正文|以(?:本|此|下|该)(?:数据块|区块|代码块|同步块)为准|(?:数据块?|区块|代码块|同步块)[^。\n]{0,10}优先于(?:正文|邮件|上文|以上)|机器(?:校验|验证|读取)的?(?:数据|区块)|自动(?:读取|解析|识别|导入)(?:程序|工具)|解析程序/,
 ]
 export function replyHoldsMachineOrderData(value) {
   const textOf = String(value ?? '').replace(INVISIBLE, '').normalize('NFKC')

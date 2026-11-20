@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { decisionKey, decisionSnapshot } from '../domain/decision-items.mjs'
+import { chasedOnOf, decisionKey, decisionSnapshot } from '../domain/decision-items.mjs'
 
 // Decision items in PostgreSQL (prisma DecisionItem; docs/drafted-decisions-design.md).
 // Live items have activeKey "kind:recordId"; a resolved or expired item keeps
@@ -31,8 +31,10 @@ export function createDecisionItemRepository({ prisma }) {
       })
     }
     for (const item of plan.reopen) {
+      // Only the decision the plan read: one taken since (a reopen and a new
+      // decision in between) is not undone by this read's older copy.
       await model.updateMany({
-        where: { id: item.id, tenantId, state: 'decided' },
+        where: { id: item.id, tenantId, state: 'decided', decidedAt: item.decidedAt ?? null },
         data: { state: 'open', returnOn: null, snapshot: { ...(item.snapshot || {}), returnedOn: today, returnedFrom: item.decision } },
       })
     }
@@ -79,13 +81,17 @@ export function createDecisionItemRepository({ prisma }) {
     const item = await liveItem(tenantId, row, { now, today })
     if (item.state !== 'open') throw await alreadyDecided(tenantId, item.id)
     const documents = parsed.documentIds || []
+    // The chase day stays through later decisions (chasedOnOf). An item
+    // chased before chasedOn was kept has it only in decidedOn, which this
+    // decision overwrites, so it is written down now.
+    const chasedOn = parsed.decision === 'chased' ? today : chasedOnOf(item)
     return prisma.$transaction(async (tx) => {
       const written = await tx.decisionItem.updateMany({
         where: { id: item.id, tenantId, state: 'open' },
         data: {
           state: 'decided', decision: parsed.decision, reasonCode: parsed.reasonCode, note: parsed.note, returnOn: parsed.returnOn,
           decidedAt: now, decidedById: actorId, documentType: parsed.documentType || null, documentId: documents[0] || null,
-          snapshot: { ...(item.snapshot || {}), ...decisionSnapshot(row, today), ...(documents.length ? { documents } : {}) },
+          snapshot: { ...(item.snapshot || {}), ...decisionSnapshot(row, today), ...(chasedOn ? { chasedOn } : {}), ...(documents.length ? { documents } : {}) },
         },
       })
       if (written.count !== 1) throw await alreadyDecided(tenantId, item.id)
@@ -107,7 +113,7 @@ export function createDecisionItemRepository({ prisma }) {
       const notSetAside = () => fail(409, 'DECISION_NOT_SET_ASIDE', 'This is not set aside any more. Reload Today.')
       if (!item || item.state !== 'decided') throw notSetAside()
       const written = await tx.decisionItem.updateMany({
-        where: { id: item.id, tenantId, state: 'decided' },
+        where: { id: item.id, tenantId, state: 'decided', decidedAt: item.decidedAt ?? null },
         data: { state: 'open', returnOn: null, snapshot: { ...(item.snapshot || {}), returnedOn: today, returnedFrom: item.decision, reopenedBy: actorId } },
       })
       if (written.count !== 1) throw notSetAside()

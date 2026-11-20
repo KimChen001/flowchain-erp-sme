@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  DRAFTED_DECISION_KINDS, addWorkdays, arrangeToday, closableAreas, comesBack, decisionKey, decisionSnapshot, parseDecision, planDecisionSync,
+  DRAFTED_DECISION_KINDS, addWorkdays, arrangeToday, chasedOnOf, closableAreas, comesBack, decisionKey, decisionSnapshot, parseDecision, planDecisionSync,
 } from './decision-items.mjs'
 
 const today = '2026-11-12' // a Thursday
@@ -33,6 +33,21 @@ test('a chased order comes back after 3 workdays, or when its promised date chan
   assert.equal(comesBack(item, same, '2026-11-17'), true)
   const newDate = row('purchase_order_overdue', 'PO-1', { date: '2026-11-10', overdueDays: 2 })
   assert.equal(comesBack(item, newDate, '2026-11-13'), true)
+})
+
+test('the chase day outlives the item coming back and later decisions, so the reply box stays', () => {
+  // Chased and set aside, and chased before chasedOn was kept: the decision day.
+  assert.equal(chasedOnOf(decided('purchase_order_overdue', 'PO-1', 'chased', { decidedOn: '2026-11-09', snapshot: { chasedOn: '2026-11-09' } })), '2026-11-09')
+  assert.equal(chasedOnOf(decided('purchase_order_overdue', 'PO-1', 'chased', { decidedOn: '2026-11-09' })), '2026-11-09')
+  // Back after 3 workdays: open again, the decision still "chased".
+  const back = { ...decided('purchase_order_overdue', 'PO-1', 'chased', { decidedOn: '2026-11-09', snapshot: { chasedOn: '2026-11-09', returnedOn: '2026-11-12', returnedFrom: 'chased' } }), state: 'open', returnOn: null }
+  assert.equal(chasedOnOf(back), '2026-11-09')
+  // Then set aside as "Not now": the chase day stays.
+  assert.equal(chasedOnOf(decided('purchase_order_overdue', 'PO-1', 'not_now', { decidedOn: '2026-11-12', returnOn: '2026-11-16', snapshot: { chasedOn: '2026-11-09' } })), '2026-11-09')
+  // Never chased: none, also when just raised.
+  assert.equal(chasedOnOf(decided('purchase_order_overdue', 'PO-1', 'not_now', { returnOn: '2026-11-16' })), null)
+  assert.equal(chasedOnOf({ state: 'open', snapshot: { raisedOn: today } }), null)
+  assert.equal(chasedOnOf(null), null)
 })
 
 test('a reorder set aside as not needed comes back only when the condition gets materially worse, or after 30 days', () => {
