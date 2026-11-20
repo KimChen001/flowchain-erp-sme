@@ -33,6 +33,9 @@ const COPY = {
     ask: "Ask the AI assistant",
     askNote: "The assistant reads the same records and can draft the next step for you to confirm.",
     none: "Nothing needs attention right now",
+    decisionsOne: "1 of them waits for your decision on Today, with a drafted next step.",
+    decisionsMany: "{n} of them wait for your decision on Today, each with a drafted next step.",
+    openDecisions: "Open Today's decisions",
     noneNote: "When a purchase order is due, an item needs reordering or an invoice waits, it is listed here.",
     loading: "Loading priorities",
     failed: "Could not load priorities",
@@ -50,6 +53,9 @@ const COPY = {
     ask: "询问 AI 助手",
     askNote: "AI 助手读取同样的记录，可以起草下一步操作供你确认。",
     none: "暂无需要处理的事项",
+    decisionsOne: "其中 1 项在今日页“等你决定”，已起草下一步。",
+    decisionsMany: "其中 {n} 项在今日页“等你决定”，每项都已起草下一步。",
+    openDecisions: "打开今日页的待决定事项",
     noneNote: "采购订单到期、物料需要补货或发票待处理时，会显示在这里。",
     loading: "正在加载重点事项",
     failed: "重点事项加载失败",
@@ -74,6 +80,8 @@ export default function AiSuggestionsPage({ onOpenAi }: { onNavigate: NavigateFn
   // A row with a decision card, or set aside, has left Today's work list
   // (DecisionCards.tsx), so it is not among these rows either.
   const decided = new Set(overview?.decisions?.available ? [...(overview.decisions.waiting || []), ...(overview.decisions.setAside || [])].map((entry) => entry.key) : []);
+  // The decision cards are counted in the summary and shown on Today, not here.
+  const waitingDecisions = overview?.decisions?.available ? (overview.decisions.waiting || []).length : 0;
   const items = (overview?.workItems || []).filter((item) => !decided.has(`${item.kind}:${item.recordId}`));
   const today = overview?.today || "";
   // Today's first rows: the earliest of every kind, then the next earliest.
@@ -99,7 +107,11 @@ export default function AiSuggestionsPage({ onOpenAi }: { onNavigate: NavigateFn
       </div>
       {state === "loading" && <p className="py-8 text-center text-xs" style={{ color: A.sub }}>{copy.loading}</p>}
       {state === "error" && <div className="py-8 text-center"><p className="text-sm font-semibold">{copy.failed}</p><button type="button" onClick={() => void load()} className="mt-2 inline-flex items-center gap-1 text-xs text-blue-600"><RefreshCw size={13} />{copy.retry}</button></div>}
-      {state === "loaded" && !items.length && <div className="py-8 text-center"><p className="text-sm" style={{ color: A.sub }}>{copy.none}</p><p className="mx-auto mt-1 max-w-md text-xs" style={{ color: A.gray2 }}>{copy.noneNote}</p></div>}
+      {state === "loaded" && waitingDecisions > 0 && <p className="mt-3 text-xs" style={{ color: A.sub }} data-testid="ai-priorities-decisions">
+        {waitingDecisions === 1 ? copy.decisionsOne : fill(copy.decisionsMany, { n: count.format(waitingDecisions) })}{" "}
+        <Link to="/app/overview/risks" className="font-semibold text-blue-600 hover:underline">{copy.openDecisions} →</Link>
+      </p>}
+      {state === "loaded" && !items.length && !waitingDecisions && <div className="py-8 text-center"><p className="text-sm" style={{ color: A.sub }}>{copy.none}</p><p className="mx-auto mt-1 max-w-md text-xs" style={{ color: A.gray2 }}>{copy.noneNote}</p></div>}
       {state === "loaded" && items.length > 0 && <>
         <ul className="mt-4 divide-y" data-testid="ai-priorities-list">
           {shown.map((item) => <li key={item.id} className="flex items-start gap-3 py-3" data-kind={item.kind}>
