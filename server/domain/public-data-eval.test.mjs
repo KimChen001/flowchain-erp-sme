@@ -12,6 +12,7 @@ import { buildCases, inventoryWorth, itemEconomics, readReference } from '../../
 import { answerLanguage, countWordsIn, dateForms, englishRun, numbersIn, repeatedPart, scoreAnswer, tidyProblems } from '../../tests/ai-eval/v2-public/score.mjs'
 import { uciEconomics, uciFacts } from '../../tests/ai-eval/v2-public/uci-facts.mjs'
 import { buildUciCases, lastWholeMonths } from '../../tests/ai-eval/v2-public/uci-cases.mjs'
+import { WALKTHROUGH_DEMO_PORTS, setupRefusal } from '../../tests/ai-eval/v2-public/setup-guard.mjs'
 
 // 90 days averaging 54.49 a day, as FOODS_3_090 does in the M5 window.
 const steadyDaily = Array.from({ length: 90 }, (_, index) => (index < 44 ? 54 : 55))
@@ -384,6 +385,16 @@ test('the supplier reply cases come last: the reply pasted first, its day, and a
   assert.ok(noReply.test('No supplier reply is recorded on PO-202610-0031.'))
   assert.equal(noReply.test('The order is not late.'), false)
   assert.ok(invented.test('Globex said it will ship on 2 December.'))
+})
+
+// --setup writes a supplier reply, so it is refused on the walkthrough people
+// use, whichever of its ports is passed; a test instance's ports pass.
+test('the runner refuses --setup against the walkthrough\'s app and API ports', () => {
+  assert.deepEqual(WALKTHROUGH_DEMO_PORTS, [15231, 15232, 18831, 18832])
+  for (const port of [15231, 15232, 18831, 18832, '18831']) assert.match(setupRefusal({ setup: true, port }), /does not run against the walkthrough/)
+  for (const port of [18801, 18802, 18941]) assert.equal(setupRefusal({ setup: true, port }), null)
+  // Without --setup nothing is written, so any port may be read.
+  assert.equal(setupRefusal({ setup: undefined, port: 18831 }), null)
 })
 
 // 2026-11-11, the owner's "先测再改" on hard limits.

@@ -54,6 +54,11 @@ export const supplierReliabilityRevisionsSchema = z.strictObject({
   averageDaysMoved: z.number().nullable(),
   // Revisions that moved the date later, of all revisions.
   movedLater: shareOf,
+}).superRefine((row, ctx) => {
+  // The totals the page relies on: a server that drifts fails the parse, and
+  // the page shows its alert instead of figures that do not add up.
+  if (row.movedLater.of !== row.revisions) ctx.addIssue({ code: 'custom', path: ['movedLater', 'of'], message: 'movedLater.of must equal revisions.' })
+  if (row.revisedOrders > row.orders) ctx.addIssue({ code: 'custom', path: ['revisedOrders'], message: 'revisedOrders cannot exceed orders.' })
 })
 
 // What became of each reply (#363 §4.12): a reply is in exactly one of these,
@@ -93,6 +98,13 @@ export const supplierReliabilityRepliesSchema = z.strictObject({
   // decimal; null when recorded is under the minimum sample.
   recorded: count,
   medianHoursToRecord: z.number().nonnegative().nullable(),
+}).superRefine((row, ctx) => {
+  const { notRecorded, ...outcomes } = row.outcomes
+  const total = Object.values(outcomes).reduce((sum, value) => sum + value, 0) + Object.values(notRecorded).reduce((sum, value) => sum + value, 0)
+  if (total !== row.received) ctx.addIssue({ code: 'custom', path: ['outcomes'], message: 'The outcomes must add up to received.' })
+  if (row.withStatedDate.of !== row.read) ctx.addIssue({ code: 'custom', path: ['withStatedDate', 'of'], message: 'withStatedDate.of must equal read.' })
+  if (row.read > row.received) ctx.addIssue({ code: 'custom', path: ['read'], message: 'read cannot exceed received.' })
+  if (row.recorded !== outcomes.recordedUnchanged + outcomes.recordedEdited + outcomes.recordedManual) ctx.addIssue({ code: 'custom', path: ['recorded'], message: 'recorded must equal the recorded outcomes.' })
 })
 
 // One supplier. A part is null when the reader may not read it.

@@ -3,6 +3,7 @@ import { SUPPLIER_REPLY_DISMISS_REASONS } from '../../shared/supplier-reply-cont
 import { resolveProvisionedActor } from './pilot-identity.mjs'
 import { currentPromisedDay, promiseDay } from './purchase-order-promise-dates.mjs'
 import { reportReadAccessFor } from './report-read-access.mjs'
+import { supplierReplyOutcome, supplierReplyRecordedDates } from './supplier-reply-outcome.mjs'
 import { daysBetween, localDay, scorecardParameters, scorecardPurchaseOrderStanding } from './supplier-scorecard.mjs'
 
 // Supplier reliability (docs/supplier-reply-dates-design.md §4.12, SR-7):
@@ -84,16 +85,26 @@ function revisionsOf(row) {
   }
 }
 
-// What became of one reply: the outcome key, and for a dismissal its reason.
-export function supplierReplyOutcome(reply) {
-  switch (text(reply.state)) {
-    case 'recorded': return Number(reply.editedLines) > 0 ? 'recordedEdited' : 'recordedUnchanged'
-    case 'not_recorded': return 'notRecorded'
-    case 'needs_you': return 'needsYou'
-    case 'proposed': return 'proposed'
-    case 'nothing_to_record': return 'nothingToRecord'
-    default: return null
+// The contract's bucket for one reply, from the outcome the export uses too
+// (supplier-reply-outcome.mjs): unchanged or edited judged on the proposed
+// lines against the dates the reply's revisions wrote, manual when nothing
+// was proposed. { bucket, reason } with reason for a dismissal; null for a
+// superseded paste. recordedDates: the reply's revisions' dates by line.
+const BUCKETS = Object.freeze({
+  recorded_unchanged: 'recordedUnchanged', recorded_edited: 'recordedEdited', recorded_manual: 'recordedManual',
+  // Recorded with its dates unknown (no revisions found for it): the read
+  // looks them up by revisionIds and by the audit rows' origin first, so it
+  // should not happen. When it does it is not counted as unchanged.
+  recorded: 'recordedEdited',
+  needs_you: 'needsYou', proposed: 'proposed', nothing_to_record: 'nothingToRecord',
+})
+export function supplierReliabilityBucket(reply, recordedDates = null) {
+  const outcome = supplierReplyOutcome(reply, { recordedDates })
+  if (text(outcome).startsWith('not_recorded')) {
+    const reason = text(outcome).slice('not_recorded_'.length)
+    return { bucket: 'notRecorded', reason: SUPPLIER_REPLY_DISMISS_REASONS.includes(reason) ? reason : 'other' }
   }
+  return BUCKETS[outcome] ? { bucket: BUCKETS[outcome] } : null
 }
 
 // A read reply with a stated date: at least one line passed the checks with
@@ -103,12 +114,13 @@ const instant = (value) => (value instanceof Date ? value.getTime() : Date.parse
 
 // Reply figures per supplier. replies: SupplierReply rows received in the
 // window, superseded ones already left out; supplierId from the reply, else
-// its order.
-export function supplierReplyFigures({ replies = [] }) {
+// its order. recordedDates: by reply id, the dates its revisions wrote by
+// line (supplierReplyRecordedDates).
+export function supplierReplyFigures({ replies = [], recordedDates = new Map() }) {
   const bySupplier = new Map()
   for (const reply of replies) {
     const supplierId = text(reply.supplierId) || text(reply.purchaseOrder?.supplierId)
-    const outcome = supplierReplyOutcome(reply)
+    const outcome = supplierReliabilityBucket(reply, recordedDates.get(text(reply.id)) || null)
     if (!supplierId || !outcome) continue
     const row = bySupplier.get(supplierId) || { received: 0, read: 0, stated: 0, outcomes: emptyOutcomes(), hours: [] }
     row.received += 1
@@ -116,12 +128,8 @@ export function supplierReplyFigures({ replies = [] }) {
       row.read += 1
       if (hasStatedDate(reply)) row.stated += 1
     }
-    if (outcome === 'notRecorded') {
-      const reason = SUPPLIER_REPLY_DISMISS_REASONS.includes(text(reply.reasonCode)) ? text(reply.reasonCode) : 'other'
-      row.outcomes.notRecorded[reason] += 1
-    } else {
-      row.outcomes[outcome] += 1
-    }
+    if (outcome.bucket === 'notRecorded') row.outcomes.notRecorded[outcome.reason] += 1
+    else row.outcomes[outcome.bucket] += 1
     if (text(reply.state) === 'recorded') {
       const hours = (instant(reply.decidedAt) - instant(reply.createdAt)) / HOUR
       row.hours.push(Number.isFinite(hours) ? Math.max(0, hours) : null)
@@ -148,9 +156,14 @@ function repliesOf(row) {
 }
 
 // The response for every supplier, from rows already read for one tenant.
-export function buildSupplierReliability({ suppliers = [], purchaseOrders = [], revisions = [], replies = [], window, asOf, visibility }) {
+// replyRevisions: the promise revisions recorded replies wrote, each with
+// the reply's id (replyId), for their dates.
+export function buildSupplierReliability({ suppliers = [], purchaseOrders = [], revisions = [], replies = [], replyRevisions = [], window, asOf, visibility }) {
   const revisionRows = visibility.revisions ? supplierRevisionFigures({ purchaseOrders, revisions, window }) : new Map()
-  const replyRows = visibility.replies ? supplierReplyFigures({ replies }) : new Map()
+  const byReply = new Map()
+  for (const row of replyRevisions) byReply.set(text(row.replyId), [...(byReply.get(text(row.replyId)) || []), row])
+  const recordedDates = new Map([...byReply].map(([id, rows]) => [id, supplierReplyRecordedDates(rows)]))
+  const replyRows = visibility.replies ? supplierReplyFigures({ replies, recordedDates }) : new Map()
   return {
     contractVersion: SUPPLIER_RELIABILITY_CONTRACT_VERSION,
     asOf,
@@ -165,6 +178,25 @@ export function buildSupplierReliability({ suppliers = [], purchaseOrders = [], 
 }
 
 const UNMEASURED_STATUSES = ['draft', 'pending_approval', 'rejected', 'cancelled']
+const array = (value) => (Array.isArray(value) ? value : [])
+
+// The promise revisions each recorded reply wrote, with its id: by the
+// reply's revisionIds, else by the revision audit rows whose origin is the
+// reply (as the service finds a record already written).
+async function recordedReplyRevisions(prisma, tenantId, replies) {
+  const recorded = replies.filter((reply) => text(reply.state) === 'recorded')
+  if (!recorded.length) return []
+  const owner = new Map()
+  for (const reply of recorded) for (const id of array(reply.revisionIds).map(text).filter(Boolean)) owner.set(id, text(reply.id))
+  const unknown = recorded.filter((reply) => !array(reply.revisionIds).length).map((reply) => text(reply.id))
+  if (unknown.length) {
+    const rows = await prisma.auditLog.findMany({ where: { tenantId, action: 'purchase_order_promise_revised', OR: unknown.map((id) => ({ metadata: { path: ['origin', 'id'], equals: id } })) }, select: { metadata: true } })
+    for (const row of array(rows)) if (text(row.metadata?.revisionId)) owner.set(text(row.metadata.revisionId), text(row.metadata?.origin?.id))
+  }
+  if (!owner.size) return []
+  const rows = await prisma.purchaseOrderPromiseRevision.findMany({ where: { tenantId, id: { in: [...owner.keys()] } }, select: { id: true, purchaseOrderLineId: true, newDate: true, createdAt: true } })
+  return array(rows).map((row) => ({ ...row, replyId: owner.get(text(row.id)) }))
+}
 
 export function createSupplierReliabilityReadService({ prisma, now = () => new Date() } = {}) {
   if (!prisma) throw new Error('prisma is required')
@@ -190,7 +222,7 @@ export function createSupplierReliabilityReadService({ prisma, now = () => new D
         orders
           ? prisma.supplierReply.findMany({
             where: { tenantId, receivedOn: { gte: window.from, lte: window.to }, state: { not: 'superseded' } },
-            select: { supplierId: true, state: true, readingStatus: true, check: true, reasonCode: true, editedLines: true, createdAt: true, decidedAt: true, purchaseOrder: { select: { supplierId: true } } },
+            select: { id: true, supplierId: true, state: true, readingStatus: true, check: true, reasonCode: true, revisionIds: true, createdAt: true, decidedAt: true, purchaseOrder: { select: { supplierId: true } } },
           })
           : [],
       ])
@@ -198,7 +230,8 @@ export function createSupplierReliabilityReadService({ prisma, now = () => new D
       const revisions = ids.length
         ? await prisma.purchaseOrderPromiseRevision.findMany({ where: { tenantId, purchaseOrderId: { in: ids }, previousDate: { not: null } }, select: { purchaseOrderId: true, previousDate: true, newDate: true } })
         : []
-      return buildSupplierReliability({ suppliers, purchaseOrders, revisions, replies, window, asOf, visibility })
+      const replyRevisions = await recordedReplyRevisions(prisma, tenantId, replies)
+      return buildSupplierReliability({ suppliers, purchaseOrders, revisions, replies, replyRevisions, window, asOf, visibility })
     },
   }
 }

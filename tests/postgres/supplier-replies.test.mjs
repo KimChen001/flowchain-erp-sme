@@ -6,6 +6,8 @@ import { createScmServer } from '../../server/bootstrap/scm-server.mjs'
 import { createDbProcurementCommandService } from '../../server/domain/procurement-db-command-service.mjs'
 import { createPrismaClient } from '../../server/persistence/prisma-client.mjs'
 import { createSupplierReplyService } from '../../server/services/supplier-reply-service.mjs'
+import { createSupplierReliabilityReadService } from '../../server/domain/supplier-reliability.mjs'
+import { supplierReliabilityResponseSchema } from '../../shared/supplier-reliability-contract.mjs'
 import { supplierReplyCardSchema } from '../../shared/supplier-reply-contract.mjs'
 
 // Supplier replies (docs/supplier-reply-dates-design.md) in a real database:
@@ -265,6 +267,23 @@ test('the reading with a mocked model: a proposal recorded as proposed, a reply 
     const slow = (await createSupplierReplyService({ prisma, env, procurement, modelClient: stalled, readingDeadlineMs: 100 }).pasteReply('PO-C', { text: said }, buyer)).reply
     assert.deepEqual([slow.state, slow.readingStatus], ['needs_you', 'failed'])
     assert.ok(await prisma.supplierReply.findFirst({ where: { id: slow.id } }))
+
+    // 7. The reliability measure (#363 §4.12) over these rows, as the
+    // supplier evaluation page reads it: the two date changes on PO-C (the
+    // reply's and the phone call's) are revisions, the superseded paste is
+    // not a reply, and every reply is in one outcome. No figure under 5.
+    const reliability = supplierReliabilityResponseSchema.parse(await createSupplierReliabilityReadService({ prisma }).read(buyer))
+    const acme = reliability.suppliers['SUP-C']
+    assert.deepEqual([acme.revisions.orders, acme.revisions.revisedOrders, acme.revisions.revisions, acme.revisions.perOrder, acme.revisions.averageDaysMoved], [1, 1, 2, null, null])
+    assert.deepEqual(acme.revisions.movedLater, { count: 2, of: 2, share: null })
+    const kept = await prisma.supplierReply.count({ where: { tenantId: tenantC, state: { not: 'superseded' } } })
+    const { notRecorded, ...outcomes } = acme.replies.outcomes
+    assert.equal(acme.replies.received, kept)
+    assert.equal(Object.values(outcomes).reduce((a, b) => a + b, 0) + Object.values(notRecorded).reduce((a, b) => a + b, 0), kept)
+    assert.deepEqual([notRecorded.other, outcomes.nothingToRecord, acme.replies.recorded], [1, 1, 1])
+    // Another workspace's replies are its own: D has one, read with AI off.
+    const other = (await createSupplierReliabilityReadService({ prisma }).read(as(tenantD, 'buyer'))).suppliers
+    assert.deepEqual([Object.keys(other), other['SUP-D'].replies.received, other['SUP-D'].replies.read], [['SUP-D'], 1, 0])
   } finally {
     await prisma.$disconnect()
   }

@@ -19,7 +19,8 @@
 //            --emails=<a,b> (uci: who asks a case that names no asUser,
 //            default kim@example.com,daniel@example.com) --today=<YYYY-MM-DD>
 //            --setup (write the records a case needs first: on a test
-//            instance only, never the walkthrough people use)
+//            instance only; refused on the walkthrough's ports 15231/15232
+//            and 18831/18832, setup-guard.mjs)
 //
 // A case may say who asks (asUser, an email), and a turn may be an object
 // instead of the question alone: { text, activeContext, formResults,
@@ -44,6 +45,7 @@ import { buildCases, readReference } from './cases.mjs'
 import { uciFacts } from './uci-facts.mjs'
 import { buildUciCases } from './uci-cases.mjs'
 import { LENGTH_BUDGET, answerLength, scoreAnswer } from './score.mjs'
+import { setupRefusal } from './setup-guard.mjs'
 
 const args = Object.fromEntries(process.argv.slice(2).map((arg) => arg.replace(/^--/, '').split('=')).map(([key, ...value]) => [key, value.join('=') || true]))
 const suite = String(args.suite || 'm5')
@@ -57,6 +59,12 @@ if (!args.port || !['m5', 'uci'].includes(suite) || (suite === 'm5' && !args.dat
   process.exit(2)
 }
 const base = `http://127.0.0.1:${args.port}`
+// --setup writes, so never against the walkthrough people use (setup-guard.mjs).
+const refused = setupRefusal({ setup: args.setup, port: args.port })
+if (refused) {
+  console.error(refused)
+  process.exit(2)
+}
 const DAY_IN_LONDON = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit' })
 
 function m5Cases() {
