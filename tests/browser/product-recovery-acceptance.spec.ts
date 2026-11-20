@@ -217,7 +217,7 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await expect(page.getByTestId("inventory-item-TST-001")).toContainText("低于安全库存（现有）");
   await expect(page.getByTestId("inventory-item-TST-001")).toContainText("已有在途采购覆盖");
   await expect(page.getByTestId("inventory-item-TST-001")).toContainText("30 / 40");
-  await expect(page.getByTestId("inventory-item-TST-002")).toContainText("需补货");
+  await expect(page.getByTestId("inventory-item-TST-002")).toContainText("立即下单");
   await expect(page.getByTestId("inventory-item-TST-002")).toContainText("100 / 270");
   await expect(page.getByTestId("inventory-item-TST-003")).toHaveCount(0);
   await capture(page, "09-inventory-warnings");
