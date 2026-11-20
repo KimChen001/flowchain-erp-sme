@@ -68,7 +68,7 @@ export function SupplierReliabilityCard({ suppliers, loadKey = 0 }: { suppliers:
 
   const revisionCells = (part: ReliabilityRevisions | null): ReactNode[] => {
     if (!part) return [hidden, hidden, hidden];
-    const changes = t("{revisions} date changes on {orders} orders; {revised} orders changed at least once.", { revisions: part.revisions, orders: part.orders, revised: part.revisedOrders });
+    const changes = t("Orders due: {orders}. Orders with a date change: {revised}. Date changes: {revisions}.", { revisions: part.revisions, orders: part.orders, revised: part.revisedOrders });
     const later = t("{count} of {of} changes moved the date later.", { count: part.movedLater.count, of: part.movedLater.of });
     const perOrder = !part.orders ? dash(t("No orders due in these 90 days."))
       : part.perOrder === null ? dash(`${changes} ${t("A figure needs {n} orders.", { n: minimum })}`, true)

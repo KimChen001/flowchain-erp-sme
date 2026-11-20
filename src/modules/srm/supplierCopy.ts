@@ -103,7 +103,7 @@ const zh: Record<string, string> = {
   'Share of the replies read for dates that gave at least one delivery date that passed the checks.': '已读取交期的回复中，至少有一个交期通过核对的占比。',
   'Reply outcomes': '回复处理结果',
   'What became of each reply. The tooltip on each cell lists every outcome.': '每条回复的处理结果。悬停单元格可查看全部明细。',
-  '{revisions} date changes on {orders} orders; {revised} orders changed at least once.': '{orders} 张订单共 {revisions} 次交期变更，其中 {revised} 张至少变更过一次。',
+  'Orders due: {orders}. Orders with a date change: {revised}. Date changes: {revisions}.': '到期订单：{orders}。有交期变更的订单：{revised}。交期变更：{revisions}。',
   '{count} of {of} changes moved the date later.': '{of} 次变更中有 {count} 次推迟了交期。',
   'No orders due in these 90 days.': '这 90 天内没有到期订单。',
   'No date changes in these 90 days.': '这 90 天内没有交期变更。',
