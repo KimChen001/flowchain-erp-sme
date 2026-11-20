@@ -177,7 +177,7 @@ const issueText: Record<string, [string, string]> = {
   ADJUSTMENT_OPENING_BALANCE_EXISTS: ["This location already has stock history. Correct it with another adjustment reason in Inventory.", "该库位已有库存记录历史，请在库存中用其他调整原因更正。"],
   DUPLICATE_ROW: ["Another row in this file has the same key. Keep one of them.", "文件中另有一行的关键字段相同，请只保留一行。"],
   PREFERRED_DUPLICATE: ["Only one supplier per item can be preferred.", "每个物料只能有一个首选供应商。"],
-  PREFERRED_EXISTS: ["This item already prefers {supplierCode}. Change the preferred supplier on the item, or write No.", "该物料的首选供应商已是 {supplierCode}。请在物料中更改首选供应商，或填写“否”。"],
+  PREFERRED_EXISTS: ["This item already prefers {supplierCode}. To change it, use Set as preferred under Supplied items on the other supplier's page, or write No.", "该物料的首选供应商已是 {supplierCode}。如需更改，请在另一家供应商页面的“可供应物料”中点击“设为首选”，或填写“否”。"],
   PREFERRED_WOULD_CLEAR: ["{supplierCode} is this item's preferred supplier. Leave Preferred blank or write Yes, or change the preferred supplier on the item.", "{supplierCode} 是该物料的首选供应商。请将“首选”留空或填写“是”，或在物料中更改首选供应商。"],
   VERSION_CONFLICT: ["Another change got there first. Import again to finish this row.", "该记录刚被其他操作修改，请再次导入以完成此行。"],
   INVENTORY_OPERATIONS_CONCURRENT_TRANSACTION_CONFLICT: ["Another inventory change ran at the same time. Import again to finish this row.", "另一项库存操作同时进行，请再次导入以完成此行。"],

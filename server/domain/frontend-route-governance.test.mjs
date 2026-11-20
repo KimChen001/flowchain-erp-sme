@@ -744,3 +744,15 @@ test("human-readable route authority matrix covers the executable manifest", () 
   assert.match(matrix, /Default SME navigation/);
   assert.match(matrix, /158\/158 frontend route stability audit/);
 });
+
+test("My profile is every member's own page; the rest of Settings keeps its permission", () => {
+  // Product review 2026-11-20: Procurement, Operations and Finance specialists
+  // lack settings.workspace.read, so a gated profile locked them out of their
+  // own language, default warehouse and approval emails.
+  const byId = (id) => routes.find((route) => route.id === id);
+  assert.equal(byId("settings:profile").requiredPermission, undefined);
+  assert.equal(byId("settings:profile").directAccessBehavior, "RENDER");
+  for (const id of ["settings", "settings:company", "settings:warehouse-access", "settings:ai"]) {
+    assert.equal(byId(id).requiredPermission, "settings.workspace.read", id);
+  }
+});

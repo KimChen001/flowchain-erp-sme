@@ -172,7 +172,7 @@ const CODE_MESSAGES: Record<string, ErrorPair> = {
   ITEM_INACTIVE: ["This item is inactive.", "该物料已停用。"],
   ITEM_NOT_PURCHASABLE: ["This item cannot be purchased.", "该物料不允许采购。"],
   // The item's own problem, under its supplier field (design audit L1-31: it read "Choose a supplier.").
-  ITEM_HAS_NO_APPROVED_SUPPLIER: ["This item has no approved supplier yet. Add one on the item's page first.", "该物料还没有已批准的供应商，请先在物料页面维护。"],
+  ITEM_HAS_NO_APPROVED_SUPPLIER: ["This item has no approved supplier yet. Add it under Supplied items on a supplier's page (Master data › Suppliers) first.", "该物料还没有已批准的供应商，请先在供应商页面的“可供应物料”中添加（基础资料 › 供应商）。"],
   ITEM_SUPPLIER_RELATIONSHIP_INVALID: ["This supplier is not an approved source for the item. Choose another.", "所选供应商不是该物料的已批准供应商，请重新选择。"],
 };
 const HEADER_FIELDS = new Set(["defaultCurrency", "defaultNeedByDate"]);

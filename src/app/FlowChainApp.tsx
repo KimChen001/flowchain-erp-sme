@@ -1700,11 +1700,15 @@ export default function FlowChainApp() {
                         label: t("top.profile"),
                         onClick: () => navigateTo("settings:profile"),
                       },
-                      {
-                        icon: Settings,
-                        label: t("top.settings"),
-                        onClick: () => navigateTo("settings:company"),
-                      },
+                      // Settings only for those who may open it; My
+                      // profile is every member's own.
+                      ...(canOpenRoute("settings:company")
+                        ? [{
+                            icon: Settings,
+                            label: t("top.settings"),
+                            onClick: () => navigateTo("settings:company"),
+                          }]
+                        : []),
                       { icon: LogOut, label: t("top.logout"), onClick: logout },
                     ].map(({ icon: Icon, label, onClick }) => (
                       <button

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { toast } from "sonner";
-import { Copy, Eye } from "lucide-react";
+import { Eye } from "lucide-react";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { apiErrorText } from "../../lib/apiErrorText";
 import { A, Chip, useConfirm } from "../../components/ui";
@@ -196,7 +196,10 @@ export function CustomerTable({ customers, onChanged, creating = false, onCreati
   );
 }
 
-export function PrintTemplateTable({ templates, onCopy }: { templates: PrintTemplateCatalogItem[]; onCopy: (item: PrintTemplateCatalogItem) => void }) {
+// The built-in layouts, to preview. They are changed in Settings › Company &
+// workspace › Documents (DocumentTemplateSettings); a copy made here was kept
+// only in the browser, so there is none.
+export function PrintTemplateTable({ templates }: { templates: PrintTemplateCatalogItem[] }) {
   const { copy, locale } = useMasterDataCopy();
   const updated = (value: string) => { const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" }) : value; };
   return (
@@ -216,7 +219,6 @@ export function PrintTemplateTable({ templates, onCopy }: { templates: PrintTemp
               <td className={tdNowrapClass} style={{ color: A.sub }}>{updated(item.updatedAt)}</td>
               <td className={tdNowrapClass}>
                 <div className="flex items-center gap-1.5">
-                  <button type="button" onClick={() => onCopy(item)} className="flex items-center gap-1 rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium" style={{ color: A.label }}><Copy size={12} />{copy("Copy template")}</button>
                   <RowPopover summary={<><Eye size={12} />{copy("Preview")}</>} summaryClassName="flex items-center gap-1 rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-900" panelClassName="w-64 p-3" testId={`print-template-preview-${item.id}`}><div className="font-semibold">{name}</div><div className="mt-2 text-slate-500">{copy("Document type: {value}", { value: copy(item.documentType) })}</div><div className="mt-1 text-slate-500">{copy("Updated: {value}", { value: updated(item.updatedAt) })}</div></RowPopover>
                 </div>
               </td>

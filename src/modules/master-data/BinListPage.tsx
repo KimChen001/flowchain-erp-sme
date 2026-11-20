@@ -140,6 +140,10 @@ export default function BinListPage() {
           <div>
             <h2 className="fc-section-title" style={{ color: A.label }}>{copy("Bin search")}</h2>
             <div className="mt-1 text-xs" style={{ color: A.sub }}>{copy("Bins come from posted stock: every bin that holds a stock record is listed, with its warehouse.")}</div>
+            <div className="mt-1 text-xs" style={{ color: A.sub }} data-testid="bin-list-settings-signpost">
+              {copy("Bins listed here hold stock. To add a location before stock arrives, use Settings › Warehouses & access.")}{" "}
+              <Link to="/app/settings/warehouse-access" className="font-medium text-blue-600 hover:underline">{copy("Open Warehouses & access")}</Link>
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={() => { setSearch(""); setWarehouse(""); }} className="h-8 rounded-lg px-3 text-xs font-medium" style={{ background: A.gray6, color: A.label }}>
