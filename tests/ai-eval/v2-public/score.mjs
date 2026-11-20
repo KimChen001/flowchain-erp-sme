@@ -253,7 +253,9 @@ export function scoreAnswer(answer, expect = {}, { language = 'en-US', answers =
     add(`links ${type}${label ? ` ${label}` : ''}`, found, (answer.refs || []).map((ref) => `${ref.type}:${ref.label}`).join(', ') || 'no links')
   }
   // Wording the answer must have, and must not.
-  for (const entry of expect.matches || []) add(`says: ${entry.label}`, patternOf(entry).test(flat(answer)), entry.pattern)
+  // textOnly: the answer's words, not its cards (a card's JSON holds a 0 or a
+  // "no" in any row, #421 review).
+  for (const entry of expect.matches || []) add(`says: ${entry.label}`, patternOf(entry).test(entry.textOnly ? String(answer.text || '') : flat(answer)), entry.pattern)
   for (const entry of expect.notMatches || []) {
     const found = String(answer.text || '').match(patternOf(entry))
     add(`not: ${entry.label}`, !found, found ? `"${found[0].slice(0, 60)}"` : '')
@@ -263,7 +265,14 @@ export function scoreAnswer(answer, expect = {}, { language = 'en-US', answers =
   // was "found" in any supplier table). A figure a table must show is a
   // `quantities` check, on the row that names its SKU.
   const numbers = [...numbersIn(answer.text || ''), ...countWordsIn(answer.text)]
-  for (const { label, value, anyOf, tolerance = 0 } of expect.numbers || []) {
+  for (const { label, value, anyOf, tolerance = 0, inWords } of expect.numbers || []) {
+    // A count the answer may say in words ("none has a difference"), checked
+    // on its text only, with the count still checked (#421 review).
+    if (inWords) {
+      const said = String(answer.text || '').match(patternOf({ pattern: inWords }))
+      add(`number: ${label}`, Boolean(said), said ? `said "${said[0].slice(0, 60)}"` : `expected ${value}, in figures or words`)
+      continue
+    }
     const wanted = anyOf || [value]
     const near = numbers.find((number) => wanted.some((target) => Math.abs(number - target) <= tolerance + 1e-9))
     add(`number: ${label}`, near !== undefined, `expected ${wanted.join(' or ')} ±${tolerance}${near !== undefined ? `, found ${near}` : ''}`)

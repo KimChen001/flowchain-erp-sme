@@ -92,9 +92,9 @@ const only = args.only ? new Set(String(args.only).split(',')) : null
 const kinds = args.kind ? new Set(String(args.kind).split(',')) : null
 const chosen = built.cases.filter((row) => (!only || only.has(row.id)) && (!kinds || kinds.has(row.kind)))
 // A case that writes a record first runs only with --setup.
-const writes = (row) => Boolean(row.setup?.supplierReply)
+const writes = (row) => Boolean(row.setup?.supplierReply || row.setup?.member)
 const cases = args.setup ? chosen : chosen.filter((row) => !writes(row))
-if (cases.length < chosen.length) console.log(`Left out ${chosen.length - cases.length} case(s) that paste a supplier reply first: ${chosen.filter(writes).map((row) => row.id).join(', ')} (pass --setup on a test instance).`)
+if (cases.length < chosen.length) console.log(`Left out ${chosen.length - cases.length} case(s) that paste a supplier reply or add a member first: ${chosen.filter(writes).map((row) => row.id).join(', ')} (pass --setup on a test instance).`)
 const repeat = Math.max(1, Number(args.repeat) || 1)
 if (args.list) {
   // The cases and what each expects, without asking anything.
@@ -154,6 +154,21 @@ async function json(response, what) {
   if (!response.ok) throw new Error(`${what} failed with ${response.status} ${body?.code || ''}`.trim())
   return body
 }
+// A member with a given role, invited by the admin and accepted with the
+// invitation's token (no email is connected on a test instance). A member
+// who can already sign in is left as they are; their role is checked.
+async function addMember({ email, role }) {
+  const signIn = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, name: 'Evaluation', company: 'FlowChain' }) })
+  if (!signIn.ok) {
+    if (!adminLogin) throw new Error('No admin session to invite a member with')
+    const invited = await json(await fetch(`${base}/api/workspace/invitations`, { method: 'POST', headers: { ...adminLogin.auth, 'content-type': 'application/json' }, body: JSON.stringify({ email, role }) }), `Inviting ${email} as ${role}`)
+    if (!invited.invitationToken) throw new Error(`The invitation for ${email} gave no token`)
+    await json(await fetch(`${base}/api/workspace/invitations/accept`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: invited.invitationToken, name: 'Evaluation buyer' }) }), `Accepting the invitation for ${email}`)
+  }
+  const signedIn = signIn.ok ? await signIn.json() : await json(await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, name: 'Evaluation', company: 'FlowChain' }) }), `Signing in as ${email}`)
+  if (signedIn.user?.role !== role) throw new Error(`${email} is a member as ${signedIn.user?.role || 'unknown'}, not ${role}`)
+}
+
 async function setUpCase(session, setup) {
   if (setup.supplierReply) {
     const spec = setup.supplierReply
@@ -255,6 +270,16 @@ const turnText = (turn) => (typeof turn === 'string' ? turn : turn.text)
 for (const testCase of cases) {
   const place = built.cases.indexOf(testCase)
   for (let round = 0; round < repeat; round += 1) {
+    // A member the case needs and the seed lacks is invited first (--setup).
+    if (testCase.setup?.member) {
+      try {
+        await addMember(testCase.setup.member)
+      } catch (error) {
+        results.push({ id: testCase.id, kind: testCase.kind, language: testCase.language, round, pass: false, checks: [{ name: 'setup', ok: false, detail: error.message }], turns: testCase.turns.map(turnText), seconds: 0, costUsd: 0, inputTokens: 0, tools: [], model: null, asked: testCase.setup.member.email, answer: { text: '' }, earlier: [] })
+        console.log(`FAIL ${testCase.id.padEnd(26)} setup: ${error.message}`)
+        continue
+      }
+    }
     const session = testCase.asUser ? await sessionFor(testCase.asUser) : sessions[(place + round) % sessions.length]
     const threadId = `thr_eval_${testCase.id.replace(/[^\w]/g, '')}_${Date.now().toString(36)}`.slice(0, 60)
     const answers = []
