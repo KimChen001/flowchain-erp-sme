@@ -11,7 +11,7 @@ import { createRfqSupplierComparisonService } from './rfq-supplier-comparison-se
 import { listItemSupplierRecords } from './master-data-commands.mjs'
 import { reportReadAccessFor } from './report-read-access.mjs'
 import { DEMAND_WINDOW_DAYS, boughtInStockUnit, dailyDemand, isActiveItem, itemStockUnit, recordedReorderPoint, reorderSizing, requestMinimumOf, shippedByWorkspaceDay } from './reorder-list.mjs'
-import { scopedBusiness } from './ai-read-service-tools.mjs'
+import { reorderListForSignals, scopedBusiness } from './ai-read-service-tools.mjs'
 import { itemSources, preferredSource, storedItems, unitPriceOf } from './ai-item-prices.mjs'
 import { AI_ASSISTANT_V2_MONEY_TOOLS } from './ai-assistant-v2-money-tools.mjs'
 import { AI_ASSISTANT_V2_HISTORY_TOOLS } from './ai-assistant-v2-history-tools.mjs'
@@ -179,6 +179,8 @@ const attentionList = defineAiTool({
   assistantV2Only: true,
   async run(args, { facts, context }) {
     const kind = args.kind || 'today'
+    // Stock rows by the reorder list's rule, as Today shows them.
+    facts = { ...facts, reorder: await reorderListForSignals(facts, context) }
     const focus = args.focus ? attentionFocus(facts, args.focus) : null
     const aside = await setAsideOnToday(context)
     if (args.focus && !focus) return { error: 'not_found' }
@@ -410,6 +412,9 @@ const suggestPurchaseLines = defineAiTool({
     // Facts read without the open requests would count no request as cover:
     // a reader of requests never gets suggestions that ignore them.
     if (facts.purchaseRequests && !openRequestsRead(facts)) return { error: 'open_purchase_requests_not_read' }
+    // The items below their levels by the reorder list's rule, as Today and
+    // attention_list rank them (product review 2026-11-20, item 8).
+    facts = { ...facts, reorder: await reorderListForSignals(facts, context) }
     const named = array(args.skus).length > 0
     const asked = Number.isInteger(args.coverDays) && args.coverDays >= 1 && args.coverDays <= COVER_DAYS_MAX ? args.coverDays : null
     // A period to cover comes from the user's questions: "this week" says

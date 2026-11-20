@@ -67,6 +67,34 @@ export function scopedBusiness(context) {
   return scoped.get(context)
 }
 
+// The reorder list as its page reads it, once per answer, for the "needs
+// attention" stock rows (product review 2026-11-20, item 8): the reorder
+// list decides "order now", as Today and the inventory pages do, counting
+// open purchase requests and draft orders. { rows, notJudged }, or null when
+// the reader may not read stock or the list cannot be read (the signals then
+// keep the stock record's own status).
+const reorderLists = new WeakMap()
+export function reorderListForSignals(facts, context) {
+  if (!facts?.inventory || !context?.actor || !can(context, 'inventory.balance.read')) return Promise.resolve(null)
+  if (!reorderLists.has(context)) {
+    reorderLists.set(context, (async () => {
+      try {
+        const { access, allocationContext, business } = await scopedBusiness(context)
+        const allocation = buildRuntimeInventoryAllocation(access.collections.inventoryItems ? allocationContext : business)
+        const list = await serviceOf(context, 'reorderList', createReorderListReadService).read({
+          tenantId: context.tenantId, warehouseIds: access.warehouseIds ?? null, today: facts.today, timeZone: facts.timezone,
+          allocationRows: allocation.availability, showPurchaseOrders: Boolean(access.collections.purchaseOrders), showPurchaseRequests: Boolean(access.collections.purchaseRequests),
+          truncatedSubjects: allocationTruncatedSubjects(allocationContext), forecastClient: null,
+        })
+        return { rows: array(list?.rows), notJudged: array(list?.notJudged) }
+      } catch {
+        return null
+      }
+    })())
+  }
+  return reorderLists.get(context)
+}
+
 const searchRecords = defineAiTool({
   name: 'search_records',
   description: 'Finds records by number or name across what the user may read: items, suppliers, customers, sales orders, purchase requests, RFQs, purchase orders and warehouses. Use it to find a record the question names before reading it.',

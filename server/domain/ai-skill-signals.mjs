@@ -102,17 +102,38 @@ export function buildAiSkillSignals(facts) {
     else if (po.dueDate && asOf && daysBetween(asOf, po.dueDate) >= 0 && daysBetween(asOf, po.dueDate) <= DUE_SOON_DAYS) signals.push(signal('po_due_7d', 'purchase_order', po.id, po.orderNumber, { ...lineData, days: daysBetween(asOf, po.dueDate) }, common))
     if (po.status === 'partially_received') signals.push(signal('po_partially_received', 'purchase_order', po.id, po.orderNumber, { ...lineData, received: po.received, ordered: po.ordered }, common))
   }
+  // The reorder list's rows (facts.reorder, { rows, notJudged }) decide
+  // "below the reorder point" and whether stock under its safety level is
+  // covered, as Today and the inventory pages decide them
+  // (shared/inventory-stock-signals.mjs): the stock position there counts
+  // open purchase requests and draft orders. An item the list could not
+  // judge, or facts without it, keep the stock record's own status
+  // (product review 2026-11-20, item 8).
+  const reorderRows = Array.isArray(facts.reorder?.rows) ? new Map(facts.reorder.rows.map((entry) => [String(entry?.sku ?? '').trim(), entry])) : null
+  const notJudged = new Set(array(facts.reorder?.notJudged).map((entry) => String(entry?.sku ?? '').trim()))
   for (const row of array(facts.inventory?.rows)) {
     const covered = projection(facts, row.sku, row.incomingApprovedPo)
+    const judged = Boolean(reorderRows) && !notJudged.has(String(row.sku ?? '').trim())
+    const listed = judged ? reorderRows.get(String(row.sku ?? '').trim()) || null : null
+    const orderNow = judged ? Boolean(listed?.orderNow) : row.stockStatus === 'below_reorder_point'
+    const incoming = Number(listed?.incoming ?? row.incomingApprovedPo ?? 0) || 0
     const data = { sku: row.sku, itemName: row.itemName, unit: row.unit ?? null, available: row.available, demand: row.openSalesDemand, shortage: row.shortage, incoming: row.incomingApprovedPo, atp: row.availableToPromise, safety: row.safetyStock, reorder: row.reorderPoint, pendingRequests: covered.pendingRequests, purchaseOrderIds: row.purchaseOrderIds, minimum: row.orderMinimum?.quantity ?? null, minimumSupplier: row.orderMinimum?.supplier ?? null }
     if (row.shortage !== null && row.shortage > 0) signals.push(signal('stock_shortage', 'item', row.itemId, row.sku, { ...data, covered: (row.incomingApprovedPo ?? 0) >= row.shortage }))
-    if (['out_of_stock', 'below_safety_stock'].includes(row.stockStatus)) signals.push(signal('stock_below_safety', 'item', row.itemId, row.sku, { ...data, covered: row.safetyStock !== null && (row.available ?? 0) + (row.incomingApprovedPo ?? 0) + covered.pendingRequests >= row.safetyStock }))
-    else if (row.stockStatus === 'below_reorder_point') signals.push(signal('stock_below_reorder', 'item', row.itemId, row.sku, { ...data, covered: false }))
+    if (['out_of_stock', 'below_safety_stock'].includes(row.stockStatus)) {
+      // Covered: the reorder list does not ask for an order and stock is
+      // coming (the inventory pages' "covered by open orders"); without the
+      // list, what is available, coming and requested reaches the safety
+      // stock.
+      const isCovered = judged ? !orderNow && incoming > 0 : row.safetyStock !== null && (row.available ?? 0) + (row.incomingApprovedPo ?? 0) + covered.pendingRequests >= row.safetyStock
+      signals.push(signal('stock_below_safety', 'item', row.itemId, row.sku, { ...data, covered: isCovered }))
+    } else if (orderNow) signals.push(signal('stock_below_reorder', 'item', row.itemId, row.sku, { ...data, covered: false }))
   }
   for (const invoice of array(facts.invoices?.variances)) {
     signals.push(signal('invoice_variance', 'supplier_invoice', invoice.id, invoice.invoiceNumber, { variance: invoice.variance, currency: invoice.currency, supplier: invoice.supplier, poId: invoice.poId, status: invoice.status }, { supplierId: invoice.supplierId, supplier: invoice.supplier, money: invoice.variance === null ? null : { amount: Math.abs(invoice.variance), currency: invoice.currency }, when: aiSkillWhenOpen(invoice.invoiceDate, asOf) }))
   }
-  for (const request of array(facts.purchaseRequests?.awaitingApproval)) {
+  // Requests the reader may approve, as Today lists them (toApprove); every
+  // one waiting when the facts do not say (product review 2026-11-20, item 8).
+  for (const request of array(facts.purchaseRequests?.toApprove ?? facts.purchaseRequests?.awaitingApproval)) {
     signals.push(signal('pr_awaiting_approval', 'purchase_request', request.id, request.id, { priority: request.priority, sku: request.sku, skus: request.skus, itemIds: request.itemIds, quantity: request.quantity, unit: request.unit, requiredDate: request.requiredDate }, { severity: request.priority === 'high' ? 'warning' : undefined, when: aiSkillWhenDue(request.requiredDate, asOf) }))
   }
   for (const rfq of array(facts.rfqs?.readyToAward)) signals.push(signal('rfq_ready_to_award', 'rfq', rfq.id, rfq.id, { responses: rfq.responses, title: rfq.title }, { when: aiSkillWhenDue(rfq.due, asOf) }))

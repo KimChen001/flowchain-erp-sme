@@ -74,7 +74,9 @@ test('on facts read without the open requests, the assistant keeps the read tool
 test('the open purchase requests are read only when asked for, so the existing facts stay as they are', async () => {
   const scenario = aiSkillScenario()
   const plain = await readAiSkillFacts(await loadAiSkillContext(scenario.ctx))
-  assert.deepEqual(Object.keys(plain.purchaseRequests), ['awaitingApproval'])
+  // Every request waiting, and those this reader may approve (product review
+  // 2026-11-20, item 8).
+  assert.deepEqual(Object.keys(plain.purchaseRequests), ['awaitingApproval', 'toApprove'])
   const { facts } = await v2()
   assert.deepEqual(facts.purchaseRequests.awaitingApproval, plain.purchaseRequests.awaitingApproval)
   assert.deepEqual(facts.purchaseRequests.open.map((row) => [row.id, row.status]), [['PR-001', 'submitted'], ['PR-002', 'draft']])
