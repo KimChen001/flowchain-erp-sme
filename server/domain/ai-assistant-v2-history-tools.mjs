@@ -120,7 +120,7 @@ const HISTORY_READ = 50
 async function historyRecord(record, { facts, context }) {
   const allowed = (kind) => !HISTORY_KINDS[kind].read || can(context, HISTORY_KINDS[kind].read)
   const order = allowed('purchase_order') ? aiToolPurchaseOrder(facts, record) : null
-  if (order) return { kind: 'purchase_order', id: text(order.id), label: text(order.orderNumber) || text(order.id) }
+  if (order) return { kind: 'purchase_order', id: text(order.id), label: text(order.orderNumber) || text(order.id), order }
   if (allowed('sales_order')) {
     const sale = await context.prisma.salesOrder.findFirst({ where: { tenantId: context.tenantId, OR: [{ id: text(record) }, { orderNumber: text(record) }] }, select: { id: true, orderNumber: true } })
     if (sale) return { kind: 'sales_order', id: sale.id, label: text(sale.orderNumber) || sale.id }
@@ -131,6 +131,67 @@ async function historyRecord(record, { facts, context }) {
   const found = aiToolSupplier(facts, record)
   if (found.supplier) return { kind: 'supplier', id: text(found.supplier.id), label: text(found.supplier.name) || text(found.supplier.id) }
   return found.error === 'supplier_ambiguous' ? { error: 'ambiguous', candidates: found.candidates } : { error: 'not_found' }
+}
+
+// Supplier replies on a purchase order's history (#363 §4.10: "What did Acme
+// say about PO-0012?" is answered from the history, with no new tool). Their
+// audit rows keep only codes ("…: proposed."), so each reply a row names is
+// read here, at read time, and set once on the row that pasted it (else the
+// newest row that names it): the day it was received, per line the SKU with
+// the day it gave or why it went to the person, the supplier's short quote,
+// and the decision with its reason. Values the reading gave that the reply
+// does not hold (dropped lines) are left out. SKUs come from the order as the
+// reader's facts hold it. supplierReplies counts the order's replies, so
+// "none recorded" is said, not guessed.
+const REPLY_DETAILS = AI_TOOL_LIMITS.items
+const dayText = (value) => (value instanceof Date ? value.toISOString().slice(0, 10) : text(value).slice(0, 10)) || null
+const isReplyRow = (row) => text(row.action).startsWith('supplier_reply_') && Boolean(text(row.metadata?.replyId))
+function replyLine(line, skuOf) {
+  const sku = skuOf(line.purchaseOrderLineId) || text(line.ref) || null
+  const dated = (line.outcome === 'proposed' || line.outcome === 'confirmed') && line.proposedDate
+  return {
+    sku,
+    ...(dated ? { date: line.proposedDate, ...(line.outcome === 'confirmed' ? { unchanged: true } : {}) } : { issue: text(line.issue) || text(line.outcome) || null }),
+    ...(!dated && Array.isArray(line.readings) && line.readings.length ? { readings: line.readings } : {}),
+    ...(line.quote ? { quote: text(line.quote).slice(0, AI_TOOL_LIMITS.text) } : {}),
+  }
+}
+async function supplierReplyDetails(rows, { context, found }) {
+  const ids = [...new Set(rows.filter(isReplyRow).map((row) => text(row.metadata.replyId)))].slice(0, REPLY_DETAILS)
+  if (!ids.length) return new Map()
+  const replies = array(await context.prisma.supplierReply.findMany({
+    where: { tenantId: context.tenantId, purchaseOrderId: found.id, id: { in: ids } },
+    select: { id: true, receivedOn: true, source: true, state: true, readingStatus: true, check: true, decision: true, reasonCode: true, note: true, revisionIds: true },
+  }))
+  const revisionIds = replies.flatMap((reply) => array(reply.revisionIds).map(text)).filter(Boolean)
+  const revisions = revisionIds.length
+    ? array(await context.prisma.purchaseOrderPromiseRevision.findMany({ where: { tenantId: context.tenantId, purchaseOrderId: found.id, id: { in: revisionIds } }, select: { id: true, purchaseOrderLineId: true, newDate: true } }))
+    : []
+  const lines = [...array(found.order?.openLines), ...array(found.order?.closedLines)]
+  const skuOf = (lineId) => text(lines.find((line) => text(line.lineId) === text(lineId))?.sku) || null
+  return new Map(replies.map((reply) => {
+    const own = new Set(array(reply.revisionIds).map(text))
+    const recorded = revisions.filter((row) => own.has(text(row.id))).map((row) => ({ sku: skuOf(row.purchaseOrderLineId), date: dayText(row.newDate) }))
+    return [reply.id, {
+      received: text(reply.receivedOn) || null,
+      ...(text(reply.source) && reply.source !== 'paste' ? { source: reply.source } : {}),
+      state: text(reply.state) || null,
+      ...(reply.readingStatus && reply.readingStatus !== 'read' ? { read: text(reply.readingStatus) } : {}),
+      lines: array(reply.check?.lines).filter((line) => line?.outcome !== 'dropped').slice(0, AI_TOOL_LIMITS.items).map((line) => replyLine(line, skuOf)),
+      ...(recorded.length ? { recorded } : {}),
+      ...(reply.decision ? { decision: { option: text(reply.decision), ...(reply.reasonCode ? { reason: text(reply.reasonCode) } : {}), ...(text(reply.note) ? { note: text(reply.note).slice(0, AI_TOOL_LIMITS.text) } : {}) } } : {}),
+    }]
+  }))
+}
+// The row each reply's details go on: the paste, else the newest naming it.
+function replyHomes(rows) {
+  const homes = new Map()
+  for (const [index, row] of rows.entries()) {
+    if (!isReplyRow(row)) continue
+    const id = text(row.metadata.replyId)
+    if (!homes.has(id) || row.action === 'supplier_reply_pasted') homes.set(id, index)
+  }
+  return new Map([...homes].map(([id, index]) => [index, id]))
 }
 
 // Who changed a record and when, newest first, from the audit log (design
@@ -148,23 +209,33 @@ const recordHistory = defineAiTool({
     const found = await historyRecord(args.record, { facts, context })
     if (found.error) return found
     const sensitive = can(context, 'audit.read_sensitive')
-    const rows = array(await context.prisma.auditLog.findMany({
-      where: { tenantId: context.tenantId, entityId: found.id, entityType: { in: HISTORY_KINDS[found.kind].types } },
-      select: { createdAt: true, action: true, summary: true, metadata: true, actor: { select: { name: true } } },
-      orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
-      take: HISTORY_READ + 1,
-    }))
+    const order = found.kind === 'purchase_order'
+    const [read, supplierReplies] = await Promise.all([
+      context.prisma.auditLog.findMany({
+        where: { tenantId: context.tenantId, entityId: found.id, entityType: { in: HISTORY_KINDS[found.kind].types } },
+        select: { createdAt: true, action: true, summary: true, metadata: true, actor: { select: { name: true } } },
+        orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+        take: HISTORY_READ + 1,
+      }),
+      order ? context.prisma.supplierReply.count({ where: { tenantId: context.tenantId, purchaseOrderId: found.id, state: { not: 'superseded' } } }) : null,
+    ])
+    const rows = array(read).slice(0, HISTORY_READ)
+    const replies = order ? await supplierReplyDetails(rows, { context, found }) : new Map()
+    const homes = replyHomes(rows)
     return {
       record: found.label,
       kind: found.kind,
       ref: aiToolRef(found.kind, found.id, found.label),
-      ...(rows.length > HISTORY_READ ? { partial: { limit: HISTORY_READ } } : {}),
-      ...aiToolList(rows.slice(0, HISTORY_READ).map((row) => {
+      ...(order ? { supplierReplies } : {}),
+      ...(array(read).length > HISTORY_READ ? { partial: { limit: HISTORY_READ } } : {}),
+      ...aiToolList(rows.map((row, index) => {
         const before = row.metadata?.before, after = row.metadata?.after
+        const reply = homes.has(index) ? replies.get(homes.get(index)) : null
         return {
           at: (row.createdAt instanceof Date ? row.createdAt.toISOString() : text(row.createdAt)).slice(0, 16) || null,
           action: text(row.action) || null, summary: text(row.summary).slice(0, AI_TOOL_LIMITS.text) || null, by: text(row.actor?.name) || null,
           ...(sensitive && (before !== undefined || after !== undefined) ? { before: before ?? null, after: after ?? null } : {}),
+          ...(reply ? { reply } : {}),
         }
       })),
     }

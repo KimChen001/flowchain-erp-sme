@@ -6,7 +6,7 @@ import {
 } from '../../shared/supplier-reliability-contract.mjs'
 import { SUPPLIER_SCORECARD_RULES } from './supplier-scorecard.mjs'
 
-const outcomes = { recordedUnchanged: 2, recordedEdited: 1, notRecorded: { wrong_reading: 1, supplier_will_confirm: 0, other: 0 }, needsYou: 1, proposed: 0, nothingToRecord: 1 }
+const outcomes = { recordedUnchanged: 2, recordedEdited: 1, recordedManual: 0, notRecorded: { wrong_reading: 1, supplier_will_confirm: 0, other: 0 }, needsYou: 1, proposed: 0, nothingToRecord: 1 }
 const response = {
   contractVersion: SUPPLIER_RELIABILITY_CONTRACT_VERSION,
   asOf: '2026-11-20',

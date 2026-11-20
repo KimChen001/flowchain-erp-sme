@@ -57,9 +57,13 @@ export const supplierReliabilityRevisionsSchema = z.strictObject({
 })
 
 // What became of each reply (#363 §4.12): a reply is in exactly one of these,
-// so they add up to `received`.
-//   recordedUnchanged  dates recorded as proposed
-//   recordedEdited     dates recorded after the person changed a line
+// so they add up to `received`. The recorded ones follow one rule, the same
+// in the outcome export (server/domain/supplier-reply-outcome.mjs):
+//   recordedUnchanged  every proposed line recorded as proposed (a line that
+//                      needed the person and was filled by hand is no edit)
+//   recordedEdited     at least one proposed line's date changed or dropped
+//   recordedManual     nothing was proposed (AI off, a failed reading, every
+//                      line needing the person) and the person typed the dates
 //   notRecorded        dismissed, by the reason the person gave
 //   needsYou           open: a date that did not pass the checks, every date
 //                      vague, or a reply that could not be read
@@ -68,6 +72,7 @@ export const supplierReliabilityRevisionsSchema = z.strictObject({
 export const supplierReliabilityOutcomesSchema = z.strictObject({
   recordedUnchanged: count,
   recordedEdited: count,
+  recordedManual: count,
   notRecorded: z.strictObject({ wrong_reading: count, supplier_will_confirm: count, other: count }),
   needsYou: count,
   proposed: count,

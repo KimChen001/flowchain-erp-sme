@@ -132,9 +132,28 @@ export function replyAddressesSystem(value) {
   const textOf = String(value ?? '').replace(INVISIBLE, '').normalize('NFKC')
   return ADDRESSED_TO_SYSTEM.some((pattern) => pattern.test(textOf))
 }
+// Order data written for a machine rather than the buyer (blind batch 2: an
+// "ORDER-SYNC" block with a date of its own that says it outranks the
+// message): an armored -----BEGIN …----- block (not a PGP signature), a JSON
+// key naming an order field ("promised_date": …), snake_case order fields
+// (promised_date=…, ship_date: …), lines of key=value, or a claim that some
+// data outranks the message. For the card's notice only: the reading's
+// checks do not use it, so nothing read or proposed changes with it.
+const MACHINE_ORDER_DATA = [
+  /^\s*-{3,}\s*BEGIN\s+(?!PGP\b)[A-Z][^\n]*$/im,
+  /"(?:po|order|promised|delivery|deliver|ship|shipping|dispatch|eta|etd|status|lines?|qty|quantity)[a-z_]*"\s*:/i,
+  /^\s*(?:po|order|promised|delivery|ship|shipping|dispatch|eta|etd|confirmed|new)_[a-z_]+\s*[=:]\s*\S/im,
+  /^\s*[a-z][a-z_]{1,30}\s*=\s*\S[^\n]*\n\s*[a-z][a-z_]{1,30}\s*=\s*\S/im,
+  /\b(?:authoritative|machine[- ]verified|machine[- ]readable|takes?\s+precedence|(?:supersedes?|overrides?|outranks?)\s+(?:the\s+)?(?:message|text|e-?mail|body|above)|read\s+(?:the\s+)?dates?\s+from\s+(?:here|this|the\s+(?:block|data))|for\s+automated\s+(?:processing|reading|import|systems?))\b/i,
+  /优先于(?:正文|邮件|上文|以上)|以(?:本|此|下|该)(?:数据块|数据|区块|代码块|同步块)为准|自动(?:读取|解析|识别|导入)(?:程序|系统|工具)?|解析程序|机器(?:读取|校验|验证)/,
+]
+export function replyHoldsMachineOrderData(value) {
+  const textOf = String(value ?? '').replace(INVISIBLE, '').normalize('NFKC')
+  return MACHINE_ORDER_DATA.some((pattern) => pattern.test(textOf))
+}
 // The card's instructionsIgnored, as the server sets it: the assistant's
 // injection pre-check or the reply's own, over the whole pasted text.
-export const supplierReplyInstructionsIgnored = (pasted) => aiInjectionDetected(String(pasted ?? '').replace(INVISIBLE, '')) || replyAddressesSystem(pasted)
+export const supplierReplyInstructionsIgnored = (pasted) => aiInjectionDetected(String(pasted ?? '').replace(INVISIBLE, '')) || replyAddressesSystem(pasted) || replyHoldsMachineOrderData(pasted)
 
 // Text compared for quotes: one space for any whitespace, straight quotes,
 // case folded, compatibility forms (full-width digits) folded.

@@ -160,6 +160,14 @@ export function readOnlyPrisma(data, calls = [], tenant = { locale: 'en-US', cur
     // A record's audit entries (record_history), newest first; none unless a
     // test adds them.
     auditLog: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : array(data.auditLogs).filter((row) => row.entityId === where.entityId && where.entityType.in.includes(row.entityType)).sort((a, b) => String(b.createdAt.toISOString?.() || b.createdAt).localeCompare(String(a.createdAt.toISOString?.() || a.createdAt))).slice(0, where.take ?? undefined) },
+    // Supplier replies and the promise revisions they recorded, for
+    // record_history's read-back of a reply (#363 §4.10); none unless a test
+    // adds them.
+    supplierReply: {
+      findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : array(data.supplierReplies).filter((row) => row.purchaseOrderId === where.purchaseOrderId && (!where.id?.in || where.id.in.includes(row.id))),
+      count: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? 0 : array(data.supplierReplies).filter((row) => row.purchaseOrderId === where.purchaseOrderId && row.state !== where.state?.not).length,
+    },
+    purchaseOrderPromiseRevision: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : array(data.promiseRevisions).filter((row) => row.purchaseOrderId === where.purchaseOrderId && (!where.id?.in || where.id.in.includes(row.id))) },
     // Suppliers, read by both the minimum order and the scorecard, and one by
     // id for a supplier's detail page (supplier-insights.mjs readActivity).
     supplier: {
