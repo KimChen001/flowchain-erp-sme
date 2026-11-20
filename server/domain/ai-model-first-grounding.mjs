@@ -614,67 +614,86 @@ export function aiGroundingItemNamePairs(body, facts, results) {
 // answer's "about £259" was taken as checked, since the calculation's result
 // was a source). A calculation with an input from nowhere is no source.
 const INPUT_NUMBER = /-?\d[\d,]*(?:\.\d+)?/g
-// A span of weeks the user wrote in words counts as its days for a
-// calculation ("把交期推迟一周" is add_days 7). Without it the date add_days
-// gave was not a source, and the answer check flagged it (question sets
-// 2026-11-13 and 11-19, promised-date-zh).
-const WEEKS_IN_WORDS = [
-  [/\b(?:a|one|another)\s+week\b|\b(?:this|next)\s+week\b|一\s*(?:个)?\s*(?:周|星期|礼拜)|(?:这|本|下)\s*(?:个)?\s*(?:周|星期|礼拜)/i, 7],
-  [/\b(?:two\s+weeks|a\s+fortnight)\b|(?:两|二)\s*(?:个)?\s*(?:周|星期|礼拜)/i, 14],
-  [/\bthree\s+weeks\b|三\s*(?:个)?\s*(?:周|星期|礼拜)/i, 21],
-  [/\bfour\s+weeks\b|四\s*(?:个)?\s*(?:周|星期|礼拜)/i, 28],
-]
-const DIGIT_WEEKS = /(\d+)\s*(?:weeks?\b|周|个星期|星期)/gi
-// Counts and multiples the user wrote in words, for a calculation's inputs
-// ("three times the minimum order" is a product by 3; 2026-11-20 question
-// set, minimum-multiple-en: its right £957 was flagged). English number
-// words one to twelve, twice, double and triple; Chinese only as a multiple
-// (两倍, 三倍), since 三 and 两 sit inside many words (三方匹配).
-const NUMBER_WORDS = Object.freeze({ one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, twice: 2, double: 2, triple: 3 })
-const CHINESE_DIGITS = Object.freeze({ 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 })
-function countsInWords(value) {
-  const counts = []
-  for (const match of value.matchAll(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twice|double|triple)\b/gi)) counts.push(NUMBER_WORDS[match[1].toLowerCase()])
-  for (const match of value.matchAll(/([一二两三四五六七八九十])\s*倍/g)) counts.push(CHINESE_DIGITS[match[1]])
-  if (/翻倍|翻一番/.test(value)) counts.push(2)
-  return counts
+
+// What the user's own words give a calculation, never the model's (only the
+// question the user typed, not the conversation, which holds earlier
+// answers), and only where the words mean it (2026-11-20 question set and
+// its review):
+//   a shift by weeks, as an add_days delta with its direction: "push it back
+//   a week", "if Acme delays another week" (+7), "delay it 3 weeks" (+21),
+//   推迟一周 (+7), 提前一周 (−7). A delay or advance word must come before
+//   the span, so "sell a week", 统一周期, 下周一, 第47周, 十二周 and "1.5
+//   weeks" give nothing, and "this week" names no shift;
+//   a multiple, as a product's factor: "three times the minimum order" (3),
+//   twice, double, triple, 两倍, 三倍, 翻倍. Not "double-check", not a bare
+//   number word ("three suppliers", "top ten").
+// Neither joins the user's figures, and neither gets the ×100 tolerance.
+const WEEK_COUNT = Object.freeze({ a: 1, one: 1, another: 1, two: 2, three: 3, four: 4 })
+const WEEK_ZH_COUNT = Object.freeze({ 一: 1, 两: 2, 二: 2, 三: 3, 四: 4 })
+const EARLIER = /^(?:bring|earlier|sooner|ahead|forward|advance)/i
+function weekShiftsIn(question) {
+  const value = text(question)
+  const shifts = []
+  const english = /\b(delay(?:s|ed)?|push(?:es|ed)?|postpone[sd]?|move[sd]?|slip(?:s|ped)?|later|extend(?:s|ed)?|bring|earlier|sooner|ahead|forward|advance[sd]?)\b[^.?!\n]{0,30}?(?<![\d.])\b(a|one|another|two|three|four|\d{1,2})\s+weeks?\b|\b(delay(?:s|ed)?|push(?:es|ed)?|postpone[sd]?|move[sd]?|slip(?:s|ped)?|bring|earlier|sooner|ahead|forward)\b[^.?!\n]{0,30}?\ba\s+fortnight\b/gi
+  for (const match of value.matchAll(english)) {
+    const verb = match[1] || match[3]
+    const weeks = match[2] ? (WEEK_COUNT[match[2].toLowerCase()] ?? Number(match[2])) : 2
+    if (!Number.isFinite(weeks) || weeks <= 0) continue
+    // "bring it forward a week", "a week earlier"
+    const after = value.slice(match.index + match[0].length, match.index + match[0].length + 12)
+    const sign = EARLIER.test(verb) || /^\s*(?:earlier|sooner)\b/i.test(after) ? -1 : 1
+    shifts.push(sign * weeks * 7)
+  }
+  for (const match of value.matchAll(/(推迟|延后|延迟|推后|往后推|晚|提前|早)\s*了?\s*(一|两|二|三|四|\d{1,2})\s*个?\s*(?:周|星期|礼拜)(?![一二三四五六日天末])/g)) {
+    const weeks = WEEK_ZH_COUNT[match[2]] ?? Number(match[2])
+    if (!Number.isFinite(weeks) || weeks <= 0) continue
+    shifts.push((/^(?:提前|早)$/.test(match[1]) ? -1 : 1) * weeks * 7)
+  }
+  return shifts
 }
-// The days a span of weeks in the user's words reaches from today: "what
-// should I reorder this week?" answered "order by 27 Nov" (today + 7), and
-// "if Acme delays another week" with the week after today (question set
-// 2026-11-20: reorder-en, reorder-zh and acme-week-en flagged the date in
-// every run).
-function daysAfter(day, days) {
-  const at = Date.parse(`${day}T12:00:00Z`)
-  return Number.isFinite(at) ? new Date(at + days * 86_400_000).toISOString().slice(0, 10) : null
+const MULTIPLE_WORDS = Object.freeze({ twice: 2, double: 2, triple: 3, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 })
+function multiplesIn(question) {
+  const value = text(question)
+  const factors = []
+  for (const match of value.matchAll(/\b(two|three|four|five|six|seven|eight|nine|ten)\s+times\b|\b(twice|triple)\b|\b(double)\b(?!-)/gi)) factors.push(MULTIPLE_WORDS[(match[1] || match[2] || match[3]).toLowerCase()])
+  for (const match of value.matchAll(/(?<![十百第\d])([两二三四五六七八九十])\s*倍/g)) factors.push({ 两: 2, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 }[match[1]])
+  if (/翻倍|翻一番/.test(value)) factors.push(2)
+  return factors
 }
-function weeksAsDays(value) {
-  const days = WEEKS_IN_WORDS.filter(([pattern]) => pattern.test(value)).map(([, count]) => count)
-  for (const match of value.matchAll(DIGIT_WEEKS)) days.push(Number(match[1]) * 7)
-  return days
-}
+
+// A calculation is a source when every input is grounded:
+//   numbers: a figure of the results read so far or one the user typed (as
+//   before), a week shift the user asked for as an add_days delta, or a
+//   multiple the user asked for as a product's factor;
+//   the date add_days starts from: a day the results hold, today, or one
+//   the user typed.
 // output: the calculation's own result, when it ran. In a call of several
 // calculations a later one may use an earlier one's result ("three times
 // the minimum order at £6.38": 50 × 3 = 150, then 150 × 6.38; 2026-11-20,
-// minimum-multiple-en flagged both).
-export function aiCalculationGrounded(input = {}, { results = [], question = '', conversation = '', output = null } = {}) {
-  const values = [...array(input?.values), ...array(input?.calculations).flatMap((entry) => array(entry?.values))].map(Number).filter(Number.isFinite)
-  if (!values.length) return true
+// minimum-multiple-en), never a later one's.
+export function aiCalculationGrounded(input = {}, { results = [], question = '', conversation = '', output = null, today = null } = {}) {
+  const top = input?.operation || array(input?.values).length || array(input?.dates).length ? [input] : []
+  const entries = [...top, ...array(input?.calculations)]
+  const sources = aiGroundingSources(results)
   const known = [
-    ...aiGroundingSources(results).numbers.map((row) => row.value),
+    ...sources.numbers.map((row) => row.value),
     ...[text(question), text(conversation)].flatMap((value) => [...value.matchAll(INPUT_NUMBER)].map((match) => Number(match[0].replace(/,/g, '')))),
-    ...[text(question), text(conversation)].flatMap(weeksAsDays),
-    ...[text(question), text(conversation)].flatMap(countsInWords),
   ].filter(Number.isFinite)
   const near = (value) => known.some((candidate) => Math.abs(candidate - value) <= Math.max(0.005, Math.abs(candidate) * 0.0005) || Math.abs(candidate * 100 - value) <= 0.005 || Math.abs(candidate / 100 - value) <= 0.00005)
-  const grounded = (list) => array(list).map(Number).filter(Number.isFinite).every((value) => value === 0 || value === 1 || near(value))
-  if (!grounded(input?.values)) return false
-  // Each calculation of a call in turn: once grounded, its result is known
-  // to the ones after it, never to those before.
+  const shifts = weekShiftsIn(question)
+  const multiples = multiplesIn(question)
+  const typedDays = aiGroundingSources([text(question)]).days
+  const dayKnown = (day) => sources.days.has(day) || typedDays.has(day) || (Boolean(today) && day === today)
   const outputs = array(output?.results)
-  for (const [index, entry] of array(input?.calculations).entries()) {
-    if (!grounded(entry?.values)) return false
-    const result = Number(outputs[index]?.result)
+  for (const [index, entry] of entries.entries()) {
+    const operation = text(entry?.operation)
+    const valueGrounded = (value) => value === 0 || value === 1 || near(value)
+      || (operation === 'add_days' && shifts.includes(value))
+      || (operation === 'product' && multiples.includes(value))
+    if (!array(entry?.values).map(Number).filter(Number.isFinite).every(valueGrounded)) return false
+    if (operation === 'add_days' && !array(entry?.dates).every((day) => dayKnown(text(day)))) return false
+    // Once grounded, a calculation's result is known to the ones after it.
+    const result = entry === input ? Number(output?.result) : Number(outputs[index - top.length]?.result)
     if (Number.isFinite(result)) known.push(result)
   }
   return true
@@ -695,22 +714,7 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
   // Record numbers and names may also come from the conversation so far.
   const named = fold(`${question}\n${conversation}`)
   const given = aiGroundingSources([question], { dayFirst })
-  if (today) {
-    sources.days.add(today)
-    sources.months.add(today.slice(0, 7))
-  }
-  // A span of weeks the user named reaches a day from today or from a date
-  // the records hold: "把交期推迟一周" moves the promised 15 Nov to 22 Nov
-  // (2026-11-20, promised-date-zh: written without a calculation).
-  const spans = [...new Set(weeksAsDays(`${text(question)}\n${text(conversation)}`))]
-  if (spans.length) {
-    for (const from of [...sources.days, ...(today ? [today] : [])]) {
-      for (const days of spans) {
-        const day = daysAfter(from, days)
-        if (day) { sources.days.add(day); sources.months.add(day.slice(0, 7)) }
-      }
-    }
-  }
+  if (today) { sources.days.add(today); sources.months.add(today.slice(0, 7)) }
   // The highest item number of the answer's own numbered lists, quoted ones
   // (a drafted message) included: "steps 1 and 2" points into them.
   const listItems = Math.max(0, ...[...figuresText(body).matchAll(LIST_ITEM)].map((match) => Number(match[1])))
@@ -810,10 +814,6 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
   // A period the question names in words is given in days as well: "再晚一周"
   // makes 7 天 the user's (2026-11-11 on Flash: "7 天约需 143.5 件" was flagged).
   for (const [pattern, days] of PERIOD_WORDS) if (pattern.test(question)) givenNumbers.push(days)
-  // A count or multiple the question writes in words is given as its number:
-  // "three times the minimum order" makes 3 the user's (2026-11-20,
-  // minimum-multiple-en: "3 × 50" was flagged).
-  givenNumbers.push(...countsInWords(text(question)))
   // The answer's figures read from the results or the question, in order, and
   // those no result holds.
   const operands = []

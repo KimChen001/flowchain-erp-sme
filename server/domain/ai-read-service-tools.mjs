@@ -206,6 +206,10 @@ const reorderList = defineAiTool({
     return {
       asOf: facts.asOf, summary: list.summary && typeof list.summary === 'object' ? primitives(list.summary, Object.keys(list.summary)) : null, notJudged: array(list.notJudged).length, limitations: array(list.dataLimitations), counts,
       orderByRange: dated.length ? { earliest: dated[0], latest: dated.at(-1) } : null,
+      // The last day of the 7- and 30-day windows the counts use, so "due by
+      // 27 Nov" for "this week" is read, not worked out (2026-11-20 question
+      // set: reorder-en and reorder-zh flagged it in every run).
+      ...(/^\d{4}-\d{2}-\d{2}$/.test(today) ? { dueWindowEnds: { within7Days: addCalendarDays(today, 7), within30Days: addCalendarDays(today, 30) } } : {}),
       forecastAvailable: Boolean(forecastClient),
       ...(args.forecast && list.forecast ? { forecast: primitives(list.forecast, ["status", "model", "error"]) } : {}),
       demandWindowDays: DEMAND_WINDOW_DAYS, dueWindowsInDays: [7, 30],
