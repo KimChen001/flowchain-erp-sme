@@ -92,12 +92,21 @@ type InvoiceExceptionDraft = {
   step: "ask_supplier" | "review_price" | "wait_receipt"; differences: InvoiceDifference[]; moreDifferences: number;
 };
 type Draft = ReorderDraft | FollowUpDraft | SendOrderDraft | ConversionDraft | InvoiceExceptionDraft;
-export type WaitingEntry = { key: string; row: TodayRow; raisedAt: string | null; returned: boolean; draft: Draft | null };
+// chasedOn: the day the supplier was last chased about the item, also after
+// it came back or was decided again (an older server sends none).
+export type WaitingEntry = { key: string; row: TodayRow; raisedAt: string | null; returned: boolean; chasedOn?: string | null; draft: Draft | null };
 export type SetAsideEntry = {
   key: string; row: TodayRow; decision: "not_now" | "not_needed" | "chased" | "accepted" | "covered"; reasonCode: string | null; note: string | null;
   returnOn: string | null; decidedAt: string | null; decidedOn: string | null; decidedBy: { name: string } | null;
-  documentType: string | null; documentIds: string[]; documentNumber: string | null;
+  documentType: string | null; documentIds: string[]; documentNumber: string | null; chasedOn?: string | null;
 };
+
+// Where Today takes the supplier's reply (docs/supplier-reply-dates-design.md
+// §4.2): an overdue order the supplier was chased about, set aside or back
+// again after the follow-up, and only one the supplier has (issued): replies
+// are recorded on no other.
+export const takesSupplierReply = (entry: { row: TodayRow; chasedOn?: string | null; decision?: string }) =>
+  entry.row.kind === "purchase_order_overdue" && (entry.decision === "chased" || Boolean(entry.chasedOn)) && !entry.row.detail?.notIssued;
 // supplierEmail: whether follow-ups may be emailed from the cards (the
 // workspace switch, the reader's permission and a mail provider), and whether
 // an email would only reach the local outbox.
@@ -329,6 +338,8 @@ function DecisionCard({ entry, email, canDecide: canDecideSome, decideKinds, tod
           })} />
             : <GenericBody aside={aside} {...view} />}
       </div>
+      {/* Back after a follow-up: the supplier may have answered it since. */}
+      {takesSupplierReply(entry) ? <div className="mt-1.5"><SupplierReplies orderId={row.recordId} entry="today" onRecorded={onChanged} /></div> : null}
       {open && mode === "not_now" ? <NotNowForm today={today} busy={busy} onCancel={() => setMode(null)} onSave={(returnOn) => run(async () => { await decide(entry.key, { option: "not_now", returnOn }); setMode(null); })} /> : null}
       {open && mode === "not_needed" ? <NotNeededForm busy={busy} onCancel={() => setMode(null)} onSave={(reasonCode, note) => run(async () => { await decide(entry.key, { option: "not_needed", reasonCode, note }); setMode(null); })} /> : null}
       {message ? <p className="mt-2 text-xs" style={{ color: A.sub }} role="status">{message}</p> : null}
@@ -806,9 +817,8 @@ function SetAsideList({ entries, canDecide, day, kindLabel, labelOf, onChanged }
                 <span style={{ color: A.sub }}>{status(entry)}</span>
                 {entry.decidedBy ? <span style={{ color: A.gray2 }}>{t("by", { name: entry.decidedBy.name, date: entry.decidedOn ? day(entry.decidedOn) : "" })}</span> : null}
                 {canDecide ? <button type="button" disabled={busyKey === entry.key} className={`${BUTTON.secondary} ml-auto`} onClick={() => reopen(entry.key)}>{t("reopen")}</button> : null}
-                {/* A chased order: the supplier's answer is pasted here (docs/supplier-reply-dates-design.md §4.2).
-                    Only on an order the supplier has (issued): replies are recorded on no other. */}
-                {entry.row.kind === "purchase_order_overdue" && entry.decision === "chased" && !entry.row.detail?.notIssued ? <SupplierReplies orderId={entry.row.recordId} entry="today" onRecorded={onChanged} /> : null}
+                {/* A chased order: the supplier's answer is pasted here. */}
+                {takesSupplierReply(entry) ? <SupplierReplies orderId={entry.row.recordId} entry="today" onRecorded={onChanged} /> : null}
               </li>
             ))}
           </ul>
