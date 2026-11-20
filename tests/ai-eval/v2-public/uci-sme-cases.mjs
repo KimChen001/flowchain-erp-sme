@@ -57,7 +57,7 @@ export function buildUciSmeCases(facts, { manager, buyer, supplierReply }) {
   // After the reply cases: Acme's dismissed reply named a day 14 days ahead.
   if (supplierReply) {
     cases.push({ id: 'sme-reply-check-en', asUser: manager, setup: { supplierReply }, turns: ['Did Acme reply about its late orders?'],
-      expect: { dates: [addDays(facts.today, 14)], matches: [{ label: 'says what the reply said', pattern: String.raw`repl|said|wrote|told` }] } })
+      expect: { dates: [{ label: 'the day the reply names', date: addDays(facts.today, 14) }], matches: [{ label: 'says what the reply said', pattern: String.raw`repl|said|wrote|told` }] } })
   }
   return cases.map((row) => ({ kind: 'sme', language: row.id.endsWith('-zh') ? 'zh-CN' : 'en-US', ...row }))
 }
