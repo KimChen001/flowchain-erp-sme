@@ -653,7 +653,11 @@ function weeksAsDays(value) {
   for (const match of value.matchAll(DIGIT_WEEKS)) days.push(Number(match[1]) * 7)
   return days
 }
-export function aiCalculationGrounded(input = {}, { results = [], question = '', conversation = '' } = {}) {
+// output: the calculation's own result, when it ran. In a call of several
+// calculations a later one may use an earlier one's result ("three times
+// the minimum order at £6.38": 50 × 3 = 150, then 150 × 6.38; 2026-11-20,
+// minimum-multiple-en flagged both).
+export function aiCalculationGrounded(input = {}, { results = [], question = '', conversation = '', output = null } = {}) {
   const values = [...array(input?.values), ...array(input?.calculations).flatMap((entry) => array(entry?.values))].map(Number).filter(Number.isFinite)
   if (!values.length) return true
   const known = [
@@ -663,7 +667,17 @@ export function aiCalculationGrounded(input = {}, { results = [], question = '',
     ...[text(question), text(conversation)].flatMap(countsInWords),
   ].filter(Number.isFinite)
   const near = (value) => known.some((candidate) => Math.abs(candidate - value) <= Math.max(0.005, Math.abs(candidate) * 0.0005) || Math.abs(candidate * 100 - value) <= 0.005 || Math.abs(candidate / 100 - value) <= 0.00005)
-  return values.every((value) => value === 0 || value === 1 || near(value))
+  const grounded = (list) => array(list).map(Number).filter(Number.isFinite).every((value) => value === 0 || value === 1 || near(value))
+  if (!grounded(input?.values)) return false
+  // Each calculation of a call in turn: once grounded, its result is known
+  // to the ones after it, never to those before.
+  const outputs = array(output?.results)
+  for (const [index, entry] of array(input?.calculations).entries()) {
+    if (!grounded(entry?.values)) return false
+    const result = Number(outputs[index]?.result)
+    if (Number.isFinite(result)) known.push(result)
+  }
+  return true
 }
 
 // locale: the workspace's, for the order of a slash date (the facts' when
@@ -684,9 +698,17 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
   if (today) {
     sources.days.add(today)
     sources.months.add(today.slice(0, 7))
-    for (const days of new Set(weeksAsDays(`${text(question)}\n${text(conversation)}`))) {
-      const day = daysAfter(today, days)
-      if (day) { sources.days.add(day); sources.months.add(day.slice(0, 7)) }
+  }
+  // A span of weeks the user named reaches a day from today or from a date
+  // the records hold: "把交期推迟一周" moves the promised 15 Nov to 22 Nov
+  // (2026-11-20, promised-date-zh: written without a calculation).
+  const spans = [...new Set(weeksAsDays(`${text(question)}\n${text(conversation)}`))]
+  if (spans.length) {
+    for (const from of [...sources.days, ...(today ? [today] : [])]) {
+      for (const days of spans) {
+        const day = daysAfter(from, days)
+        if (day) { sources.days.add(day); sources.months.add(day.slice(0, 7)) }
+      }
     }
   }
   // The highest item number of the answer's own numbered lists, quoted ones

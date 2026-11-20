@@ -143,3 +143,30 @@ test('a count or multiple in the user\'s words grounds a calculation', () => {
   assert.equal(grounded([50, 3], 'What would the minimum order cost?'), false)
   assert.equal(grounded([50, 3], '三方匹配通过了几张？'), false)
 })
+
+// 2026-11-20 live runs: "three times the minimum order" came as one call of
+// two calculations (50 × 3, then 150 × 6.38), and "推迟一周" was answered
+// with the promised date plus a week written without a calculation.
+test('a calculation may use an earlier one of the same call, and a named span moves a recorded date', () => {
+  const results = [{ minimumOrderQuantity: 50, unitPrice: 6.38 }]
+  const input = { calculations: [{ label: 'three minimums', operation: 'product', values: [50, 3] }, { label: 'cost', operation: 'product', values: [150, 6.38] }] }
+  const output = { results: [{ label: 'three minimums', operation: 'product', result: 150 }, { label: 'cost', operation: 'product', result: 957 }] }
+  const question = 'What would three times the minimum order cost?'
+  assert.equal(aiCalculationGrounded(input, { results, question, output }), true)
+  // Without the earlier result, 150 is no figure anyone gave.
+  assert.equal(aiCalculationGrounded(input, { results, question }), false)
+  const dates = (answer, question) => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results: [{ promisedDate: '2026-11-15' }], question, today: '2026-11-20' }).problems.filter((row) => row.kind === 'date').map((row) => row.value)
+  assert.deepEqual(dates('推迟一周后是 22 Nov 2026。', '把 Globex 那张逾期订单的交期推迟一周'), [])
+  // No span named, or a day the span does not reach: flagged.
+  assert.equal(dates('改到 22 Nov 2026。', '把 Globex 那张逾期订单的交期改一下').length, 1)
+  assert.equal(dates('推迟一周后是 23 Nov 2026。', '把交期推迟一周').length, 1)
+})
+
+test('only an earlier calculation of the call grounds a later one', () => {
+  const results = [{ minimumOrderQuantity: 50, unitPrice: 6.38 }]
+  const question = 'What would three times the minimum order cost?'
+  // The cost first, from a 150 only the second calculation gives: refused.
+  const input = { calculations: [{ operation: 'product', values: [150, 6.38] }, { operation: 'product', values: [50, 3] }] }
+  const output = { results: [{ operation: 'product', result: 957 }, { operation: 'product', result: 150 }] }
+  assert.equal(aiCalculationGrounded(input, { results, question, output }), false)
+})
