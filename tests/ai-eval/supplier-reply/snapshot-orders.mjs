@@ -1,0 +1,122 @@
+// Writes orders.mjs: the open purchase orders the supplier reply cases are
+// pasted on, as the public-data seed plans them. Nothing is invented: the
+// lines, quantities still to receive and promised dates come from
+// buildPublicDataPlan (scripts/public-data/plan.mjs), built offline from the
+// local extract and the seed day, with no database and no running server.
+//
+// The ids and numbers follow scripts/public-data/seed.mjs:
+//   - the order id is `${DATASET}-PO-${sequence}` and a line's id is
+//     `${orderId}-L${index}`, in the plan's order;
+//   - the number is PO-YYYYMM-NNNN from a monthly counter, allocated in the
+//     plan's order (allocateDocumentNumber, server/domain/document-numbering.mjs).
+//     The seed numbers these orders before any purchase request is converted,
+//     so the counter is the plan's own.
+//   - status: partially_received once a receipt was posted on the order,
+//     issued otherwise (receiving-transaction-policy.mjs).
+// The plan records no supplier part numbers (the seed links each item to its
+// supplier without one), so supplierSku is null on every line.
+//
+//   node tests/ai-eval/supplier-reply/snapshot-orders.mjs --extract=<public-data-extract.json> [--seed-day=2026-11-18] [--check]
+//
+// --check compares with the orders.mjs on disk and exits 1 when they differ.
+import { readFileSync, writeFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { buildPublicDataPlan, readPublicDataExtract } from '../../../scripts/public-data/plan.mjs'
+
+// The orders the cases use, per workspace.
+export const SNAPSHOT_ORDERS = Object.freeze({
+  uci: ['PO-202610-0028', 'PO-202610-0029', 'PO-202610-0030', 'PO-202611-0008', 'PO-202611-0012', 'PO-202611-0013', 'PO-202611-0014', 'PO-202611-0018', 'PO-202611-0019', 'PO-202611-0020'],
+  m5: ['PO-202611-0012', 'PO-202611-0014', 'PO-202611-0019', 'PO-202611-0021'],
+})
+
+export function openOrderSnapshots(plan, numbers) {
+  const items = new Map(plan.items.map((item) => [item.key, item]))
+  const suppliers = new Map(plan.suppliers.map((supplier) => [supplier.key, supplier]))
+  const prefix = plan.dataset.toUpperCase()
+  const counters = new Map()
+  const wanted = new Set(numbers)
+  const found = {}
+  plan.purchasing.orders.forEach((order, sequence) => {
+    const created = plan.dayOf(order.created)
+    const period = `${created.slice(0, 4)}${created.slice(5, 7)}`
+    const next = (counters.get(period) || 0) + 1
+    counters.set(period, next)
+    const number = `PO-${period}-${String(next).padStart(4, '0')}`
+    if (!wanted.has(number)) return
+    if (order.status !== 'issued' || order.closed) throw new Error(`${number} is ${order.status}${order.closed ? ', closed' : ''}, not an issued order.`)
+    const id = `${prefix}-PO-${String(sequence + 1).padStart(5, '0')}`
+    const receivedOf = (key) => order.receipts.reduce((total, receipt) => total + receipt.lines.filter((line) => line.itemKey === key).reduce((sum, line) => sum + line.quantity, 0), 0)
+    const open = order.lines
+      .map((line, index) => ({ line, index, remaining: line.quantity - receivedOf(line.itemKey) }))
+      .filter((row) => row.remaining > 0)
+    if (!open.length) throw new Error(`${number} has nothing left to receive.`)
+    const promised = plan.dayOf(order.promised)
+    found[number] = {
+      id,
+      number,
+      supplierName: suppliers.get(order.supplierKey).name,
+      status: order.receipts.length ? 'partially_received' : 'issued',
+      lines: open.map((row, position) => ({
+        ref: `L${position + 1}`,
+        purchaseOrderLineId: `${id}-L${String(row.index + 1).padStart(3, '0')}`,
+        sku: items.get(row.line.itemKey).sku,
+        supplierSku: null,
+        itemName: items.get(row.line.itemKey).name,
+        remaining: row.remaining,
+        unit: 'pcs',
+        promisedDate: promised,
+      })),
+    }
+  })
+  const missing = numbers.filter((number) => !found[number])
+  if (missing.length) throw new Error(`The plan has no open order ${missing.join(', ')}.`)
+  return Object.fromEntries(numbers.map((number) => [number, found[number]]))
+}
+
+// A single-quoted JavaScript string.
+const q = (value) => `'${String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
+
+function render(seedDay, snapshots) {
+  const block = (workspace) => Object.values(snapshots[workspace]).map((order) => [
+    `    ${q(order.number)}: {`,
+    `      id: ${q(order.id)}, number: ${q(order.number)}, supplierName: ${q(order.supplierName)}, status: ${q(order.status)},`,
+    '      lines: [',
+    ...order.lines.map((line) => `        { ref: ${q(line.ref)}, purchaseOrderLineId: ${q(line.purchaseOrderLineId)}, sku: ${q(line.sku)}, supplierSku: null, itemName: ${q(line.itemName)}, remaining: ${line.remaining}, unit: ${q(line.unit)}, promisedDate: ${q(line.promisedDate)} },`),
+    '      ],',
+    '    },',
+  ].join('\n')).join('\n')
+  return [
+    '// Generated by snapshot-orders.mjs from the public-data seed plan',
+    `// (scripts/public-data/plan.mjs) with seed day ${seedDay}. Do not edit by hand:`,
+    '// run the script again. Open lines only; no prices (the reading does not get them).',
+    `export const SNAPSHOT_SEED_DAY = '${seedDay}'`,
+    '',
+    'export const ORDER_SNAPSHOTS = {',
+    '  uci: {',
+    block('uci'),
+    '  },',
+    '  m5: {',
+    block('m5'),
+    '  },',
+    '}',
+    '',
+  ].join('\n')
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const args = Object.fromEntries(process.argv.slice(2).map((arg) => arg.replace(/^--/, '').split('=')).map(([key, ...value]) => [key, value.join('=') || true]))
+  if (!args.extract) throw new Error('Give --extract=<public-data-extract.json>.')
+  const seedDay = String(args['seed-day'] || '2026-11-18')
+  const extract = readPublicDataExtract(String(args.extract))
+  const snapshots = Object.fromEntries(Object.entries(SNAPSHOT_ORDERS).map(([workspace, numbers]) => [workspace, openOrderSnapshots(buildPublicDataPlan(extract, workspace, { seedDay }), numbers)]))
+  const text = render(seedDay, snapshots)
+  const target = fileURLToPath(new URL('./orders.mjs', import.meta.url))
+  if (args.check) {
+    const same = readFileSync(target, 'utf8').replace(/\r\n/g, '\n') === text
+    console.log(same ? 'orders.mjs matches the seed plan.' : 'orders.mjs differs from the seed plan.')
+    process.exit(same ? 0 : 1)
+  }
+  writeFileSync(target, text)
+  console.log(`Wrote ${target}`)
+}

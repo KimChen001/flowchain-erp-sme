@@ -4,6 +4,10 @@
 
 - `knowledge/`: the knowledge (document search) evaluation, run in CI as
   `npm run test:ai:eval:knowledge`. See `knowledge/README.md`.
+- `supplier-reply/`: the supplier reply set (docs/supplier-reply-dates-design.md
+  §7): synthetic supplier emails on the public-data workspaces' open orders,
+  with the expected reading. Its structural test runs in `npm test`. See
+  `supplier-reply/README.md`.
 - `offline-guard.mjs`: refuses every connection to a host other than this
   machine, so an evaluation run never calls a provider by accident. The
   knowledge evaluation imports it.
