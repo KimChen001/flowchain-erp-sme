@@ -6,7 +6,8 @@ import { SupplierActivityCards } from "./supplierActivity";
 import { SupplierTierPanel, TierChip, type Tier, type TierHistoryRow } from "./SupplierTier";
 import type { SupplierInsight, SupplierInsights } from "./supplierInsights";
 import { sortSuppliersBy, useSupplierMetricCells } from "./supplierMetrics";
-import { useEffect, useState, useRef } from "react";
+import { Fragment, useEffect, useState, useRef } from "react";
+import { EDIT_TERMS_LABEL, SuppliedItemTermsRow } from "./SuppliedItemTermsRow";
 import { ArrowLeft, Pencil, Plus, RefreshCw, Search } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, apiJson } from "../../lib/api-client";
@@ -461,11 +462,12 @@ export default function SupplierMasterPage({
       toast.error(failure(e));
     }
   };
+  // True once saved and the supplier reread; a failure is said in a toast.
   const updateRelationship = async (
     relationship: Relationship,
-    patch: Partial<Relationship>,
+    patch: Partial<Omit<Relationship, "referencePrice">> & { referencePrice?: number | null },
   ) => {
-    if (!selected) return;
+    if (!selected) return false;
     try {
       await request(
         `/api/master-data/items/${relationship.itemId}/suppliers/${relationship.relationshipId}`,
@@ -473,10 +475,14 @@ export default function SupplierMasterPage({
         { ...patch, expectedVersion: relationship.version },
       );
       await openDetail(selected.id);
+      return true;
     } catch (e: any) {
       toast.error(failure(e));
+      return false;
     }
   };
+  // The supplied item whose terms are open for editing, by relationship id.
+  const [editingTerms, setEditingTerms] = useState<string | null>(null);
   const insightOf = (id: string): SupplierInsight | undefined => insights?.suppliers[id];
   const sortedRows = sortSuppliersBy(rows, sortBy, insightOf, spendCurrency);
   const supplierPage = usePagedRows(sortedRows, SUPPLIER_PAGE_SIZE, [query, status, category, owner, tab, sortBy].join("|"));
@@ -685,7 +691,8 @@ export default function SupplierMasterPage({
               </thead>
               <tbody>
                 {suppliedItems.pageRows.map((r, index) => (
-                  <tr key={r.relationshipId} className={listRowClass} style={listRowStyle(index, suppliedItems.pageRows.length)}>
+                  <Fragment key={r.relationshipId}>
+                  <tr className={listRowClass} style={listRowStyle(index, suppliedItems.pageRows.length)}>
                     <td className={`${tdClass} min-w-[160px]`}>
                       <EntityLink kind="item" id={r.itemId} className={tableLinkClass}>
                         {r.item?.sku || r.itemId} · {r.item?.itemName || ""}
@@ -719,6 +726,15 @@ export default function SupplierMasterPage({
                         <button
                           type="button"
                           className={rowActionClass.neutral}
+                          data-testid="supplied-item-edit-terms"
+                          aria-expanded={editingTerms === r.relationshipId}
+                          onClick={() => setEditingTerms((current) => (current === r.relationshipId ? null : r.relationshipId))}
+                        >
+                          {EDIT_TERMS_LABEL[language === "zh-CN" ? 1 : 0]}
+                        </button>
+                        <button
+                          type="button"
+                          className={rowActionClass.neutral}
                           onClick={() => void toggleRelationship(r)}
                         >
                           {copy(r.active ? "Set inactive" : "Set active")}
@@ -726,6 +742,17 @@ export default function SupplierMasterPage({
                       </div>
                     </td>}
                   </tr>
+                  {writes.items && editingTerms === r.relationshipId && (
+                    <SuppliedItemTermsRow
+                      colSpan={7 + (relationshipHistory.state === "hidden" ? 0 : 1) + 1}
+                      itemLabel={`${r.item?.sku || r.itemId}${r.item?.itemName ? ` · ${r.item.itemName}` : ""}`}
+                      currency={r.currency || ""}
+                      terms={{ leadTimeDays: r.leadTimeDays, minimumOrderQuantity: r.minimumOrderQuantity, referencePrice: r.referencePrice === undefined || r.referencePrice === null || r.referencePrice === 0 ? null : Number(r.referencePrice) }}
+                      onSave={(patch) => updateRelationship(r, patch)}
+                      onCancel={() => setEditingTerms(null)}
+                    />
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
