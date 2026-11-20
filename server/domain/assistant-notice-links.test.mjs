@@ -7,13 +7,19 @@ import { readFileSync } from 'node:fs'
 // nothing else. The notice now offers the pages that work without the model.
 const read = (file) => readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8')
 
-test('the notices that leave no answer offer Today, the reorder list and Reports', () => {
+test('the notices that leave no answer offer Today, the reorder list and Reports, where the reader may open them', () => {
+  const list = read('src/modules/ai-assistant/v2/assistantElsewhere.ts')
+  assert.match(list, /new Set\(\["ai_off", "no_provider", "over_cap", "unavailable"\]\)/)
+  for (const route of ['overview:risks', 'inventory:reorder', 'reports:overview']) assert.ok(list.includes(`["${route}", "ai.v2.elsewhere.`), route)
+  assert.match(list, /return ELSEWHERE_LINKS\.filter\(\(\[routeId\]\) => canOpenRoute\(routeId\)\)/)
   const links = read('src/modules/ai-assistant/v2/NoAssistantLinks.tsx')
-  assert.match(links, /new Set\(\["ai_off", "no_provider", "over_cap", "unavailable"\]\)/)
-  for (const route of ['overview:risks', 'inventory:reorder', 'reports:overview']) assert.ok(links.includes(`["${route}", "ai.v2.elsewhere.`), route)
-  // Shown under the welcome notice and under an answer's notice.
+  assert.match(links, /const canOpenRoute = useRouteAvailability\(\);/)
+  assert.match(links, /const language = answerLanguage \|\| interfaceLanguage;/)
+  // The panel sits inside the provider, so the hook answers for this reader.
+  assert.match(read('src/app/FlowChainApp.tsx'), /<RouteAvailabilityProvider value=\{canOpenRoute\}>\s*<AiPanel/)
+  // Under the welcome notice, and under the latest answer only, in its language.
   assert.match(read('src/modules/ai-assistant/Panel.tsx'), /\{notice && NOTICES_WITHOUT_ANSWERS\.has\(notice\) \? <NoAssistantLinks onNavigate=\{minimizeAfterNavigate\} \/> : null\}/)
-  assert.match(read('src/modules/ai-assistant/v2/AssistantV2Answer.tsx'), /message\.notices\.some\(\(code\) => NOTICES_WITHOUT_ANSWERS\.has\(code\)\) \? <NoAssistantLinks onNavigate=\{onNavigate\} \/> : null/)
+  assert.match(read('src/modules/ai-assistant/v2/AssistantV2Answer.tsx'), /\{latest && message\.notices\.some\(\(code\) => NOTICES_WITHOUT_ANSWERS\.has\(code\)\) \? <NoAssistantLinks onNavigate=\{onNavigate\} language=\{message\.language\} \/> : null\}/)
 })
 
 test('the links read in both languages', () => {

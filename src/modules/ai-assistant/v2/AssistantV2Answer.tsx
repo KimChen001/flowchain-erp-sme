@@ -101,8 +101,9 @@ export function AssistantV2Answer({
           {copy.known("ai.v2.notice", code)}
         </p>
       ))}
-      {/* No answer came: the pages that work without the assistant. */}
-      {message.notices.some((code) => NOTICES_WITHOUT_ANSWERS.has(code)) ? <NoAssistantLinks onNavigate={onNavigate} /> : null}
+      {/* No answer came: the pages that work without the assistant, under the
+          latest answer only, in that answer's language. */}
+      {latest && message.notices.some((code) => NOTICES_WITHOUT_ANSWERS.has(code)) ? <NoAssistantLinks onNavigate={onNavigate} language={message.language} /> : null}
       {/* What the answer read and checked, and a thumbs up or down, once it is complete. */}
       {message.done && !message.error && message.body ? <AnswerFooter message={message} threadId={message.threadId || threadId} messageId={message.messageId || fallbackMessageId} copy={copy} /> : null}
       {message.error ? (

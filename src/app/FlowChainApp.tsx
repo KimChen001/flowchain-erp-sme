@@ -1909,13 +1909,16 @@ export default function FlowChainApp() {
       </div>
       {/* A rendering error in the assistant must not take the page down. */}
       <PanelErrorBoundary moduleLabel={language === "en-US" ? "AI assistant" : "AI 助手"} language={language}>
-        <AiPanel
-          moduleId={activeModule}
-          activeContext={aiActiveContext || routeRecordContext}
-          openSignal={aiOpenSignal}
-          userName={user.name}
-          onNavigate={navigateTo}
-        />
+        {/* The panel's links answer "may this reader open it?" as the page's do. */}
+        <RouteAvailabilityProvider value={canOpenRoute}>
+          <AiPanel
+            moduleId={activeModule}
+            activeContext={aiActiveContext || routeRecordContext}
+            openSignal={aiOpenSignal}
+            userName={user.name}
+            onNavigate={navigateTo}
+          />
+        </RouteAvailabilityProvider>
       </PanelErrorBoundary>
     </div>
   );
