@@ -8,7 +8,7 @@ const read = (file) => readFileSync(new URL(`../../${file}`, import.meta.url), '
 
 test('sales orders export every order the filters match, page after page, as the shipments export does', () => {
   const page = read('src/modules/sales/OutboundWorkbench.tsx')
-  assert.match(page, /const \{ rows: all \} = await fetchAllListRows<Order>\("\/api\/sales\/orders", filters, \{ itemsKey: "orders" \}\);/)
+  assert.match(page, /const \{ rows: all, total: matching, truncated \} = await fetchAllListRows<Order>\("\/api\/sales\/orders", filters, \{ itemsKey: "orders" \}\);/)
   assert.match(page, /filters\.delete\("page"\);/)
   assert.match(page, /await exportRowsToCsv\("sales-orders-export\.csv", all\.map\(/)
   assert.match(page, /<ExportButton onClick=\{\(\) => void exportOrders\(\)\} \/>/)
