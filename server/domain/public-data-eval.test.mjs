@@ -392,6 +392,9 @@ test('the supplier reply cases come last: the reply pasted first, its day, and a
 test('the runner refuses --setup against the walkthrough\'s app and API ports', () => {
   assert.deepEqual(WALKTHROUGH_DEMO_PORTS, [15231, 15232, 18831, 18832])
   for (const port of [15231, 15232, 18831, 18832, '18831']) assert.match(setupRefusal({ setup: true, port }), /does not run against the walkthrough/)
+  // The port as the runner's base URL reads it, whatever follows it.
+  for (const port of ['15231/', '15231#', '15231?x', '18832/api', '15232#top']) assert.match(setupRefusal({ setup: true, port }), /does not run against the walkthrough/, port)
+  assert.match(setupRefusal({ setup: true, port: 'not a port' }), /is not one/)
   for (const port of [18801, 18802, 18941]) assert.equal(setupRefusal({ setup: true, port }), null)
   // Without --setup nothing is written, so any port may be read.
   assert.equal(setupRefusal({ setup: undefined, port: 18831 }), null)
