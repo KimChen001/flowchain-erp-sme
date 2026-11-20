@@ -519,8 +519,10 @@ test('scoring is on the answer\'s words, on calls that ran, and the UCI cases sa
   const byId = Object.fromEntries(cases.map((row) => [row.id, row]))
   for (const row of cases.filter((entry) => ['finance', 'payables', 'sales'].includes(entry.kind))) assert.equal(row.asUser, 'kim@example.com', row.id)
   assert.equal(byId['margin-en'].asUser, 'kim@example.com')
-  assert.equal(byId['buyer-margin-en'].asUser, 'daniel@example.com')
-  assert.deepEqual(byId['buyer-margin-en'].expect.numbersAbsent.map((row) => row.value), [facts.month(lastWholeMonths(facts.seedDay).last.key).grossMarginPercent])
+  // The walkthrough's buyer has the manager's role and may see margins, so
+  // the hidden-margin case is asked only for a margin-blind user named in
+  // UCI_MARGIN_BLIND_USER (2026-11-20).
+  assert.equal(byId['buyer-margin-en'], undefined)
   assert.equal(byId['english-panel-zh'].turns[0].interfaceLanguage, 'en-US')
   assert.equal(byId['open-order-zh'].turns[0].activeContext.entityType, 'purchase_order')
   assert.equal(byId['unconfirmed-click-en'].turns[1].formResults[0].purchaseRequestId, 'PR-EVAL-NOT-CREATED')

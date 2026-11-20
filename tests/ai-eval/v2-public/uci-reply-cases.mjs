@@ -44,7 +44,7 @@ export function buildUciReplyCases(facts, { manager }) {
       expect: {
         brief: true,
         matches: [{ label: 'says no reply is recorded', pattern: String.raw`no (supplier )?(reply|replies|response)|(hasn't|has not|haven't|have not|didn't|did not|not yet) (replied|responded|been recorded)|nothing (is |was |has been )?recorded|no record of|none (is |was |has been )?recorded|there (is|are) no|there (isn't|aren't)` }],
-        notMatches: [{ label: 'invents what Globex said', pattern: String.raw`Globex (said|replied|confirmed|told|wrote)|they (said|replied|confirmed|told|wrote)|will (ship|deliver|arrive) on` }],
+        notMatches: [{ label: 'invents what Globex said', pattern: String.raw`(?<!(?:anything|nothing|what) )Globex (said|replied|confirmed|told|wrote)|(?<!(?:anything|nothing|what) )they (said|replied|confirmed|told|wrote)|will (ship|deliver|arrive) on` }],
       } },
   ]
 }

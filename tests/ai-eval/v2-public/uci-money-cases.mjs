@@ -33,16 +33,26 @@ export function buildUciMoneyCases(facts, { last }) {
   const invoices = facts.supplierInvoices
   if (!invoices) return cases
   const invoiceNamed = (row) => ({ label: row.number, any: [row.number] })
+  // None with a difference is said as "none" as often as "0" (2026-11-20).
   add({ id: 'invoice-match-en', kind: 'payables', language: 'en-US', turns: ['How many supplier invoices passed the three-way match, and how many have differences?'],
-    expect: { numbers: [{ label: 'matched', value: invoices.match.matched }, { label: 'with differences', value: invoices.match.exception }] } })
-  add({ id: 'invoice-differences-zh', kind: 'payables', language: 'zh-CN', turns: ['哪些供应商发票有差异？是什么原因？'],
-    expect: {
-      numbers: [{ label: '有差异的发票数', value: invoices.differences.length }],
-      matches: [{ label: '说到价格高于订单', pattern: '单价|价格|价差|高于订单' }, { label: '说到开票数量多于收货', pattern: '数量|少送|短缺|多于收货|超出收货|未收到' }],
-    } })
+    expect: invoices.match.exception
+      ? { numbers: [{ label: 'matched', value: invoices.match.matched }, { label: 'with differences', value: invoices.match.exception }] }
+      : { numbers: [{ label: 'matched', value: invoices.match.matched }], matches: [{ label: 'says none has a difference', pattern: String.raw`\b(no|none|0|zero)\b` }] } })
+  // With no difference open (the C12 seed reviews them), the answer says
+  // there is none rather than giving reasons (2026-11-20).
+  if (!invoices.differences.length) {
+    add({ id: 'invoice-differences-zh', kind: 'payables', language: 'zh-CN', turns: ['哪些供应商发票有差异？是什么原因？'],
+      expect: { matches: [{ label: '说没有差异', pattern: '没有|无差异|0 张|零' }] } })
+  } else {
+    add({ id: 'invoice-differences-zh', kind: 'payables', language: 'zh-CN', turns: ['哪些供应商发票有差异？是什么原因？'],
+      expect: {
+        numbers: [{ label: '有差异的发票数', value: invoices.differences.length }],
+        matches: [{ label: '说到价格高于订单', pattern: '单价|价格|价差|高于订单' }, { label: '说到开票数量多于收货', pattern: '数量|少送|短缺|多于收货|超出收货|未收到' }],
+      } })
+  }
   // A kind with no difference left open (the C12 seed reviews most of them,
   // design audit C12) expects the answer to say there is none.
-  const none = { matches: [{ label: 'says there is none', pattern: String.raw`(no|none|not any|nothing)` }] }
+  const none = { matches: [{ label: 'says there is none', pattern: String.raw`\b(no|none|not any|nothing)\b` }] }
   add({ id: 'invoice-price-en', kind: 'payables', language: 'en-US', turns: ['Which supplier invoices charge more than the order price?'],
     expect: invoices.priceDifferences.length ? { mentions: [invoiceNamed(invoices.priceDifferences[0])], numbers: [{ label: 'invoices priced above the order', value: invoices.priceDifferences.length }] } : none })
   add({ id: 'invoice-quantity-en', kind: 'payables', language: 'en-US', turns: ['Which supplier invoices bill for more than we received?'],

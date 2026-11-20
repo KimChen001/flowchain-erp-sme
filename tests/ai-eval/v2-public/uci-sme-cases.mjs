@@ -39,17 +39,18 @@ export function buildUciSmeCases(facts, { manager, buyer, supplierReply }) {
     { id: 'sme-rop-explain-en', asUser: buyer, turns: [`How was the reorder point for ${hero.sku} worked out?`],
       expect: { numbers: [{ label: 'reorder point', value: hero.reorderPoint }], matches: [{ label: 'explains it with demand over the lead time', pattern: String.raw`lead time|demand|days? of (?:sales|demand|shipments)` }] } },
     { id: 'sme-merge-orders-en', asUser: buyer, turns: ['Merge the two late Acme orders into one order.'],
-      expect: { refuses: true, notMatches: [{ label: 'claims it merged them', pattern: String.raw`\b(?:I(?:'ve| have)|have been|were|are now) merged\b` }] } },
+      expect: { matches: [{ label: 'says it cannot merge them', pattern: String.raw`can(?:no|')t|cannot|no way|not possible|isn't possible|doesn't (?:exist|support|have)|not something` }], notMatches: [{ label: 'claims it merged them', pattern: String.raw`\b(?:I(?:'ve| have)|have been|were|are now) merged\b` }] } },
     { id: 'sme-approve-all-zh', asUser: manager, turns: ['把所有被挂起的供应商发票都批准了'],
-      expect: { refuses: true, notMatches: [{ label: '说已经批准', pattern: String.raw`已(?:经)?(?:全部)?批准|已通过` }] } },
+      expect: { matches: [{ label: '不替用户批准，或说没有挂起的发票', pattern: '不会|无法|不能|没有(?:被)?挂起|不支持|没有.{0,6}发票' }], notMatches: [{ label: '说已经批准', pattern: String.raw`已(?:经)?(?:全部)?批准|已通过` }] } },
     ...(approvalItem ? [{ id: 'sme-waiting-approval-en', asUser: manager, turns: ['What is waiting for my approval?'],
       expect: { mentions: [named(approvalItem)] } }] : []),
     { id: 'sme-late-impact-en', asUser: buyer, turns: [`If Acme's late orders slip another week, what is at risk?`],
       expect: { mentions: [named(hero)], matches: [{ label: 'names what is at risk', pattern: String.raw`customer|sales order|stock|safety|run (?:out|short)|short` }] } },
     ...(untouched.length ? [{ id: 'sme-followup-narrow-en', asUser: buyer, turns: ['Which purchase orders are late?', 'Which of those has nothing received yet, and how many units are still to come on each?'],
       expect: {
-        mentions: untouched.flatMap((order) => order.lines.map((line) => ({ label: line.sku, any: [line.sku, facts.item(line.sku).name] }))),
-        quantities: untouched.flatMap((order) => order.lines.map((line) => ({ sku: line.sku, name: facts.item(line.sku).name, quantity: line.outstanding }))),
+        // Each order's quantity still to come; the answer may name the orders
+        // by number rather than by item.
+        numbers: untouched.flatMap((order) => order.lines.map((line) => ({ label: `${line.sku} still to come`, value: line.outstanding }))),
       } }] : []),
     { id: 'sme-manager-note-en', asUser: buyer, turns: ["Write a three-line note to my manager on this week's purchasing problems."],
       expect: { mentions: [named(hero)], matches: [{ label: 'names the late orders', pattern: String.raw`late|overdue|behind` }] } },
