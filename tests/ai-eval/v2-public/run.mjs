@@ -18,6 +18,8 @@
 //            --compare=<earlier report.json> (which cases got worse or better)
 //            --emails=<a,b> (uci: who asks a case that names no asUser,
 //            default kim@example.com,daniel@example.com) --today=<YYYY-MM-DD>
+//            --setup (write the records a case needs first: on a test
+//            instance only, never the walkthrough people use)
 //
 // A case may say who asks (asUser, an email), and a turn may be an object
 // instead of the question alone: { text, activeContext, formResults,
@@ -25,6 +27,14 @@
 // { entityType: 'purchase_order', supplier, late: true } is looked up as the
 // case is asked: that supplier's earliest late open order. formResults
 // entries without a formId get the form the previous answer showed.
+//
+// A turn may name an order, { supplier, late }, looked up the same way, whose
+// number replaces {order} in its text. A case may need a record first
+// (setup), written through the app's own routes as the asking user, and only
+// with --setup: { supplierReply: { order, text, receivedOn, match, dismiss } }
+// pastes a supplier reply on that order (unless one matching `match` is
+// there) and dismisses it; { noSupplierReply: order } checks the order has
+// none. Without --setup a case that writes is left out, and says so.
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -72,7 +82,11 @@ function uciCases() {
 const built = suite === 'uci' ? uciCases() : m5Cases()
 const only = args.only ? new Set(String(args.only).split(',')) : null
 const kinds = args.kind ? new Set(String(args.kind).split(',')) : null
-const cases = built.cases.filter((row) => (!only || only.has(row.id)) && (!kinds || kinds.has(row.kind)))
+const chosen = built.cases.filter((row) => (!only || only.has(row.id)) && (!kinds || kinds.has(row.kind)))
+// A case that writes a record first runs only with --setup.
+const writes = (row) => Boolean(row.setup?.supplierReply)
+const cases = args.setup ? chosen : chosen.filter((row) => !writes(row))
+if (cases.length < chosen.length) console.log(`Left out ${chosen.length - cases.length} case(s) that paste a supplier reply first: ${chosen.filter(writes).map((row) => row.id).join(', ')} (pass --setup on a test instance).`)
 const repeat = Math.max(1, Number(args.repeat) || 1)
 if (args.list) {
   // The cases and what each expects, without asking anything.
@@ -105,9 +119,7 @@ const rateLimited = (answer) => answer.status === 429 || [...answer.errors, ...a
 
 // The open record a turn names, looked up in the workspace as the case is
 // asked (a late order's id and number change with each seed).
-async function contextFor(session, spec) {
-  if (!spec) return { moduleId: 'overview', entityType: null, entityId: null }
-  if (spec.entityType !== 'purchase_order' || !spec.supplier) return spec
+async function orderFor(session, spec) {
   const orders = await (await fetch(`${base}/api/purchase-orders`, { headers: session.auth })).json().catch(() => [])
   const today = DAY_IN_LONDON.format(new Date())
   const due = (row) => String(row.expectedDate || row.dueDate || row.promisedDate || '').slice(0, 10)
@@ -116,12 +128,45 @@ async function contextFor(session, spec) {
     .filter((row) => ['issued', 'partially_received', 'sent'].includes(String(row.status || '').toLowerCase()) && (!spec.late || (due(row) && due(row) < today)))
     .sort((a, b) => due(a).localeCompare(due(b)))[0]
   if (!match) throw new Error(`No ${spec.late ? 'late ' : ''}open purchase order of ${spec.supplier} to open.`)
-  return { moduleId: 'procurement:orders', entityType: 'purchase_order', entityId: match.id, entityLabel: match.orderNumber || match.po || match.id }
+  return match
+}
+const orderLabel = (row) => row.orderNumber || row.po || row.id
+async function contextFor(session, spec) {
+  if (!spec) return { moduleId: 'overview', entityType: null, entityId: null }
+  if (spec.entityType !== 'purchase_order' || !spec.supplier) return spec
+  const match = await orderFor(session, spec)
+  return { moduleId: 'procurement:orders', entityType: 'purchase_order', entityId: match.id, entityLabel: orderLabel(match) }
+}
+
+// The records a case needs before it is asked (see the top of this file).
+async function json(response, what) {
+  const body = await response.json().catch(() => null)
+  if (!response.ok) throw new Error(`${what} failed with ${response.status} ${body?.code || ''}`.trim())
+  return body
+}
+async function setUpCase(session, setup) {
+  if (setup.supplierReply) {
+    const spec = setup.supplierReply
+    const order = await orderFor(session, spec.order)
+    const path = `${base}/api/procurement/orders/${encodeURIComponent(order.id)}/supplier-replies`
+    const headers = { ...session.auth, 'content-type': 'application/json' }
+    const listed = await json(await fetch(path, { headers: session.auth }), 'Listing the supplier replies')
+    let reply = (listed.replies || []).find((row) => row.state !== 'superseded' && String(row.text || '').includes(spec.match))
+    if (!reply) reply = (await json(await fetch(path, { method: 'POST', headers, body: JSON.stringify({ text: spec.text.replaceAll('{order}', orderLabel(order)), receivedOn: spec.receivedOn }) }), 'Pasting the supplier reply')).reply
+    if (spec.dismiss && ['proposed', 'needs_you'].includes(reply.state)) await json(await fetch(`${path}/${encodeURIComponent(reply.id)}/dismiss`, { method: 'POST', headers, body: JSON.stringify(spec.dismiss) }), 'Dismissing the supplier reply')
+  }
+  if (setup.noSupplierReply) {
+    const order = await orderFor(session, setup.noSupplierReply)
+    const listed = await json(await fetch(`${base}/api/procurement/orders/${encodeURIComponent(order.id)}/supplier-replies`, { headers: session.auth }), 'Listing the supplier replies')
+    const found = (listed.replies || []).filter((row) => row.state !== 'superseded').length
+    if (found) throw new Error(`${orderLabel(order)} already has ${found} supplier repl${found === 1 ? 'y' : 'ies'}; this case needs an order with none.`)
+  }
 }
 
 async function askOnce(session, threadId, turn, language, previous = null) {
   const started = Date.now()
-  const { text: message, activeContext = null, formResults = null, interfaceLanguage = null } = typeof turn === 'string' ? { text: turn } : turn
+  const { text: written, activeContext = null, formResults = null, interfaceLanguage = null, order = null } = typeof turn === 'string' ? { text: turn } : turn
+  const message = order ? written.replaceAll('{order}', orderLabel(await orderFor(session, order))) : written
   // A form result names the form the previous answer showed, unless it says which.
   const lastForm = previous?.uiParts?.filter((part) => part.component === 'pr_form').at(-1)
   const forms = Array.isArray(formResults) ? formResults.map((entry) => ({ formId: lastForm ? `${threadId}:${lastForm.id}` : `${threadId}:none`, ...entry })) : null
@@ -203,6 +248,16 @@ for (const testCase of cases) {
     const session = testCase.asUser ? await sessionFor(testCase.asUser) : sessions[(place + round) % sessions.length]
     const threadId = `thr_eval_${testCase.id.replace(/[^\w]/g, '')}_${Date.now().toString(36)}`.slice(0, 60)
     const answers = []
+    if (testCase.setup) {
+      try {
+        await setUpCase(session, testCase.setup)
+      } catch (error) {
+        // The case is not asked: it fails on its setup, not on an answer.
+        results.push({ id: testCase.id, kind: testCase.kind, language: testCase.language, round, pass: false, checks: [{ name: 'setup', ok: false, detail: error.message }], turns: testCase.turns.map(turnText), seconds: 0, costUsd: 0, inputTokens: 0, tools: [], model: null, asked: session.email, answer: { text: '' }, earlier: [] })
+        console.log(`FAIL ${testCase.id.padEnd(26)} setup: ${error.message}`)
+        continue
+      }
+    }
     // The panel's language goes with every turn; a case may expect another one
     // the user asked for in their words ("用中文说").
     for (const turn of testCase.turns) answers.push(await ask(session, threadId, turn, testCase.language, answers.at(-1) || null))
