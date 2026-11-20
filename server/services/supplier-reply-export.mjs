@@ -1,18 +1,25 @@
 // The supplier reply outcome export (docs/supplier-reply-dates-design.md §4.12,
 // step 2): one row per reply, and the promise revisions in the same window
 // with where each came from, so the reliability measure can be checked by
-// hand. People with settings.export.read download it from Settings.
+// hand. People with settings.export.read and the purchase order read
+// permission download it from Settings.
 //
 // What leaves the server follows DD-7 (docs/drafted-decisions-design.md):
 // codes, ids and dates everywhere. The reply text, the decision note, the
 // supplier's name and a revision's reason (which quotes the reply) only on a
 // public-data workspace (UCI or M5), where the replies are written by us.
+// Elsewhere those fields are not read from the database; the stored check and
+// usage are read, and only their codes, dates and counts are copied out.
 import { assertAuthorized } from '../auth/authorization-service.mjs'
 import { publicDataNoteSummary } from '../domain/public-data-note.mjs'
 import { resolveProvisionedActor } from '../domain/pilot-identity.mjs'
+import { supplierReplyCardState, supplierReplyOutcome, supplierReplyProposedLines, supplierReplyRecordedDates } from '../domain/supplier-reply-outcome.mjs'
 import { tenantCalendarDay } from '../domain/tenant-calendar-day.mjs'
 
 export const SUPPLIER_REPLY_EXPORT_PERMISSION = 'settings.export.read'
+// The export carries order numbers, SKUs and, on public data, reply text:
+// what someone who reads purchase orders sees.
+export const SUPPLIER_REPLY_EXPORT_READ_PERMISSION = 'procurement.purchase_order.read'
 // Rows per sheet, as the other data exports (pilot-operations-service.mjs).
 export const SUPPLIER_REPLY_EXPORT_LIMIT = 5000
 // The default window ends today and spans this many days; a window may span
@@ -21,6 +28,7 @@ export const SUPPLIER_REPLY_EXPORT_DEFAULT_DAYS = 90
 const MAX_WINDOW_DAYS = 366
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/
 const DAY_MS = 86_400_000
+const REVISED = 'purchase_order_promise_revised'
 
 const text = (value) => String(value ?? '').trim()
 const array = (value) => (Array.isArray(value) ? value : [])
@@ -50,11 +58,15 @@ export function supplierReplyExportWindow({ from, to } = {}, today) {
   return { from: start, to: end }
 }
 
-// What became of a reply, as §4.12 counts it.
-export function supplierReplyOutcome(row) {
-  if (row.state === 'recorded') return Number(row.editedLines) > 0 ? 'recorded_edited' : 'recorded_unchanged'
-  if (row.state === 'not_recorded') return row.reasonCode ? `not_recorded_${row.reasonCode}` : 'not_recorded'
-  return text(row.state) || null
+// The first instant of a calendar day in a timezone. Offsets are whole
+// quarter hours and at most 14 hours, so the day starts within 14 hours of
+// its UTC midnight, on a quarter hour.
+export function tenantDayStart(day, timeZone) {
+  const midnight = Date.parse(`${day}T00:00:00Z`)
+  for (let at = midnight - 14 * 3_600_000; at <= midnight + 14 * 3_600_000; at += 900_000) {
+    if (tenantCalendarDay(new Date(at), timeZone) >= day) return new Date(at)
+  }
+  return new Date(midnight)
 }
 
 // Each line of the stored check as ref:outcome, with the issue after a slash
@@ -80,8 +92,9 @@ const minutesBetween = (start, end) => {
 //   suppliers Map of supplier id -> { code, name }
 //   revisions PurchaseOrderPromiseRevision rows, each with sku
 //   replyOfRevision Map of revision id -> reply id
+//   recordedOf Map of reply id -> its revisions ({ purchaseOrderLineId, newDate })
 //   includeText  the workspace is a public-data one (DD-7)
-export function supplierReplyExportRows({ replies = [], orders = new Map(), suppliers = new Map(), revisions = [], replyOfRevision = new Map(), includeText = false, timeZone } = {}) {
+export function supplierReplyExportRows({ replies = [], orders = new Map(), suppliers = new Map(), revisions = [], replyOfRevision = new Map(), recordedOf = new Map(), includeText = false, timeZone } = {}) {
   const textOnly = (pairs) => (includeText ? pairs : [])
   const replyRows = replies.map((row) => {
     const order = orders.get(row.purchaseOrderId) || {}
@@ -89,6 +102,13 @@ export function supplierReplyExportRows({ replies = [], orders = new Map(), supp
     const supplier = suppliers.get(supplierId) || {}
     const usage = row.usage && typeof row.usage === 'object' ? row.usage : {}
     const revisionIds = array(row.revisionIds)
+    const written = recordedOf.get(row.id)
+    const dates = written ? supplierReplyRecordedDates(written) : null
+    // On a recorded reply whose dates are known: proposed lines recorded at
+    // another date or left out, and lines recorded that were not proposed.
+    const proposed = supplierReplyProposedLines(row.check)
+    const known = row.state === 'recorded' && dates?.size
+    const proposedIds = new Set(proposed.map((line) => line.purchaseOrderLineId))
     return Object.fromEntries([
       ['reply_id', row.id],
       ['order_number', order.number || null],
@@ -100,8 +120,9 @@ export function supplierReplyExportRows({ replies = [], orders = new Map(), supp
       ['pasted_at', new Date(row.createdAt).toISOString()],
       ['source', row.source],
       ['reading_status', row.readingStatus],
+      ['card_state', supplierReplyCardState(row)],
       ['state', row.state],
-      ['outcome', supplierReplyOutcome(row)],
+      ['outcome', supplierReplyOutcome(row, { recordedDates: dates })],
       ['reply_kind', row.check?.replyKind ?? null],
       ['line_outcomes', supplierReplyLineOutcomes(row.check)],
       ['proposed_dates', supplierReplyProposedDates(row.check)],
@@ -110,8 +131,9 @@ export function supplierReplyExportRows({ replies = [], orders = new Map(), supp
       ['quoted_text_hidden', Boolean(row.quotedTextHidden)],
       ['decision', row.decision || null],
       ['reason_code', row.reasonCode || null],
-      ['lines_edited', row.decision === 'recorded' ? Number(row.editedLines) || 0 : null],
-      ['revision_ids', revisionIds.join('; ')],
+      ['lines_edited', known ? proposed.filter((line) => dates.get(line.purchaseOrderLineId) !== line.proposedDate).length : null],
+      ['lines_by_hand', known ? [...dates.keys()].filter((lineId) => !proposedIds.has(lineId)).length : null],
+      ['revision_ids', (revisionIds.length ? revisionIds : array(written).map((revision) => revision.id)).join('; ')],
       ['decided_by_id', row.decidedById || null],
       ['decided_at', row.decidedAt ? new Date(row.decidedAt).toISOString() : null],
       ['minutes_to_decision', minutesBetween(row.createdAt, row.decidedAt)],
@@ -149,25 +171,62 @@ export function supplierReplyExportRows({ replies = [], orders = new Map(), supp
   return { replies: replyRows, revisions: revisionRows }
 }
 
+// The "about" sheet: what the export holds and where it stops.
+export function supplierReplyExportAbout({ generatedAt, window, timeZone, publicData, includeText, replies, revisions, truncated }) {
+  const limit = SUPPLIER_REPLY_EXPORT_LIMIT
+  return [
+    ['as_of', generatedAt],
+    ['window_from', window.from],
+    ['window_to', window.to],
+    ['time_zone', timeZone || null],
+    ['public_data', publicData || 'no'],
+    ['text_included', includeText],
+    ['limit_per_sheet', limit],
+    ['replies_rows', replies],
+    ['replies_truncated', truncated.replies],
+    ['revisions_rows', revisions],
+    ['revisions_truncated', truncated.revisions],
+    ['when_truncated', `A truncated sheet holds the earliest ${limit} rows of the window: replies by received date, revisions by time made. Choose a shorter window for the rest.`],
+    ['replies_in_window', 'Replies received on a day in the window (received_on), in the workspace timezone.'],
+    ['revisions_in_window', 'Promised-date changes made on a day in the window (revised_on), in the workspace timezone.'],
+    ['outcome', 'recorded_unchanged: every proposed line recorded at its proposed date; recorded_edited: a proposed line recorded at another date or left out; recorded_manual: nothing proposed, dates typed by hand; recorded: dates not known; not_recorded_<reason>; otherwise the state.'],
+    ['lines_edited', 'On a recorded reply whose dates are known: proposed lines recorded at another date or left out. lines_by_hand: lines recorded that were not proposed.'],
+    ['reply_id_link', 'A supplier_reply revision\'s reply_id comes from the reply\'s revision ids, else from the revision\'s audit row (its origin); it is empty only when neither has it.'],
+    ['text_rule', includeText ? 'Public-data workspace: reply text, decision notes, supplier names and revision reasons are included (DD-7).' : 'Codes, ids and dates only: reply text, decision notes, supplier names and revision reasons are left out (DD-7).'],
+  ].map(([field, value]) => ({ field, value }))
+}
+
 // resolveActor: the provisioned actor of the request (tests give their own).
 export function createSupplierReplyExportService({ prisma, now = () => new Date(), resolveActor = resolveProvisionedActor } = {}) {
   if (!prisma) throw new Error('Prisma client is required for the supplier reply export.')
 
+  // revision id -> reply id, from the audit rows of revisions made from a
+  // reply (metadata.origin), for links the reply's revisionIds lack.
+  async function originsOf(tenantId, where) {
+    const rows = await prisma.auditLog.findMany({ where: { tenantId, action: REVISED, ...where }, select: { metadata: true } })
+    return rows.flatMap((row) => {
+      const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {}
+      return metadata.origin?.type === 'supplier_reply' && text(metadata.revisionId) && text(metadata.origin?.id) ? [[text(metadata.revisionId), text(metadata.origin.id)]] : []
+    })
+  }
+
   async function exportOutcomes(query, identity) {
     const actor = await resolveActor(prisma, identity)
-    assertAuthorized({ actor, permission: SUPPLIER_REPLY_EXPORT_PERMISSION, tenantId: actor.tenantId })
+    for (const permission of [SUPPLIER_REPLY_EXPORT_PERMISSION, SUPPLIER_REPLY_EXPORT_READ_PERMISSION]) assertAuthorized({ actor, permission, tenantId: actor.tenantId })
     const tenantId = actor.tenantId
     const [tenant, note] = await Promise.all([
       prisma.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }),
       prisma.runtimeRecord.findUnique({ where: { tenantId_namespace_recordKey: { tenantId, namespace: 'workspace.public-data', recordKey: 'note' } }, select: { payload: true } }),
     ])
     const timeZone = tenant?.timezone || undefined
+    const generatedAt = now().toISOString()
     const window = supplierReplyExportWindow(query, tenantCalendarDay(now(), timeZone))
     const publicData = publicDataNoteSummary(note?.payload)?.dataset || null
     const includeText = Boolean(publicData)
 
-    // Replies by the day they were received; revisions by the workspace day
-    // they were made, read with a day's margin each side and then cut.
+    // Replies by the day they were received; revisions by the instant they
+    // were made, between the window's first and last workspace days. Each
+    // reads one row past the limit, to tell a full sheet from a cut one.
     const [replies, revisionsRead] = await Promise.all([
       prisma.supplierReply.findMany({
         where: { tenantId, receivedOn: { gte: window.from, lte: window.to } },
@@ -176,56 +235,78 @@ export function createSupplierReplyExportService({ prisma, now = () => new Date(
         select: {
           id: true, purchaseOrderId: true, supplierId: true, source: true, receivedOn: true, createdAt: true, state: true, readingStatus: true,
           provider: true, model: true, promptVersion: true, check: true, usage: true, instructionsIgnored: true, quotedTextHidden: true,
-          decision: true, reasonCode: true, decidedById: true, decidedAt: true, editedLines: true, revisionIds: true, supersededById: true,
+          decision: true, reasonCode: true, decidedById: true, decidedAt: true, revisionIds: true, supersededById: true,
           ...(includeText ? { text: true, note: true } : {}),
         },
       }),
       prisma.purchaseOrderPromiseRevision.findMany({
-        where: { tenantId, createdAt: { gte: new Date(`${addDays(window.from, -1)}T00:00:00Z`), lt: new Date(`${addDays(window.to, 2)}T00:00:00Z`) } },
+        where: { tenantId, createdAt: { gte: tenantDayStart(window.from, timeZone), lt: tenantDayStart(addDays(window.to, 1), timeZone) } },
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-        take: SUPPLIER_REPLY_EXPORT_LIMIT * 2,
+        take: SUPPLIER_REPLY_EXPORT_LIMIT + 1,
         select: { id: true, purchaseOrderId: true, purchaseOrderLineId: true, previousDate: true, newDate: true, source: true, actorId: true, createdAt: true, ...(includeText ? { reason: true } : {}) },
       }),
     ])
-    const inWindow = revisionsRead.filter((row) => {
-      const day = tenantCalendarDay(new Date(row.createdAt), timeZone)
-      return day >= window.from && day <= window.to
-    })
     const replyRows = replies.slice(0, SUPPLIER_REPLY_EXPORT_LIMIT)
-    const revisionRows = inWindow.slice(0, SUPPLIER_REPLY_EXPORT_LIMIT)
-    const truncated = replies.length > SUPPLIER_REPLY_EXPORT_LIMIT || inWindow.length > SUPPLIER_REPLY_EXPORT_LIMIT || revisionsRead.length >= SUPPLIER_REPLY_EXPORT_LIMIT * 2
+    const revisionRows = revisionsRead.slice(0, SUPPLIER_REPLY_EXPORT_LIMIT)
+    const truncated = { replies: replies.length > SUPPLIER_REPLY_EXPORT_LIMIT, revisions: revisionsRead.length > SUPPLIER_REPLY_EXPORT_LIMIT }
+
+    // The dates each recorded reply wrote, for its outcome: its revisions,
+    // found by its revision ids or, when those were not saved, by the audit
+    // rows that name it as their origin.
+    const recordedReplies = replyRows.filter((row) => row.state === 'recorded')
+    const unsaved = recordedReplies.filter((row) => !array(row.revisionIds).length).map((row) => row.id)
+    const fromAudit = unsaved.length ? await originsOf(tenantId, { OR: unsaved.map((id) => ({ metadata: { path: ['origin', 'id'], equals: id } })) }) : []
+    const writtenIds = [...new Set([...recordedReplies.flatMap((row) => array(row.revisionIds)), ...fromAudit.map(([revisionId]) => revisionId)])]
+    // Every link a recorded reply holds, whatever day it was received.
+    const fromReplies = revisionRows.some((row) => row.source === 'supplier_reply')
+    const [written, recordedLinks] = await Promise.all([
+      writtenIds.length ? prisma.purchaseOrderPromiseRevision.findMany({ where: { tenantId, id: { in: writtenIds } }, select: { id: true, purchaseOrderLineId: true, newDate: true, createdAt: true } }) : [],
+      fromReplies ? prisma.supplierReply.findMany({ where: { tenantId, state: 'recorded' }, select: { id: true, revisionIds: true } }) : [],
+    ])
+    const replyOfRevision = new Map([...recordedLinks.flatMap((row) => array(row.revisionIds).map((revisionId) => [revisionId, row.id])), ...fromAudit])
+    // A revision made from a reply whose ids were not saved: its audit row.
+    const unlinked = revisionRows.filter((row) => row.source === 'supplier_reply' && !replyOfRevision.has(row.id))
+    if (unlinked.length) {
+      const times = unlinked.map((row) => new Date(row.createdAt).getTime())
+      const found = await originsOf(tenantId, { entityId: { in: [...new Set(unlinked.map((row) => row.purchaseOrderLineId))] }, createdAt: { gte: new Date(Math.min(...times)), lte: new Date(Math.max(...times)) } })
+      for (const [revisionId, replyId] of found) if (!replyOfRevision.has(revisionId)) replyOfRevision.set(revisionId, replyId)
+    }
+    const revisionsById = new Map(written.map((row) => [row.id, row]))
+    const replyOfWritten = new Map([...recordedReplies.flatMap((row) => array(row.revisionIds).map((revisionId) => [revisionId, row.id])), ...fromAudit])
+    const recordedOf = new Map()
+    for (const [revisionId, replyId] of replyOfWritten) {
+      const revision = revisionsById.get(revisionId)
+      if (revision) recordedOf.set(replyId, [...(recordedOf.get(replyId) || []), revision])
+    }
 
     const orderIds = [...new Set([...replyRows, ...revisionRows].map((row) => row.purchaseOrderId))]
     const lineIds = [...new Set(revisionRows.map((row) => row.purchaseOrderLineId))]
-    // The reply a revision came from, whatever day the reply was received.
-    const fromReplies = revisionRows.some((row) => row.source === 'supplier_reply')
-    const [orders, lines, recorded] = await Promise.all([
+    const [orders, lines] = await Promise.all([
       orderIds.length ? prisma.purchaseOrder.findMany({ where: { tenantId, id: { in: orderIds } }, select: { id: true, number: true, supplierId: true, ...(includeText ? { supplierName: true } : {}) } }) : [],
       lineIds.length ? prisma.purchaseOrderLine.findMany({ where: { id: { in: lineIds }, purchaseOrder: { tenantId } }, select: { id: true, sku: true } }) : [],
-      fromReplies ? prisma.supplierReply.findMany({ where: { tenantId, state: 'recorded' }, select: { id: true, revisionIds: true } }) : [],
     ])
-    const orderMap = new Map(orders.map((row) => [row.id, row]))
     const supplierIds = [...new Set([...replyRows.map((row) => row.supplierId), ...orders.map((row) => row.supplierId)].filter(Boolean))]
     const supplierRows = supplierIds.length ? await prisma.supplier.findMany({ where: { tenantId, id: { in: supplierIds } }, select: { id: true, code: true, ...(includeText ? { name: true } : {}) } }) : []
     const skuOf = new Map(lines.map((row) => [row.id, row.sku]))
-    const replyOfRevision = new Map(recorded.flatMap((row) => array(row.revisionIds).map((revisionId) => [revisionId, row.id])))
     const rows = supplierReplyExportRows({
       replies: replyRows,
-      orders: orderMap,
+      orders: new Map(orders.map((row) => [row.id, row])),
       suppliers: new Map(supplierRows.map((row) => [row.id, row])),
       revisions: revisionRows.map((row) => ({ ...row, sku: skuOf.get(row.purchaseOrderLineId) || null })),
       replyOfRevision,
+      recordedOf,
       includeText,
       timeZone,
     })
     return {
-      generatedAt: now().toISOString(),
+      generatedAt,
       window,
       timeZone: timeZone || null,
       publicData,
       textIncluded: includeText,
       truncated,
       limit: SUPPLIER_REPLY_EXPORT_LIMIT,
+      about: supplierReplyExportAbout({ generatedAt, window, timeZone, publicData, includeText, replies: rows.replies.length, revisions: rows.revisions.length, truncated }),
       ...rows,
     }
   }

@@ -11,14 +11,17 @@ import { useI18n } from "../../i18n/I18n";
 // outcomes, one of the promised-date changes in the same window with their
 // source. Column names are codes, the same in both languages, so a script
 // reads any export. Reply text and notes come only from a public-data
-// workspace (DD-7). Shown to people with settings.export.read.
+// workspace (DD-7). A third sheet, About, says what the export holds and
+// whether a sheet was cut. Shown to people with settings.export.read; the
+// server also needs procurement.purchase_order.read.
 
 type ExportAnswer = {
   window: { from: string; to: string };
   timeZone: string | null;
   textIncluded: boolean;
-  truncated: boolean;
+  truncated: { replies: boolean; revisions: boolean };
   limit: number;
+  about: Array<{ field: string; value: unknown }>;
   replies: Record<string, unknown>[];
   revisions: Record<string, unknown>[];
 };
@@ -27,7 +30,7 @@ type Pair = readonly [english: string, chinese: string];
 const COPY = {
   title: ["Supplier reply export", "供应商回复导出"],
   intro: ["One row per supplier reply received in the window, with what became of it, and a second sheet of the promised-date changes made in the window, by hand or from a reply.", "每条在所选期间收到的供应商回复一行，含处理结果；第二个工作表列出期间内的承诺日期修改，注明是手工修改还是来自回复。"],
-  privacy: ["Codes, ids and dates only. Reply text and notes are included on public-data workspaces only.", "只含代码、编号和日期。回复原文和备注只在公开数据工作区导出。"],
+  privacy: ["Codes, ids and dates only. Reply text, decision notes, supplier names and the reasons for date changes are included on public-data workspaces only.", "只含代码、编号和日期。回复原文、处理备注、供应商名称和日期修改原因只在公开数据工作区导出。"],
   from: ["From", "开始日期"],
   to: ["To", "结束日期"],
   defaultWindow: ["Leave both empty for the last 90 days.", "两项都留空则导出最近 90 天。"],
@@ -35,6 +38,7 @@ const COPY = {
   exporting: ["Exporting…", "正在导出…"],
   repliesSheet: ["Supplier replies", "供应商回复"],
   revisionsSheet: ["Promise revisions", "承诺日期修改"],
+  aboutSheet: ["About", "说明"],
   failed: ["Could not export the supplier replies.", "无法导出供应商回复。"],
   invalidDay: ["Enter both dates as calendar dates.", "请输入有效的日期。"],
   invalidWindow: ["The start date is after the end date.", "开始日期晚于结束日期。"],
@@ -70,14 +74,18 @@ export default function SupplierReplyExport() {
       await exportWorkbookSheets(`supplier-replies-${answer.window.from}-to-${answer.window.to}`, [
         { name: say(COPY.repliesSheet), rows: answer.replies },
         { name: say(COPY.revisionsSheet), rows: answer.revisions },
+        { name: say(COPY.aboutSheet), rows: answer.about },
       ], answer.timeZone || undefined);
       const counts = zh
         ? `已导出 ${answer.replies.length} 条回复和 ${answer.revisions.length} 次日期修改（${answer.window.from} 至 ${answer.window.to}）。`
         : `Exported ${answer.replies.length} ${answer.replies.length === 1 ? "reply" : "replies"} and ${answer.revisions.length} date ${answer.revisions.length === 1 ? "change" : "changes"}, ${answer.window.from} to ${answer.window.to}.`;
-      const cut = zh
-        ? ` 每个工作表只导出了前 ${answer.limit} 行，请缩短期间。`
-        : ` Each sheet holds the first ${answer.limit.toLocaleString("en-US")} rows only; choose a shorter window.`;
-      setStatus(answer.truncated ? { tone: "warn", text: counts + cut } : { tone: "done", text: counts });
+      // Said only of a sheet that was cut, with the rows it holds.
+      const cut = [
+        answer.truncated.replies && (zh ? `回复只导出了期间内最早的 ${answer.replies.length} 条。` : `The replies sheet holds only the earliest ${answer.replies.length.toLocaleString("en-US")} of the window.`),
+        answer.truncated.revisions && (zh ? `日期修改只导出了期间内最早的 ${answer.revisions.length} 次。` : `The date changes sheet holds only the earliest ${answer.revisions.length.toLocaleString("en-US")} of the window.`),
+      ].filter(Boolean);
+      const shorter = zh ? "请缩短期间再导出其余部分。" : "Choose a shorter window for the rest.";
+      setStatus(cut.length ? { tone: "warn", text: [counts, ...cut, shorter].join(" ") } : { tone: "done", text: counts });
     } catch (reason) {
       setStatus({ tone: "error", text: apiErrorText(reason, language, COPY.failed, ERRORS) });
     } finally {
