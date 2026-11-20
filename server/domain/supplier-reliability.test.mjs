@@ -81,7 +81,7 @@ test('every reply is in one outcome, and the outcomes add up to the replies rece
   const row = build({ replies }).suppliers.acme.replies
   assert.equal(row.received, 9)
   assert.equal(row.read, 8)
-  assert.deepEqual(row.outcomes, { recordedUnchanged: 1, recordedEdited: 1, notRecorded: { wrong_reading: 1, supplier_will_confirm: 1, other: 1 }, needsYou: 2, proposed: 1, nothingToRecord: 1 })
+  assert.deepEqual(row.outcomes, { recordedUnchanged: 1, recordedEdited: 1, recordedManual: 0, notRecorded: { wrong_reading: 1, supplier_will_confirm: 1, other: 1 }, needsYou: 2, proposed: 1, nothingToRecord: 1 })
   const { notRecorded, ...rest } = row.outcomes
   assert.equal(Object.values(rest).reduce((a, b) => a + b, 0) + Object.values(notRecorded).reduce((a, b) => a + b, 0), row.received)
   // Recorded unchanged, the dismissed wrong reading and the confirmed one: 3 of 8 read.

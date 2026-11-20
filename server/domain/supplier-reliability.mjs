@@ -132,7 +132,7 @@ export function supplierReplyFigures({ replies = [] }) {
 }
 
 function emptyOutcomes() {
-  return { recordedUnchanged: 0, recordedEdited: 0, notRecorded: Object.fromEntries(SUPPLIER_REPLY_DISMISS_REASONS.map((reason) => [reason, 0])), needsYou: 0, proposed: 0, nothingToRecord: 0 }
+  return { recordedUnchanged: 0, recordedEdited: 0, recordedManual: 0, notRecorded: Object.fromEntries(SUPPLIER_REPLY_DISMISS_REASONS.map((reason) => [reason, 0])), needsYou: 0, proposed: 0, nothingToRecord: 0 }
 }
 
 function repliesOf(row) {
