@@ -492,7 +492,7 @@ export default function ReorderListPage() {
   const exportRows = () => void exportRowsToCsv("reorder-list-export.csv", rows.map((row) => ({
     [t("colOrderBy")]: row.orderByDate,
     [t("exportDaysLeft")]: row.daysUntilOrderBy,
-    [t("orderNow")]: row.orderNow ? "✓" : "",
+    [t("orderNow")]: t(row.orderNow ? "exportYes" : "exportNo"),
     [t("exportSku")]: row.sku,
     [t("colItem")]: row.itemName,
     [t("exportUnit")]: row.unit,

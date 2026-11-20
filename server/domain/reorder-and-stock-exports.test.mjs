@@ -34,3 +34,14 @@ test('inventory balances and warnings export every row the filters show, with th
     assert.ok(page.includes(`${key}: ["${english}", "${chinese}"],`), key)
   }
 })
+
+test('the exports read as the lists do: thresholds blank where the list shows "—", order now as Yes or No', () => {
+  const page = read('src/modules/inventory/Page.tsx')
+  assert.match(page, /\[tr\("exportSafety"\)\]: thresholdNumber\(item\.safetyStock\) \?\? "",/)
+  assert.match(page, /\[tr\("exportReorderPoint"\)\]: thresholdNumber\(item\.reorderPoint\) \?\? "",/)
+  assert.match(page, /return number === null \? "—" : formatQuantity\(number\);/)
+  assert.match(read('src/modules/inventory/ReorderListPage.tsx'), /\[t\("orderNow"\)\]: t\(row\.orderNow \? "exportYes" : "exportNo"\),/)
+  const copy = read('src/modules/inventory/reorderListCopy.ts')
+  assert.ok(copy.includes('exportYes: "Yes",') && copy.includes('exportYes: "是",'))
+  assert.ok(copy.includes('exportNo: "No",') && copy.includes('exportNo: "否",'))
+})

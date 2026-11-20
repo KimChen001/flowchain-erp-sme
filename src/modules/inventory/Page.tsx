@@ -257,8 +257,14 @@ function quantity(item: Item) {
 // point read as the safety stock and an empty one as 0, while the reorder
 // list said "not set" (design audit L3-21).
 function threshold(value?: number | string | null) {
+  const number = thresholdNumber(value);
+  return number === null ? "—" : formatQuantity(number);
+}
+// A safety stock or reorder point as set: null when not set (none, or 0, which
+// the list shows as "—"), for the list and its export alike.
+function thresholdNumber(value?: number | string | null) {
   const number = Number(value);
-  return value === null || value === undefined || value === "" || !Number.isFinite(number) || number <= 0 ? "—" : formatQuantity(number);
+  return value === null || value === undefined || value === "" || !Number.isFinite(number) || number <= 0 ? null : number;
 }
 // Stock signals per item (shared/inventory-stock-signals.mjs): "need
 // replenishment" is the reorder list's own "order now" (the stock position,
@@ -461,8 +467,9 @@ export default function InventoryPage({
     [tr("reservedQty")]: Number(item.reservedQuantity ?? 0),
     [tr("available")]: Number(item.availableQuantity ?? 0),
     [tr("exportUnit")]: item.unit || "",
-    [tr("exportSafety")]: item.safetyStock === undefined || item.safetyStock === null || item.safetyStock === "" ? "" : Number(item.safetyStock),
-    [tr("exportReorderPoint")]: item.reorderPoint === undefined || item.reorderPoint === null || item.reorderPoint === "" ? "" : Number(item.reorderPoint),
+    // Blank where the list shows "—" (not set).
+    [tr("exportSafety")]: thresholdNumber(item.safetyStock) ?? "",
+    [tr("exportReorderPoint")]: thresholdNumber(item.reorderPoint) ?? "",
     [tr("status")]: stockStateText(item),
   })), timezone);
   // One page of rows is drawn; movements arrive a page at a time already.
