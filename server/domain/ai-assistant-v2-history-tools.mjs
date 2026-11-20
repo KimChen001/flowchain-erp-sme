@@ -216,6 +216,29 @@ function placeReplyDetails(rows, details) {
   return { homes, earlier, detailed }
 }
 
+// The latest supplier replies on a purchase order, newest first, with the
+// details record_history gives them, for get_purchase_order: asked "What did
+// Acme say about PO-…?", the model reads the order, not its history, and was
+// answered "nothing is recorded" with a reply on the order (2026-11-20 live
+// runs, reply-said-en and reply-said-zh). { rows, more }, or null when the
+// replies cannot be read. Superseded pastes are left out.
+export const ORDER_REPLIES_SHOWN = 3
+export async function supplierRepliesOfOrder(context, { id, order = null }) {
+  if (!context?.prisma?.supplierReply || !text(id)) return null
+  const rows = array(await context.prisma.supplierReply.findMany({
+    where: { tenantId: context.tenantId, purchaseOrderId: text(id), state: { not: 'superseded' } },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: ORDER_REPLIES_SHOWN + 1,
+    select: { id: true, createdAt: true },
+  }))
+  const shown = rows.slice(0, ORDER_REPLIES_SHOWN)
+  const details = await supplierReplyDetails(shown.map((row) => text(row.id)), { context, found: { id: text(id), order } })
+  return {
+    rows: shown.filter((row) => details.has(text(row.id))).map((row) => ({ pasted: atText(row.createdAt), ...details.get(text(row.id)) })),
+    more: rows.length > ORDER_REPLIES_SHOWN,
+  }
+}
+
 // Who changed a record and when, newest first, from the audit log (design
 // audit 2026-11-15, L5-04: "who moved PO-020's date?"). Needs audit.read, as
 // the audit page does, and the record's own read permission; the before and

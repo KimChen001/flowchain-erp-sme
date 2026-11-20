@@ -5,6 +5,7 @@ import { runLateOrderImpact } from './ai-skill-late-order-impact.mjs'
 import { runSpendAnalysis } from './ai-skill-spend-analysis.mjs'
 import { aiSkillPrepareComparison, runSupplierComparison } from './ai-skill-supplier-comparison.mjs'
 import { AI_READ_SERVICE_TOOLS } from './ai-read-service-tools.mjs'
+import { supplierRepliesOfOrder } from './ai-assistant-v2-history-tools.mjs'
 import { AI_SKILL_RECENT_DAYS, aiSkillPurchaseOrderNotSent } from './ai-skill-signals.mjs'
 import { asideFor, decisionsSetAside } from './ai-decision-aside.mjs'
 import { SUPPLIER_TIER_NAMES } from '../../shared/supplier-tiers.mjs'
@@ -140,9 +141,13 @@ const getPurchaseOrder = defineAiTool({
   parameters: { order: { type: 'string', description: 'The order number, for example PO-202611-0014.' } },
   required: ['order'],
   available: (facts) => Boolean(facts.purchaseOrders),
-  run(args, { facts }) {
+  async run(args, { facts, context }) {
     const row = aiToolPurchaseOrder(facts, args.order)
     if (!row) return { error: 'not_found' }
+    // What the supplier replied on this order, as its card and history keep
+    // it; an empty list says none is recorded (2026-11-20 live runs: the
+    // model read the order, never its history, for "What did Acme say?").
+    const replies = await supplierRepliesOfOrder(context, { id: row.id, order: row }).catch(() => null)
     // Every receipt read for the order (facts.receipts.byPo); facts read
     // without them give the rejected and unposted ones, as before.
     const byPo = facts.receipts?.byPo
@@ -157,6 +162,7 @@ const getPurchaseOrder = defineAiTool({
       receipts: receipts.filter((entry) => !seen.has(entry.id) && seen.add(entry.id)).map((entry) => ({ documentNumber: entry.documentNumber, arrived: entry.arrivedDay, postingStatus: entry.postingStatus, ...(entry.accepted !== undefined ? { accepted: entry.accepted } : {}), rejected: entry.rejected, unit: entry.unit, ...(entry.reversed ? { reversed: true } : {}), ref: aiToolRef('receiving_doc', entry.id, entry.documentNumber) })),
       ...partialOf(facts, ['purchase_orders', 'receipts']),
       invoiceDifferences: array(facts.invoices?.variances).filter((entry) => entry.poId === row.id).map((entry) => ({ invoiceNumber: entry.invoiceNumber, matchStatus: entry.matchStatus, variance: entry.variance, currency: entry.currency, ref: aiToolRef('supplier_invoice', entry.id, entry.invoiceNumber) })),
+      ...(replies ? { supplierReplies: replies.rows, ...(replies.more ? { moreSupplierReplies: true } : {}) } : {}),
     }
   },
 })

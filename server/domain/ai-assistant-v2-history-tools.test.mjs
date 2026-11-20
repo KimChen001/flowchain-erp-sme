@@ -5,6 +5,7 @@ import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { runAiReadTool } from './ai-read-tool-runner.mjs'
 import { AI_ASSISTANT_V2_HISTORY_TOOLS } from './ai-assistant-v2-history-tools.mjs'
+import { AI_READ_TOOLS } from './ai-read-tools.mjs'
 import { assistantV2Partial } from './ai-assistant-v2-answer.mjs'
 
 // Design audit 2026-11-15, batch B5 ("助手看到全部事实"): the tools covered open
@@ -288,4 +289,33 @@ test('record_history keeps reply details on shown rows, within the size limit, f
   assert.deepEqual(apart.rows.map((row) => [row.action, Boolean(row.reply)]), [['supplier_reply_pasted', true], ['supplier_reply_pasted', false], ['supplier_reply_pasted', false]])
   assert.equal(JSON.stringify(apart).includes('R-other'), false)
   assert.deepEqual(apart.replyDetails, { detailed: 1, of: 3 })
+})
+
+// 2026-11-20 live runs (reply-said-en, reply-said-zh): asked "What did Acme
+// say about PO-…?", the model read the order with get_purchase_order, never
+// its history, and answered "nothing is recorded" with a reply on the order.
+// The order's latest replies come with the order now.
+test("get_purchase_order gives the order's latest supplier replies, and an empty list when there are none", async () => {
+  const line = (outcome, extra = {}) => ({ ref: 'L1', purchaseOrderLineId: 'PO-001-L1', outcome, issue: null, currentDate: '2026-09-15', proposedDate: null, quote: null, dateKind: null, readAs: null, readings: null, parts: null, inferred: false, ...extra })
+  const scenario = aiSkillScenario()
+  scenario.data.supplierReplies = [
+    { id: 'R0', purchaseOrderId: 'PO-001', createdAt: new Date('2026-09-17T09:00:00Z'), receivedOn: '2026-09-17', source: 'paste', state: 'superseded', readingStatus: 'read', check: { lines: [] }, decision: null, reasonCode: null, note: null, revisionIds: null },
+    { id: 'R1', purchaseOrderId: 'PO-001', createdAt: new Date('2026-09-18T09:00:00Z'), receivedOn: '2026-09-18', source: 'paste', state: 'not_recorded', readingStatus: 'read', decision: 'not_recorded', reasonCode: 'supplier_will_confirm', note: null, revisionIds: null,
+      check: { lines: [line('proposed', { proposedDate: '2026-10-04', quote: 'LDM-001 will ship on 4 October.' })] } },
+  ]
+  const order = scenario.data.purchaseOrders.find((row) => row.id === 'PO-001')
+  // The fixture's stand-in orders by nothing; newest first is the query's.
+  const context = await loadAiSkillContext(scenario.ctx)
+  const facts = await readAiSkillFacts(context, { openPurchaseRequests: true })
+  const run = async (record) => (await runAiReadTool('get_purchase_order', { order: record }, { facts, context })).result
+  const withReply = await run('PO-001')
+  assert.deepEqual(withReply.supplierReplies.map((row) => [row.received, row.state, row.decision?.reason]), [['2026-09-18', 'not_recorded', 'supplier_will_confirm']])
+  assert.deepEqual(withReply.supplierReplies[0].lines, [{ sku: 'LDM-001', date: '2026-10-04', quote: 'LDM-001 will ship on 4 October.' }])
+  assert.equal(withReply.supplierReplies[0].pasted, '2026-09-18T09:00')
+  // None recorded: an empty list, so "none" is said, not guessed.
+  assert.deepEqual((await run('PO-002')).supplierReplies, [])
+  assert.ok(order)
+  // The tool's text every request carries is unchanged (cold-cache room, #361).
+  const tool = AI_READ_TOOLS.find((entry) => entry.name === 'get_purchase_order')
+  assert.equal(tool.description, 'One purchase order by its number: status, supplier, its lines to receive (openLines) and done (closedLines) with quantities, unit price when your role sees prices and promised dates, its receipts and invoice differences.')
 })
