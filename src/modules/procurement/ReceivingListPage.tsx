@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { useSearchParams } from "react-router";
-import { AlertTriangle, CheckCircle2, Clock3, PackageCheck } from "lucide-react";
+import { Link, useSearchParams } from "react-router";
+import { AlertTriangle, CheckCircle2, Clock3, PackageCheck, Plus } from "lucide-react";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { EntityLink } from "../../components/business/EntityLink";
 import { A, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
-import { ExportButton, ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
+import { ExportButton, ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { receivingApi, type ReceiptListItem } from "./receivingApi";
 import { useI18n } from "../../i18n/I18n";
@@ -13,6 +13,7 @@ import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { ListPager, usePagedRows } from "./listPaging";
 import { exportRowsToCsv } from "../../lib/data-export";
 import { instantDayInTimeZone } from "../../lib/format";
+import { usePermissionSet } from "../../lib/usePermissionSet";
 
 // Receipts drawn at a time; the cards, search and filters cover every receipt.
 const PAGE_SIZE = 50;
@@ -26,6 +27,9 @@ export function ReceivingListPage() {
   const arrivalDay = (value: string) => new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeZone: timezone }).format(new Date(value));
   const quantity = (value?: string | null) => value && Number.isFinite(Number(value)) ? formatNumber(Number(value)) : "—";
   const tr = (zh: string, en: string) => language === "en-US" ? en : zh;
+  // New receipt opens the orders waiting to be received (ReceivablePurchaseOrderChooser),
+  // for people who prepare receipts; the server checks receiving.prepare again.
+  const canPrepareReceipt = Boolean(usePermissionSet()?.has("receiving.prepare"));
   const statusLabel = (status: string) => language === "en-US"
     ? (workspaceCopy(status, language) !== status ? workspaceCopy(status, language) : status.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()))
     : workspaceCopy(status, language);
@@ -102,11 +106,12 @@ export function ReceivingListPage() {
 
       <ListSearchCard
         title={tr("收货查询", "Receipt search")}
-        subtitle={tr("点击编号查看收货、过账与库存影响。在采购订单上点击“收货”新建收货单。", "Select a number to review receiving, posting, and inventory impact. Start a new receipt with Receive on a purchase order.")}
+        subtitle={tr("点击编号查看收货、过账与库存影响。点击“新建收货单”选择到货的采购订单，或在采购订单上点击“收货”。", "Select a number to review receiving, posting, and inventory impact. To record a delivery, use New receipt and choose its purchase order, or Receive on the purchase order.")}
         actions={<>
           <ResetButton onClick={reset} />
           <RefreshButton onClick={() => void load()} />
           <ExportButton onClick={() => void exportReceipts()} />
+          {canPrepareReceipt && <Link to="/app/procurement/receiving/new" className={listButtonClass.primary} data-testid="receiving-new"><Plus size={13} />{tr("新建收货单", "New receipt")}</Link>}
         </>}
       >
         <Field label={tr("搜索", "Search")}>

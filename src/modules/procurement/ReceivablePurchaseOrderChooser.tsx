@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { ArrowLeft } from "lucide-react";
 import { A, Field, inputStyle } from "../../components/ui";
 import { EntityLink } from "../../components/business/EntityLink";
@@ -35,6 +35,9 @@ const COPY: Record<string, [string, string]> = {
   cannotReceiveDetail: ["Ask an administrator for receiving access, or ask someone who receives goods to record this delivery.", "请联系管理员开通收货权限，或请负责收货的同事登记本次到货。"],
   cannotListOrders: ["Your role cannot view purchase orders.", "你的角色无权查看采购订单。"],
   cannotListOrdersDetail: ["Open the receipt from the purchase order link you were given.", "请通过收到的采购订单链接进入收货。"],
+  notIssuedOne: ["1 approved purchase order is not issued to its supplier yet, so it can't be received.", "有 1 张已审批的采购订单尚未下达给供应商，因此还不能收货。"],
+  notIssuedMany: ["{count} approved purchase orders are not issued to their suppliers yet, so they can't be received.", "有 {count} 张已审批的采购订单尚未下达给供应商，因此还不能收货。"],
+  notIssuedLink: ["See them and mark them issued", "查看并标记为已下达"],
 };
 
 // The statuses the Receive action on a purchase order offers (PurchaseOrderReceiveAction).
@@ -46,6 +49,9 @@ type Order = { id?: string; po?: string; number?: string; orderNumber?: string; 
 // the row says how many lines are open.
 // number: the document number people read; id stays in links and calls.
 type Receivable = { id: string; number: string; status: string; supplier: string; eta: string; open: number | null; unit: string; openLines: number; search: string };
+// Approved orders are not received until they are issued (the Receive action
+// on a purchase order follows the same rule); the page counts them instead.
+const AWAITING_ISSUE = "approved";
 
 const quantity = (value: unknown) => {
   const parsed = Number(value ?? 0);
@@ -53,9 +59,9 @@ const quantity = (value: unknown) => {
 };
 
 // An order with quantity still to receive, in a status the Receive action allows.
-function receivableOf(order: Order): Receivable | null {
+function receivableOf(order: Order, statuses: Set<string> = RECEIVE_STATUSES): Receivable | null {
   const id = String(order.po || order.id || "").trim();
-  if (!id || !RECEIVE_STATUSES.has(order.status)) return null;
+  if (!id || !statuses.has(order.status)) return null;
   const lines = order.lines || [];
   const openLines = lines.filter((line) => quantity(line.quantityOrdered) > quantity(line.quantityReceived));
   const open = lines.length
@@ -90,6 +96,7 @@ export function ReceivablePurchaseOrderChooser() {
   const permissions = usePermissionSet();
   const canReceive = Boolean(permissions?.has("receiving.prepare"));
   const [orders, setOrders] = useState<Receivable[]>([]);
+  const [notIssued, setNotIssued] = useState(0);
   const [state, setState] = useState<"loading" | "loaded" | "error" | "denied">("loading");
   const [query, setQuery] = useState("");
 
@@ -97,12 +104,14 @@ export function ReceivablePurchaseOrderChooser() {
     setState("loading");
     try {
       const rows = await apiJson<Order[]>("/api/procurement/orders");
+      setNotIssued((rows || []).filter((row) => receivableOf(row, new Set([AWAITING_ISSUE]))).length);
       // Earliest expected arrival first; orders without a date last.
-      setOrders((rows || []).map(receivableOf).filter((row): row is Receivable => Boolean(row))
+      setOrders((rows || []).map((row) => receivableOf(row)).filter((row): row is Receivable => Boolean(row))
         .sort((a, b) => (a.eta || "9999-12-31").localeCompare(b.eta || "9999-12-31") || a.id.localeCompare(b.id)));
       setState("loaded");
     } catch (error) {
       setOrders([]);
+      setNotIssued(0);
       setState(error instanceof ApiError && error.status === 403 ? "denied" : "error");
     }
   }, []);
@@ -180,6 +189,12 @@ export function ReceivablePurchaseOrderChooser() {
           </table>
         </div>
       </ListCard>
+      {canReceive && state === "loaded" && notIssued > 0 && (
+        <p className="text-sm" style={{ color: A.sub }} data-testid="receiving-po-chooser-not-issued">
+          {notIssued === 1 ? tr("notIssuedOne") : tr("notIssuedMany", { count: formatNumber(notIssued) })}{" "}
+          <Link to="/app/procurement/orders?status=approved" className={tableLinkClass}>{tr("notIssuedLink")}</Link>
+        </p>
+      )}
     </div>
   );
 }
