@@ -6,6 +6,9 @@ import { createScmServer } from '../../server/bootstrap/scm-server.mjs'
 import { createDbProcurementCommandService } from '../../server/domain/procurement-db-command-service.mjs'
 import { createPrismaClient } from '../../server/persistence/prisma-client.mjs'
 import { createSupplierReplyService } from '../../server/services/supplier-reply-service.mjs'
+import { createSupplierReliabilityReadService } from '../../server/domain/supplier-reliability.mjs'
+import { addDays, localDay } from '../../server/domain/supplier-scorecard.mjs'
+import { supplierReliabilityResponseSchema } from '../../shared/supplier-reliability-contract.mjs'
 import { supplierReplyCardSchema } from '../../shared/supplier-reply-contract.mjs'
 
 // Supplier replies (docs/supplier-reply-dates-design.md) in a real database:
@@ -265,6 +268,37 @@ test('the reading with a mocked model: a proposal recorded as proposed, a reply 
     const slow = (await createSupplierReplyService({ prisma, env, procurement, modelClient: stalled, readingDeadlineMs: 100 }).pasteReply('PO-C', { text: said }, buyer)).reply
     assert.deepEqual([slow.state, slow.readingStatus], ['needs_you', 'failed'])
     assert.ok(await prisma.supplierReply.findFirst({ where: { id: slow.id } }))
+
+    // 7. The reliability measure (#363 §4.12) over these rows, as the
+    // supplier evaluation page reads it: the two date changes on PO-C (the
+    // reply's and the phone call's) and PO-C-IN's are revisions, the superseded paste is
+    // not a reply, and every reply is in one outcome. No figure under 5.
+    // The window's edge: an order first promised the day before the window
+    // starts is not read or counted, one first promised on its first day is
+    // (the database filter and the check in code agree). The workspace keeps
+    // the default timezone.
+    const firstDay = addDays(localDay(new Date(), 'America/New_York'), -89)
+    const noon = (day) => new Date(`${day}T12:00:00Z`)
+    for (const [id, number, day] of [['PO-C-OUT', 'PO-202608-0091', addDays(firstDay, -1)], ['PO-C-IN', 'PO-202608-0092', firstDay]]) {
+      await prisma.purchaseOrder.create({ data: {
+        id, number, tenantId: tenantC, supplierId: 'SUP-C', supplierName: 'Acme C', status: 'issued', currency: 'USD', amount: '10.0000', expectedDate: noon(day), issuedAt: dayOffset(-120),
+        lines: { create: [{ id: `${id}-L1`, sku: 'SKU-1040', itemName: 'Bracket', orderedQuantity: '4.0000', receivedQuantity: '0.0000', unit: 'pcs', unitPrice: '2.5000', amount: '10.0000', originalPromisedDate: noon(day), metadata: { promisedDate: addDays(day, 3) } }] },
+      } })
+      await prisma.purchaseOrderPromiseRevision.create({ data: { id: `REV-${id}`, tenantId: tenantC, purchaseOrderId: id, purchaseOrderLineId: `${id}-L1`, previousDate: noon(day), newDate: noon(addDays(day, 3)), reason: 'The supplier moved it.', source: 'purchase_order_promise_dates' } })
+    }
+    const reliability = supplierReliabilityResponseSchema.parse(await createSupplierReliabilityReadService({ prisma }).read(buyer))
+    const acme = reliability.suppliers['SUP-C']
+    // PO-C and PO-C-IN, with PO-C's two changes and PO-C-IN's one.
+    assert.deepEqual([acme.revisions.orders, acme.revisions.revisedOrders, acme.revisions.revisions, acme.revisions.perOrder, acme.revisions.averageDaysMoved], [2, 2, 3, null, null])
+    assert.deepEqual(acme.revisions.movedLater, { count: 3, of: 3, share: null })
+    const kept = await prisma.supplierReply.count({ where: { tenantId: tenantC, state: { not: 'superseded' } } })
+    const { notRecorded, ...outcomes } = acme.replies.outcomes
+    assert.equal(acme.replies.received, kept)
+    assert.equal(Object.values(outcomes).reduce((a, b) => a + b, 0) + Object.values(notRecorded).reduce((a, b) => a + b, 0), kept)
+    assert.deepEqual([notRecorded.other, outcomes.nothingToRecord, acme.replies.recorded], [1, 1, 1])
+    // Another workspace's replies are its own: D has one, read with AI off.
+    const other = (await createSupplierReliabilityReadService({ prisma }).read(as(tenantD, 'buyer'))).suppliers
+    assert.deepEqual([Object.keys(other), other['SUP-D'].replies.received, other['SUP-D'].replies.read], [['SUP-D'], 1, 0])
   } finally {
     await prisma.$disconnect()
   }
