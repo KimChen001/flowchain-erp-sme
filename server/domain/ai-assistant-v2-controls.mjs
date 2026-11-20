@@ -71,21 +71,24 @@ export function assistantV2CostReservation(access, { ceilingMicros = ASSISTANT_V
 // request, so an answer that ended between that read and this reservation is
 // counted by neither; that window is at most one answer's ceiling.
 // reserve() → { ok, capRemainingMicros, release() }; release is idempotent.
+// A call smaller than an answer (a supplier reply's reading,
+// supplier-reply-service.mjs) reserves its own estimate with { micros }.
 export function createAssistantV2CostLedger({ ceilingMicros = ASSISTANT_V2_LIMITS.costCeilingMicros } = {}) {
   const held = new Map()
   return {
-    reserve(tenantId, access) {
+    reserve(tenantId, access, { micros = ceilingMicros } = {}) {
       const key = text(tenantId)
-      const check = assistantV2CostReservation(access, { ceilingMicros, reservedMicros: held.get(key) || 0 })
+      const amount = Math.max(0, Math.round(Number(micros) || 0))
+      const check = assistantV2CostReservation(access, { ceilingMicros: amount, reservedMicros: held.get(key) || 0 })
       if (!check.ok || check.capRemainingMicros === null) return { ...check, release() {} }
-      held.set(key, (held.get(key) || 0) + ceilingMicros)
+      held.set(key, (held.get(key) || 0) + amount)
       let released = false
       return {
         ...check,
         release() {
           if (released) return
           released = true
-          const left = (held.get(key) || 0) - ceilingMicros
+          const left = (held.get(key) || 0) - amount
           if (left > 0) held.set(key, left)
           else held.delete(key)
         },
@@ -94,3 +97,7 @@ export function createAssistantV2CostLedger({ ceilingMicros = ASSISTANT_V2_LIMIT
     heldMicros: (tenantId) => held.get(text(tenantId)) || 0,
   }
 }
+
+// The process's one ledger: assistant answers and supplier reply readings
+// hold against the same remaining cap.
+export const ASSISTANT_V2_COST_LEDGER = createAssistantV2CostLedger()
