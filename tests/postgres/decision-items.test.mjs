@@ -140,6 +140,28 @@ test('Today raises decision items with drafts, remembers decisions and closes it
     assert.equal(chased.status, 200)
     const audit = await prisma.auditLog.findMany({ where: { tenantId: tenantA, entityId: 'PO-A', action: { in: ['decision_item_decided', 'decision_item_reopened'] } }, orderBy: { createdAt: 'asc' } })
     assert.deepEqual(audit.map((row) => [row.action, row.metadata.decision ?? row.metadata.previousDecision]), [['decision_item_decided', 'not_now'], ['decision_item_reopened', 'not_now'], ['decision_item_decided', 'chased']])
+    home = await today()
+    assert.equal(home.decisions.setAside.find((entry) => entry.key === poKey).chasedOn, home.today)
+
+    // 6b. Three workdays on with no receipt, the chased order comes back,
+    // still saying when it was chased, so Today keeps the reply box on it
+    // (docs/supplier-reply-dates-design.md §4.2). The chase is moved a week
+    // back rather than the clock forward.
+    const chasedOn = new Date(Date.parse(`${home.today}T00:00:00Z`) - 7 * 86_400_000).toISOString().slice(0, 10)
+    const item = await prisma.decisionItem.findFirst({ where: { tenantId: tenantA, activeKey: poKey } })
+    await prisma.decisionItem.update({ where: { id: item.id }, data: { snapshot: { ...item.snapshot, decidedOn: chasedOn, chasedOn } } })
+    home = await today()
+    const back = home.decisions.waiting.find((entry) => entry.key === poKey)
+    assert.equal(back.returned, true)
+    assert.equal(back.chasedOn, chasedOn)
+    assert.equal(back.draft.type, 'supplier_follow_up')
+    // Set aside again as "Not now": the chase day stays with it.
+    const later = await request(port, 'POST', '/api/decision-items/decide', { headers: asA, body: { key: poKey, option: 'not_now', returnOn } })
+    assert.equal(later.status, 200, JSON.stringify(later.payload))
+    home = await today()
+    assert.deepEqual([home.decisions.setAside.find((entry) => entry.key === poKey)].map((entry) => [entry.decision, entry.chasedOn]), [['not_now', chasedOn]])
+    // The request was never chased.
+    assert.equal(home.decisions.waiting.find((entry) => entry.key === prKey).chasedOn, null)
 
     // 7. Converting the request takes its row off Today at once; "accepted"
     // is still taken, but only with the orders the request records it made.

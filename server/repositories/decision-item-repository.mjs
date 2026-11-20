@@ -85,7 +85,8 @@ export function createDecisionItemRepository({ prisma }) {
         data: {
           state: 'decided', decision: parsed.decision, reasonCode: parsed.reasonCode, note: parsed.note, returnOn: parsed.returnOn,
           decidedAt: now, decidedById: actorId, documentType: parsed.documentType || null, documentId: documents[0] || null,
-          snapshot: { ...(item.snapshot || {}), ...decisionSnapshot(row, today), ...(documents.length ? { documents } : {}) },
+          // chasedOn stays through later decisions (chasedOnOf).
+          snapshot: { ...(item.snapshot || {}), ...decisionSnapshot(row, today), ...(parsed.decision === 'chased' ? { chasedOn: today } : {}), ...(documents.length ? { documents } : {}) },
         },
       })
       if (written.count !== 1) throw await alreadyDecided(tenantId, item.id)

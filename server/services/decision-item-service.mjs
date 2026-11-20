@@ -1,5 +1,5 @@
 import { COVERING_REQUEST_STATUSES, buildDecisionDrafts, followUpSupplierLinkKeys, openRequestsByItem } from '../domain/decision-drafts.mjs'
-import { arrangeToday, closableAreas, planDecisionSync } from '../domain/decision-items.mjs'
+import { arrangeToday, chasedOnOf, closableAreas, planDecisionSync } from '../domain/decision-items.mjs'
 import { ITEM_SUPPLIER_NAMESPACE, mapItemSupplierRecord } from '../domain/master-data-commands.mjs'
 import { createDecisionItemRepository } from '../repositories/decision-item-repository.mjs'
 
@@ -39,6 +39,7 @@ function setAsideEntry({ key, row, item }) {
     documentType: item.documentType || null,
     documentIds: Array.isArray(snapshot.documents) ? snapshot.documents : item.documentId ? [item.documentId] : [],
     documentNumber: snapshot.documentNumber || null,
+    chasedOn: chasedOnOf(item),
   }
 }
 
@@ -82,7 +83,8 @@ export async function syncTodayDecisions({ prisma, tenantId, rows, today, now = 
   return {
     available: true,
     canDecide: Boolean(canDecide),
-    waiting: arranged.waiting.map(({ key, row, item }) => ({ key, row, raisedAt: iso(item?.raisedAt), returned: Boolean(item?.snapshot?.returnedOn), draft: drafts[key] || null })),
+    // chasedOn: an item back after a follow-up keeps the supplier's reply box.
+    waiting: arranged.waiting.map(({ key, row, item }) => ({ key, row, raisedAt: iso(item?.raisedAt), returned: Boolean(item?.snapshot?.returnedOn), chasedOn: chasedOnOf(item), draft: drafts[key] || null })),
     setAside: arranged.setAside.map(setAsideEntry),
   }
 }
