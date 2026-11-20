@@ -370,7 +370,7 @@ test('the supplier reply cases follow the records cases: the reply pasted first,
   assert.ok(replies.every((row) => row.asUser === 'kim@example.com' && row.setup))
   const [en, zh, none] = replies
   assert.equal(en.setup.supplierReply, zh.setup.supplierReply)
-  assert.deepEqual([en.setup.supplierReply.receivedOn, en.expect.dates], ['2026-11-20', ['2026-12-04']])
+  assert.deepEqual([en.setup.supplierReply.receivedOn, en.expect.dates], ['2026-11-20', [{ label: 'the day the reply names', date: '2026-12-04' }]])
   assert.match(en.setup.supplierReply.text, /\{order\}.*will ship on 4 December 2026/s)
   assert.ok(en.setup.supplierReply.text.includes(facts.scene.hero.sku))
   assert.deepEqual(en.setup.supplierReply.dismiss, { reason: 'supplier_will_confirm' })

@@ -279,8 +279,16 @@ for (const testCase of cases) {
       continue
     }
     const last = answers.at(-1)
-    const score = scoreAnswer(last, testCase.expect, { language: testCase.expect?.language || testCase.language, answers })
+    // A case whose expectation the scorer cannot read fails, not the run.
+    let score
+    try {
+      score = scoreAnswer(last, testCase.expect, { language: testCase.expect?.language || testCase.language, answers })
+    } catch (error) {
+      score = { pass: false, checks: [{ name: 'scored', ok: false, detail: error.message }] }
+    }
     results.push({ id: testCase.id, kind: testCase.kind, language: testCase.language, round, pass: score.pass, checks: score.checks, turns: testCase.turns.map(turnText), seconds: Math.round(answers.reduce((total, row) => total + row.ms, 0) / 1000), costUsd: answers.reduce((total, row) => total + row.costUsd, 0), inputTokens: answers.reduce((total, row) => total + row.inputTokens, 0), tools: last.tools, model: last.model, asked: session.email, answer: last, earlier: answers.slice(0, -1).map((row) => ({ text: row.text, ui: row.ui.map((part) => part.component), refs: row.refs, tools: row.tools })) })
+    // The results so far, after every case, so a run that stops keeps them.
+    writeFileSync(join(out, 'results-so-far.json'), JSON.stringify(results, null, 2))
     const failed = score.checks.filter((check) => !check.ok).map((check) => `${check.name} (${check.detail})`).join('; ')
     console.log(`${score.pass ? 'PASS' : 'FAIL'} ${testCase.id.padEnd(26)}${repeat > 1 ? ` #${round + 1}` : ''} ${String(results.at(-1).seconds).padStart(3)}s ${failed}`)
   }
