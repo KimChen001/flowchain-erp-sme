@@ -109,10 +109,21 @@ function arrivalTime(value, fallback) {
   return parsed
 }
 
-// The orders the New receipt page reads at most, earliest expected first.
+// The orders the New receipt page shows at most, earliest expected first,
+// and the receivable orders it reads to find them in the reader's scope.
 const ORDERS_TO_RECEIVE_LIMIT = 500
-// Legacy stored statuses that read as approved, issued or partially received.
+const RECEIVABLE_CANDIDATE_LIMIT = 20000
+// Legacy stored statuses that read as approved, issued or partially
+// received, as the purchase order list's status filter reads them
+// (src/modules/purchasing/filters.ts); the status authority knows only
+// some of these spellings.
 const LEGACY_RECEIVABLE_STATUSES = ['已审批', '已批准', '已下发', '已下达', '已发出', '部分收货']
+const LEGACY_STATUS_ALIASES = Object.freeze({ 已审批: 'approved', 已下达: 'issued', 已发出: 'issued' })
+function receivableStatusOf(value) {
+  const alias = LEGACY_STATUS_ALIASES[text(value)]
+  if (alias) return alias
+  try { return normalizeProcurementAuthorityStatus('purchaseOrder', value) } catch { return '' }
+}
 
 export function createReceivingDraftCommandService({ prisma, idFactory = randomUUID, now = () => new Date() } = {}) {
   if (!prisma) throw new Error('prisma is required')
@@ -340,23 +351,35 @@ export function createReceivingDraftCommandService({ prisma, idFactory = randomU
   async function listOrdersToReceive(context) {
     const actor = await resolveProvisionedActor(prisma, context?.identity || context)
     assertAuthorized({ actor, permission: 'receiving.prepare', tenantId: actor.tenantId })
-    const rows = await prisma.purchaseOrder.findMany({
+    // First every order in a receivable status, with only what decides scope
+    // and order, so the reader's warehouses are applied before any cap: past
+    // the cap, orders in other warehouses never hide the reader's own.
+    const candidates = await prisma.purchaseOrder.findMany({
       where: { tenantId: actor.tenantId, status: { in: [...RECEIVABLE_PURCHASE_ORDER_INPUTS, ...LEGACY_RECEIVABLE_STATUSES] } },
-      select: { id: true, number: true, metadata: true, status: true, supplierName: true, expectedDate: true, lines: { select: { sku: true, itemName: true, unit: true, orderedQuantity: true, receivedQuantity: true } } },
-      orderBy: [{ expectedDate: 'asc' }, { id: 'asc' }], take: ORDERS_TO_RECEIVE_LIMIT + 1,
+      select: { id: true, status: true, metadata: true, expectedDate: true },
+      orderBy: [{ expectedDate: 'asc' }, { id: 'asc' }], take: RECEIVABLE_CANDIDATE_LIMIT + 1,
     })
-    const statusOf = (value) => { try { return normalizeProcurementAuthorityStatus('purchaseOrder', value) } catch { return '' } }
     const inScope = (po) => { const warehouseId = text(po.metadata?.targetWarehouseId); return !warehouseId || hasWarehouseAccess(actor, [warehouseId], 'operate') }
+    const scoped = candidates.slice(0, RECEIVABLE_CANDIDATE_LIMIT).filter(inScope).map((po) => ({ id: po.id, status: receivableStatusOf(po.status) }))
+    const notIssued = scoped.filter(({ status }) => status === PURCHASE_ORDER_STATUS.APPROVED).length
+    const toReceive = scoped.filter(({ status }) => [PURCHASE_ORDER_STATUS.ISSUED, PURCHASE_ORDER_STATUS.PARTIALLY_RECEIVED].includes(status))
+    const shown = toReceive.slice(0, ORDERS_TO_RECEIVE_LIMIT)
+    // Then the lines of the orders shown, in the same order.
+    const rows = shown.length ? await prisma.purchaseOrder.findMany({
+      where: { tenantId: actor.tenantId, id: { in: shown.map((row) => row.id) } },
+      select: { id: true, number: true, metadata: true, supplierName: true, expectedDate: true, lines: { select: { sku: true, itemName: true, unit: true, orderedQuantity: true, receivedQuantity: true } } },
+    }) : []
+    const byId = new Map(rows.map((po) => [po.id, po]))
     const open = (line) => receivingDecimalUnits(line.orderedQuantity || 0) - receivingDecimalUnits(line.receivedQuantity || 0)
-    const scoped = rows.slice(0, ORDERS_TO_RECEIVE_LIMIT).filter(inScope).map((po) => ({ po, status: statusOf(po.status) }))
-    const orders = scoped.filter(({ po, status }) => [PURCHASE_ORDER_STATUS.ISSUED, PURCHASE_ORDER_STATUS.PARTIALLY_RECEIVED].includes(status) && po.lines.some((line) => open(line) > 0n))
+    const orders = shown.map(({ id, status }) => ({ po: byId.get(id), status })).filter(({ po }) => po && po.lines.some((line) => open(line) > 0n))
       .map(({ po, status }) => ({
         id: po.id, number: procurementDocumentNumber(po), status, supplierName: po.supplierName || null,
         expectedDate: po.expectedDate ? new Date(po.expectedDate).toISOString().slice(0, 10) : null,
         lines: po.lines.map((line) => ({ sku: line.sku || null, itemName: line.itemName || null, unit: line.unit || null, orderedQuantity: text(line.orderedQuantity) || '0', receivedQuantity: text(line.receivedQuantity) || '0' })),
       }))
-    const notIssued = scoped.filter(({ status }) => status === PURCHASE_ORDER_STATUS.APPROVED).length
-    return { orders, notIssued, truncated: rows.length > ORDERS_TO_RECEIVE_LIMIT }
+    // Cut: more of the reader's orders to receive than are shown (no total
+    // beyond the reader's scope is given).
+    return { orders, notIssued, truncated: toReceive.length > ORDERS_TO_RECEIVE_LIMIT || candidates.length > RECEIVABLE_CANDIDATE_LIMIT }
   }
 
   // Where each item already sits in the warehouses the actor may receive

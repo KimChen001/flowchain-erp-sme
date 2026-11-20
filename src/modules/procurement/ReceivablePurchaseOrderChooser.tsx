@@ -36,10 +36,9 @@ const COPY: Record<string, [string, string]> = {
   cannotReceiveDetail: ["Ask an administrator for receiving access, or ask someone who receives goods to record this delivery.", "请联系管理员开通收货权限，或请负责收货的同事登记本次到货。"],
   notIssuedOne: ["1 approved purchase order for your warehouses is not issued to its supplier yet, so it can't be received.", "你负责的仓库有 1 张已审批的采购订单尚未下达给供应商，因此还不能收货。"],
   notIssuedMany: ["{count} approved purchase orders for your warehouses are not issued to their suppliers yet, so they can't be received.", "你负责的仓库有 {count} 张已审批的采购订单尚未下达给供应商，因此还不能收货。"],
-  notIssuedIssue: ["See approved orders and mark them issued", "查看已审批订单并标记为已下达"],
   notIssuedSee: ["See approved orders", "查看已审批订单"],
   notIssuedAsk: ["Someone who manages purchase orders can issue them.", "请负责采购订单的同事将其下达。"],
-  truncated: ["Showing the orders with the earliest expected arrival; search to find another.", "仅显示预计到货最早的订单；如需其他订单请搜索。"],
+  truncated: ["Only the orders with the earliest expected arrival are listed. Open a later one from its purchase order, or ask someone who manages purchase orders.", "这里只列出预计到货最早的订单。较晚的订单请从采购订单上点击“收货”，或请负责采购订单的同事处理。"],
 };
 
 // The statuses the Receive action on a purchase order offers (PurchaseOrderReceiveAction).
@@ -98,9 +97,9 @@ export function ReceivablePurchaseOrderChooser() {
   const permissions = usePermissionSet();
   const canReceive = Boolean(permissions?.has("receiving.prepare"));
   const canOpenRoute = useRouteAvailability();
-  // The way to the approved orders, and whether this person may issue them.
+  // The way to the approved orders and to an order's page, for those who may.
   const canOpenOrders = canOpenRoute("procurement:orders");
-  const canIssue = Boolean(permissions?.has("procurement.purchase_order.revise"));
+  const canOpenOrder = canOpenRoute("procurement:order-detail");
   const [orders, setOrders] = useState<Receivable[]>([]);
   const [notIssued, setNotIssued] = useState(0);
   const [truncated, setTruncated] = useState(false);
@@ -174,7 +173,7 @@ export function ReceivablePurchaseOrderChooser() {
               {canReceive && state === "loaded" && shown.map((row, index) => (
                 <tr key={row.id} className={listRowClass} style={listRowStyle(index, shown.length)} data-testid="receiving-po-chooser-row">
                   <td className={tdIdClass}>
-                    <EntityLink kind="purchase_order" id={row.id} number={row.number} className={tableLinkClass} />
+                    {canOpenOrder ? <EntityLink kind="purchase_order" id={row.id} number={row.number} className={tableLinkClass} /> : <span className="font-medium">{row.number}</span>}
                   </td>
                   <td className={`${tdNameClass} max-w-[260px] truncate`} title={row.supplier}>{row.supplier || "—"}</td>
                   <td className={tdNowrapClass} style={{ color: A.sub }}>{row.eta ? formatCalendarDay(row.eta, locale) : "—"}</td>
@@ -202,7 +201,7 @@ export function ReceivablePurchaseOrderChooser() {
         <p className="text-sm" style={{ color: A.sub }} data-testid="receiving-po-chooser-not-issued">
           {notIssued === 1 ? tr("notIssuedOne") : tr("notIssuedMany", { count: formatNumber(notIssued) })}{" "}
           {canOpenOrders
-            ? <Link to="/app/procurement/orders?status=approved" className={`${tableLinkClass} max-sm:inline-flex max-sm:min-h-9 max-sm:items-center`}>{tr(canIssue ? "notIssuedIssue" : "notIssuedSee")}</Link>
+            ? <Link to="/app/procurement/orders?status=approved" className={`${tableLinkClass} max-sm:inline-flex max-sm:min-h-9 max-sm:items-center`}>{tr("notIssuedSee")}</Link>
             : tr("notIssuedAsk")}
         </p>
       )}

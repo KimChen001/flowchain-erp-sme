@@ -29,15 +29,18 @@ const ORDERS = [
   { id: 'PO-APPROVED-OTHER-WH', number: 'PO-202611-0007', status: 'approved', supplierName: 'Globex', expectedDate: null, metadata: { targetWarehouseId: 'WH-2' }, lines: [line(1, 0)] },
 ]
 
-function fakePrisma(user) {
+function fakePrisma(user, orders = ORDERS) {
   const calls = []
+  const pick = (row, select) => Object.fromEntries(Object.keys(select).map((key) => [key, row[key]]))
   return {
     calls,
     user: { findFirst: async () => structuredClone(user) },
     purchaseOrder: {
       findMany: async (args) => {
         calls.push(args)
-        return structuredClone(ORDERS.filter((row) => args.where.status.in.includes(row.status)))
+        const rows = args.where.id ? orders.filter((row) => args.where.id.in.includes(row.id)) : orders.filter((row) => args.where.status.in.includes(row.status))
+        const sorted = args.orderBy ? [...rows].sort((a, b) => String(a.expectedDate?.toISOString() || '9999').localeCompare(String(b.expectedDate?.toISOString() || '9999')) || a.id.localeCompare(b.id)) : rows
+        return structuredClone((args.take ? sorted.slice(0, args.take) : sorted).map((row) => pick(row, args.select)))
       },
     },
   }
@@ -46,8 +49,9 @@ function fakePrisma(user) {
 test('a receiver without purchase order access gets the issued orders with quantity to receive, in their warehouses, and the approved ones counted', async () => {
   const prisma = fakePrisma(userWith(['receiving.read', 'receiving.prepare', 'receiving.submit']))
   const result = await createReceivingDraftCommandService({ prisma }).listOrdersToReceive({ identity })
-  assert.deepEqual(result.orders.map((order) => order.id), ['PO-ISSUED', 'PO-PARTIAL'])
-  assert.deepEqual(result.orders[1], {
+  // Earliest expected arrival first.
+  assert.deepEqual(result.orders.map((order) => order.id), ['PO-PARTIAL', 'PO-ISSUED'])
+  assert.deepEqual(result.orders[0], {
     id: 'PO-PARTIAL', number: 'PO-202611-0002', status: 'partially_received', supplierName: 'Acme', expectedDate: '2026-11-21',
     lines: [
       { sku: 'SKU-1', itemName: 'Valve', unit: 'pcs', orderedQuantity: '5', receivedQuantity: '5' },
@@ -59,10 +63,13 @@ test('a receiver without purchase order access gets the issued orders with quant
   // Approved in the reader's warehouses (or with none set), whatever the stored spelling.
   assert.equal(result.notIssued, 2)
   assert.equal(result.truncated, false)
-  // Read for the tenant only, earliest expected first, without prices.
-  assert.equal(prisma.calls[0].where.tenantId, TENANT)
+  // Read for the tenant only: first scope and order, then the shown orders' lines, without prices.
+  assert.deepEqual(prisma.calls.map((call) => call.where.tenantId), [TENANT, TENANT])
   assert.deepEqual(prisma.calls[0].orderBy, [{ expectedDate: 'asc' }, { id: 'asc' }])
-  assert.ok(!('unitPrice' in prisma.calls[0].select.lines.select))
+  assert.ok(!('lines' in prisma.calls[0].select))
+  // An issued order with nothing left (PO-DONE) is read, then left out by its lines.
+  assert.deepEqual(prisma.calls[1].where.id.in, ['PO-PARTIAL', 'PO-ISSUED', 'PO-DONE'])
+  assert.ok(!('unitPrice' in prisma.calls[1].select.lines.select))
 })
 
 test('someone who may only read receipts cannot list orders to receive', async () => {
@@ -80,4 +87,26 @@ test('GET /api/procurement/receivable-orders answers from the receiving service'
   }
   assert.equal(await handleReceivingRoute(ctx), true)
   assert.deepEqual(sent, [{ status: 200, body: { orders: [], notIssued: 3, truncated: false, by: 'user-ops' } }])
+})
+
+test("orders in other warehouses never hide the reader's own, however many there are", async () => {
+  // 600 orders due earlier, all in a warehouse the reader cannot operate.
+  const others = Array.from({ length: 600 }, (_, at) => ({ id: `PO-OTHER-${String(at).padStart(3, '0')}`, number: `PO-OTHER-${at}`, status: 'issued', supplierName: 'Globex', expectedDate: new Date(Date.UTC(2026, 9, 1) + at * 60_000), metadata: { targetWarehouseId: 'WH-2' }, lines: [line(5, 0)] }))
+  const prisma = fakePrisma(userWith(['receiving.read', 'receiving.prepare']), [...others, ...ORDERS])
+  const result = await createReceivingDraftCommandService({ prisma }).listOrdersToReceive({ identity })
+  assert.deepEqual(result.orders.map((order) => order.id), ['PO-PARTIAL', 'PO-ISSUED'])
+  assert.equal(result.notIssued, 2)
+  assert.equal(result.truncated, false)
+})
+
+test('the legacy spellings the purchase order list reads as approved or issued count the same here', async () => {
+  const legacy = [
+    { id: 'PO-LEGACY-APPROVED', number: 'PO-L-1', status: '已审批', supplierName: 'Acme', expectedDate: null, metadata: { targetWarehouseId: 'WH-1' }, lines: [line(4, 0)] },
+    { id: 'PO-LEGACY-ISSUED', number: 'PO-L-2', status: '已下达', supplierName: 'Acme', expectedDate: null, metadata: { targetWarehouseId: 'WH-1' }, lines: [line(4, 1)] },
+    { id: 'PO-LEGACY-SENT', number: 'PO-L-3', status: '已发出', supplierName: 'Acme', expectedDate: null, metadata: {}, lines: [line(2, 0)] },
+  ]
+  const prisma = fakePrisma(userWith(['receiving.read', 'receiving.prepare']), legacy)
+  const result = await createReceivingDraftCommandService({ prisma }).listOrdersToReceive({ identity })
+  assert.deepEqual(result.orders.map((order) => [order.id, order.status]), [['PO-LEGACY-ISSUED', 'issued'], ['PO-LEGACY-SENT', 'issued']])
+  assert.equal(result.notIssued, 1)
 })
