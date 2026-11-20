@@ -151,6 +151,21 @@ async function historyRecord(record, { facts, context }) {
 // replies are given in detail up to REPLY_DETAIL_CHARS, so the result stays
 // well under the tool result limit (24,000 characters); replyDetails says how
 // many were (#400 review).
+// What became of a reply, in words that cannot be read the wrong way
+// (2026-11-20 rerun: "decision: not_recorded" was read as "no decision has
+// been recorded", and the reason "supplier_will_confirm" as what the
+// supplier said). The buyer dismissed it, recorded its dates, or has not
+// decided yet; why it was dismissed is the buyer's reason.
+const REPLY_OUTCOMES = Object.freeze({ recorded: 'dates_recorded', not_recorded: 'dismissed_by_buyer', proposed: 'waiting_for_buyer', needs_you: 'waiting_for_buyer', nothing_to_record: 'nothing_to_record' })
+const DISMISSED_BECAUSE = Object.freeze({ wrong_reading: 'reading_was_wrong', supplier_will_confirm: 'buyer_waits_for_supplier_to_confirm', other: 'other' })
+function replyOutcome(reply) {
+  const outcome = REPLY_OUTCOMES[text(reply.state)] || text(reply.state) || null
+  return {
+    outcome,
+    ...(outcome === 'dismissed_by_buyer' ? { dismissedBecause: DISMISSED_BECAUSE[text(reply.reasonCode)] || 'other' } : {}),
+    ...(text(reply.note) ? { buyerNote: text(reply.note).slice(0, AI_TOOL_LIMITS.text) } : {}),
+  }
+}
 const REPLY_READ = AI_TOOL_LIMITS.items
 const REPLY_DETAIL_CHARS = 8000
 const SHOWN_ROWS = AI_TOOL_LIMITS.rows
@@ -185,11 +200,10 @@ async function supplierReplyDetails(ids, { context, found }) {
     return [reply.id, {
       received: text(reply.receivedOn) || null,
       ...(text(reply.source) && reply.source !== 'paste' ? { source: reply.source } : {}),
-      state: text(reply.state) || null,
+      ...replyOutcome(reply),
       ...(reply.readingStatus && reply.readingStatus !== 'read' ? { read: text(reply.readingStatus) } : {}),
       lines: array(reply.check?.lines).filter((line) => line?.outcome !== 'dropped').slice(0, AI_TOOL_LIMITS.items).map((line) => replyLine(line, skuOf)),
       ...(recorded.length ? { recorded } : {}),
-      ...(reply.decision ? { decision: { option: text(reply.decision), ...(reply.reasonCode ? { reason: text(reply.reasonCode) } : {}), ...(text(reply.note) ? { note: text(reply.note).slice(0, AI_TOOL_LIMITS.text) } : {}) } } : {}),
     }]
   }))
   return new Map(ids.filter((id) => byId.has(id)).map((id) => [id, byId.get(id)]))
@@ -242,8 +256,8 @@ export async function supplierRepliesOfOrder(context, { id, order = null }) {
 // The latest supplier reply on each of some purchase orders, in short, for
 // list_purchase_orders: "Did Acme reply about its late orders?" reads the
 // list, not each order (2026-11-20 rerun, sme-reply-check-en answered "no
-// reply is recorded" with one on the order). { received, state, said: the
-// days it gave (proposed or confirmed), decision } by order id; an empty Map
+// reply is recorded" with one on the order). { received, said: the days it
+// gave (proposed or confirmed), outcome, dismissedBecause } by order id; an empty Map
 // when the replies cannot be read. Superseded pastes are left out.
 export async function latestSupplierReplyByOrder(context, orderIds = []) {
   const ids = [...new Set(array(orderIds).map(text).filter(Boolean))]
@@ -251,7 +265,7 @@ export async function latestSupplierReplyByOrder(context, orderIds = []) {
   const rows = array(await context.prisma.supplierReply.findMany({
     where: { tenantId: context.tenantId, purchaseOrderId: { in: ids }, state: { not: 'superseded' } },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-    select: { purchaseOrderId: true, receivedOn: true, state: true, check: true, decision: true, reasonCode: true, createdAt: true },
+    select: { purchaseOrderId: true, receivedOn: true, state: true, check: true, reasonCode: true, note: true, createdAt: true },
   }))
   const latest = new Map()
   for (const row of rows) {
@@ -260,9 +274,8 @@ export async function latestSupplierReplyByOrder(context, orderIds = []) {
     const said = [...new Set(array(row.check?.lines).filter((line) => (line?.outcome === 'proposed' || line?.outcome === 'confirmed') && line.proposedDate).map((line) => line.proposedDate))].slice(0, AI_TOOL_LIMITS.items)
     latest.set(id, {
       received: text(row.receivedOn) || null,
-      state: text(row.state) || null,
       ...(said.length ? { said } : {}),
-      ...(row.decision ? { decision: text(row.decision), ...(row.reasonCode ? { reason: text(row.reasonCode) } : {}) } : {}),
+      ...replyOutcome(row),
     })
   }
   return latest

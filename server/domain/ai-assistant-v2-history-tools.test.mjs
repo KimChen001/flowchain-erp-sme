@@ -208,14 +208,16 @@ test('record_history reads a purchase order\'s supplier replies back: the day, e
   ])
   const dismissed = order.rows[3].reply
   assert.deepEqual(dismissed.lines, [{ sku: 'LDM-001', date: '2026-10-04', quote: `LDM-001 will ship on 4 October. ${'x'.repeat(300)}`.slice(0, 200) }])
-  assert.deepEqual(dismissed.decision, { option: 'not_recorded', reason: 'supplier_will_confirm', note: 'Waiting for their written confirmation' })
-  assert.equal(dismissed.state, 'not_recorded')
+  // In words that cannot be read the wrong way: the buyer dismissed it,
+  // waiting for the supplier to confirm.
+  assert.deepEqual([dismissed.outcome, dismissed.dismissedBecause, dismissed.buyerNote], ['dismissed_by_buyer', 'buyer_waits_for_supplier_to_confirm', 'Waiting for their written confirmation'])
+  assert.equal('decision' in dismissed || 'state' in dismissed, false)
   // A value the reply does not hold is never read back.
   assert.equal(JSON.stringify(order).includes('SYSTEM'), false)
   const recorded = order.rows[1].reply
   assert.deepEqual(recorded.lines, [{ sku: 'LDM-001', issue: 'ambiguous_numeric', readings: ['2026-10-06', '2026-06-10'], quote: 'ships 06/10' }])
   assert.deepEqual(recorded.recorded, [{ sku: 'LDM-001', date: '2026-10-06' }])
-  assert.deepEqual(recorded.decision, { option: 'recorded' })
+  assert.equal(recorded.outcome, 'dates_recorded')
 
   // An order with no reply says so, and a supplier's history has no count.
   const none = await run({ record: 'PO-002' })
@@ -265,7 +267,7 @@ test('record_history keeps reply details on shown rows, within the size limit, f
   const newer = Array.from({ length: 22 }, (_, index) => entry(10 + index, 'update'))
   const older = await (await setUpWith([entry(0, 'supplier_reply_pasted', { replyId: 'R2' }), entry(1, 'supplier_reply_dismissed', { replyId: 'R2' }), ...newer], [reply('R2', { state: 'not_recorded', decision: 'not_recorded', reasonCode: 'supplier_will_confirm' })]))({ record: 'PO-001' })
   assert.equal(older.rows.some((row) => row.reply), false)
-  assert.deepEqual(older.earlierReplies.map((row) => [row.at, row.decision.reason]), [['2026-09-01T09:00', 'supplier_will_confirm']])
+  assert.deepEqual(older.earlierReplies.map((row) => [row.at, row.dismissedBecause]), [['2026-09-01T09:00', 'buyer_waits_for_supplier_to_confirm']])
 
   // Ten replies with ten long lines each: the newest are given in detail, the
   // rest counted, and the whole result stays well under 24,000 characters.
@@ -309,7 +311,7 @@ test("get_purchase_order gives the order's latest supplier replies, and an empty
   const facts = await readAiSkillFacts(context, { openPurchaseRequests: true })
   const run = async (record) => (await runAiReadTool('get_purchase_order', { order: record }, { facts, context })).result
   const withReply = await run('PO-001')
-  assert.deepEqual(withReply.supplierReplies.map((row) => [row.received, row.state, row.decision?.reason]), [['2026-09-18', 'not_recorded', 'supplier_will_confirm']])
+  assert.deepEqual(withReply.supplierReplies.map((row) => [row.received, row.outcome, row.dismissedBecause]), [['2026-09-18', 'dismissed_by_buyer', 'buyer_waits_for_supplier_to_confirm']])
   assert.deepEqual(withReply.supplierReplies[0].lines, [{ sku: 'LDM-001', date: '2026-10-04', quote: 'LDM-001 will ship on 4 October.' }])
   assert.equal(withReply.supplierReplies[0].pasted, '2026-09-18T09:00')
   // None recorded: an empty list, so "none" is said, not guessed.
@@ -338,7 +340,7 @@ test('list_purchase_orders gives the latest supplier reply on each order shown t
   const withReply = listed.rows.find((row) => row.supplierReply)
   // The newest reply that is not superseded, with the day it gave (a dropped
   // value never), and none on an order without one.
-  assert.deepEqual(withReply.supplierReply, { received: '2026-09-20', state: 'proposed', said: ['2026-10-06'] })
+  assert.deepEqual(withReply.supplierReply, { received: '2026-09-20', said: ['2026-10-06'], outcome: 'waiting_for_buyer' })
   assert.equal(listed.rows.filter((row) => row.supplierReply).length, 1)
   assert.ok(Object.keys(byNumber).length > 1)
 })
