@@ -136,16 +136,24 @@ export function replyAddressesSystem(value) {
 // "ORDER-SYNC" block with a date of its own that says it outranks the
 // message): an armored -----BEGIN …----- block (not a PGP signature), a JSON
 // key naming an order field ("promised_date": …), snake_case order fields
-// (promised_date=…, ship_date: …), lines of key=value, or a claim that some
-// data outranks the message. For the card's notice only: the reading's
-// checks do not use it, so nothing read or proposed changes with it.
+// (promised_date=…, ship_date: …), two lines of lowercase key=value with an
+// order field among them, or a block of data said to outrank the message.
+// Each needs machine context: a supplier's own "Qty = 300", "this email
+// supersedes the one of 3 November" or 系统自动识别了您的订单 is not flagged
+// (#400 review). For the card's notice only: the reading's checks do not use
+// it, so nothing read or proposed changes with it.
+const ORDER_KEY = String.raw`(?:po|order|promised|delivery|deliver|ship|shipping|dispatch|eta|etd|status|date|lines?|qty|quantity)`
+const DATA_NOUN = String.raw`(?:block|data|payload|json|record|section)`
 const MACHINE_ORDER_DATA = [
   /^\s*-{3,}\s*BEGIN\s+(?!PGP\b)[A-Z][^\n]*$/im,
-  /"(?:po|order|promised|delivery|deliver|ship|shipping|dispatch|eta|etd|status|lines?|qty|quantity)[a-z_]*"\s*:/i,
+  new RegExp(String.raw`"${ORDER_KEY}[a-z_]*"\s*:`, 'i'),
   /^\s*(?:po|order|promised|delivery|ship|shipping|dispatch|eta|etd|confirmed|new)_[a-z_]+\s*[=:]\s*\S/im,
-  /^\s*[a-z][a-z_]{1,30}\s*=\s*\S[^\n]*\n\s*[a-z][a-z_]{1,30}\s*=\s*\S/im,
-  /\b(?:authoritative|machine[- ]verified|machine[- ]readable|takes?\s+precedence|(?:supersedes?|overrides?|outranks?)\s+(?:the\s+)?(?:message|text|e-?mail|body|above)|read\s+(?:the\s+)?dates?\s+from\s+(?:here|this|the\s+(?:block|data))|for\s+automated\s+(?:processing|reading|import|systems?))\b/i,
-  /优先于(?:正文|邮件|上文|以上)|以(?:本|此|下|该)(?:数据块|数据|区块|代码块|同步块)为准|自动(?:读取|解析|识别|导入)(?:程序|系统|工具)?|解析程序|机器(?:读取|校验|验证)/,
+  // Lowercase key=value, no spaces around "=", one key an order field.
+  new RegExp(String.raw`^\s*(?=[a-z0-9_]*${ORDER_KEY})[a-z][a-z0-9_]{1,30}=\S[^\n]*\n\s*[a-z][a-z0-9_]{1,30}=\S|^\s*[a-z][a-z0-9_]{1,30}=\S[^\n]*\n\s*(?=[a-z0-9_]*${ORDER_KEY})[a-z][a-z0-9_]{1,30}=\S`, 'm'),
+  new RegExp(String.raw`\b(?:this|the|following|below|above|attached)\s+${DATA_NOUN}\b[^.\n]{0,40}\b(?:is\s+authoritative|is\s+machine[- ]verified|takes?\s+precedence|supersedes?|overrides?|outranks?)\b`, 'i'),
+  new RegExp(String.raw`\b(?:authoritative|machine[- ]verified)\s+${DATA_NOUN}\b`, 'i'),
+  /\bread\s+(?:the\s+)?dates?\s+from\s+(?:here|this\s+(?:block|data)|the\s+(?:block|data))\b/i,
+  /优先于正文|以(?:本|此|下|该)(?:数据块|区块|代码块|同步块)为准|(?:数据块|区块|代码块|同步块)[^。\n]{0,10}优先于|自动(?:读取|解析|识别|导入)(?:程序|工具)|解析程序/,
 ]
 export function replyHoldsMachineOrderData(value) {
   const textOf = String(value ?? '').replace(INVISIBLE, '').normalize('NFKC')
