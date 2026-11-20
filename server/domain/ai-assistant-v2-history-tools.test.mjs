@@ -319,3 +319,26 @@ test("get_purchase_order gives the order's latest supplier replies, and an empty
   const tool = AI_READ_TOOLS.find((entry) => entry.name === 'get_purchase_order')
   assert.equal(tool.description, 'One purchase order by its number: status, supplier, its lines to receive (openLines) and done (closedLines) with quantities, unit price when your role sees prices and promised dates, its receipts and invoice differences.')
 })
+
+// 2026-11-20 rerun, sme-reply-check-en: "Did Acme reply about its late
+// orders?" read the order list, not each order, and was answered "no reply
+// is recorded" with one on the order.
+test('list_purchase_orders gives the latest supplier reply on each order shown that has one', async () => {
+  const scenario = aiSkillScenario()
+  const line = (outcome, proposedDate) => ({ ref: 'L1', purchaseOrderLineId: 'PO-001-L1', outcome, issue: null, currentDate: '2026-09-15', proposedDate, quote: 'x', dateKind: 'stated', readAs: null, readings: null, parts: null, inferred: false })
+  scenario.data.supplierReplies = [
+    { id: 'R1', purchaseOrderId: 'PO-001', createdAt: new Date('2026-09-18T09:00:00Z'), receivedOn: '2026-09-18', state: 'not_recorded', decision: 'not_recorded', reasonCode: 'supplier_will_confirm', check: { lines: [line('proposed', '2026-10-04')] } },
+    { id: 'R2', purchaseOrderId: 'PO-001', createdAt: new Date('2026-09-20T09:00:00Z'), receivedOn: '2026-09-20', state: 'proposed', decision: null, reasonCode: null, check: { lines: [line('proposed', '2026-10-06'), line('dropped', '2026-01-01')] } },
+    { id: 'R3', purchaseOrderId: 'PO-001', createdAt: new Date('2026-09-21T09:00:00Z'), receivedOn: '2026-09-21', state: 'superseded', decision: null, reasonCode: null, check: { lines: [] } },
+  ]
+  const context = await loadAiSkillContext(scenario.ctx)
+  const facts = await readAiSkillFacts(context, { openPurchaseRequests: true })
+  const listed = (await runAiReadTool('list_purchase_orders', { status: 'open' }, { facts, context })).result
+  const byNumber = Object.fromEntries(listed.rows.map((row) => [row.orderNumber || row.order || row.id, row]))
+  const withReply = listed.rows.find((row) => row.supplierReply)
+  // The newest reply that is not superseded, with the day it gave (a dropped
+  // value never), and none on an order without one.
+  assert.deepEqual(withReply.supplierReply, { received: '2026-09-20', state: 'proposed', said: ['2026-10-06'] })
+  assert.equal(listed.rows.filter((row) => row.supplierReply).length, 1)
+  assert.ok(Object.keys(byNumber).length > 1)
+})

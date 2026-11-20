@@ -5,7 +5,7 @@ import { runLateOrderImpact } from './ai-skill-late-order-impact.mjs'
 import { runSpendAnalysis } from './ai-skill-spend-analysis.mjs'
 import { aiSkillPrepareComparison, runSupplierComparison } from './ai-skill-supplier-comparison.mjs'
 import { AI_READ_SERVICE_TOOLS } from './ai-read-service-tools.mjs'
-import { supplierRepliesOfOrder } from './ai-assistant-v2-history-tools.mjs'
+import { latestSupplierReplyByOrder, supplierRepliesOfOrder } from './ai-assistant-v2-history-tools.mjs'
 import { AI_SKILL_RECENT_DAYS, aiSkillPurchaseOrderNotSent } from './ai-skill-signals.mjs'
 import { asideFor, decisionsSetAside } from './ai-decision-aside.mjs'
 import { SUPPLIER_TIER_NAMES } from '../../shared/supplier-tiers.mjs'
@@ -105,7 +105,7 @@ const listPurchaseOrders = defineAiTool({
     limit: limitParam,
   },
   available: (facts) => Boolean(facts.purchaseOrders),
-  run(args, { facts }) {
+  async run(args, { facts, context }) {
     const status = args.status || 'open'
     let rows = status === 'pending_approval' ? array(facts.purchaseOrders.pendingApproval) : array(facts.purchaseOrders.index)
     if (status === 'open') rows = rows.filter((row) => row.isOpen)
@@ -124,11 +124,16 @@ const listPurchaseOrders = defineAiTool({
     }
     if (args.sku) rows = rows.filter((row) => array(row.skus).some((sku) => fold(sku) === fold(args.sku)))
     rows = [...rows].sort((a, b) => (b.overdueDays || 0) - (a.overdueDays || 0) || byDue(a, b))
+    const listed = aiToolList(rows.map((row) => ({ ...orderRow(row), itemNames: itemNamesOf(facts, row.skus) })), args.limit)
+    // The latest supplier reply on each order shown, when there is one: what
+    // the supplier said, as the order's card keeps it.
+    const replies = await latestSupplierReplyByOrder(context, rows.slice(0, listed.rows.length).map((row) => row.id)).catch(() => new Map())
+    listed.rows = listed.rows.map((row, index) => (replies.has(rows[index].id) ? { ...row, supplierReply: replies.get(rows[index].id) } : row))
     return {
       asOf: facts.asOf,
       workspace: { open: facts.purchaseOrders.open, overdue: facts.purchaseOrders.overdue, committedSpend: facts.purchaseOrders.committedSpend ?? null },
       amountTotal: rows.length ? orderAmounts(rows) : null,
-      ...aiToolList(rows.map((row) => ({ ...orderRow(row), itemNames: itemNamesOf(facts, row.skus) })), args.limit),
+      ...listed,
       bySupplier: ordersBySupplier(rows),
       ...partialOf(facts, ['purchase_orders']),
     }

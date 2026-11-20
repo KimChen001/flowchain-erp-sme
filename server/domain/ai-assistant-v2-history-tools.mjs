@@ -239,6 +239,35 @@ export async function supplierRepliesOfOrder(context, { id, order = null }) {
   }
 }
 
+// The latest supplier reply on each of some purchase orders, in short, for
+// list_purchase_orders: "Did Acme reply about its late orders?" reads the
+// list, not each order (2026-11-20 rerun, sme-reply-check-en answered "no
+// reply is recorded" with one on the order). { received, state, said: the
+// days it gave (proposed or confirmed), decision } by order id; an empty Map
+// when the replies cannot be read. Superseded pastes are left out.
+export async function latestSupplierReplyByOrder(context, orderIds = []) {
+  const ids = [...new Set(array(orderIds).map(text).filter(Boolean))]
+  if (!ids.length || !context?.prisma?.supplierReply) return new Map()
+  const rows = array(await context.prisma.supplierReply.findMany({
+    where: { tenantId: context.tenantId, purchaseOrderId: { in: ids }, state: { not: 'superseded' } },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    select: { purchaseOrderId: true, receivedOn: true, state: true, check: true, decision: true, reasonCode: true, createdAt: true },
+  }))
+  const latest = new Map()
+  for (const row of rows) {
+    const id = text(row.purchaseOrderId)
+    if (latest.has(id)) continue
+    const said = [...new Set(array(row.check?.lines).filter((line) => (line?.outcome === 'proposed' || line?.outcome === 'confirmed') && line.proposedDate).map((line) => line.proposedDate))].slice(0, AI_TOOL_LIMITS.items)
+    latest.set(id, {
+      received: text(row.receivedOn) || null,
+      state: text(row.state) || null,
+      ...(said.length ? { said } : {}),
+      ...(row.decision ? { decision: text(row.decision), ...(row.reasonCode ? { reason: text(row.reasonCode) } : {}) } : {}),
+    })
+  }
+  return latest
+}
+
 // Who changed a record and when, newest first, from the audit log (design
 // audit 2026-11-15, L5-04: "who moved PO-020's date?"). Needs audit.read, as
 // the audit page does, and the record's own read permission; the before and
