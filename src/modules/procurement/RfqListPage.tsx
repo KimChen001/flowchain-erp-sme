@@ -221,7 +221,7 @@ export function RfqListPage() {
                       <div className="truncate font-medium" style={{ color: A.label }} title={row.title}>{row.title || "—"}</div>
                       <div className="truncate text-[11px]" style={{ color: A.sub }}>{[row.itemName, row.category].filter(Boolean).join(" · ")}</div>
                     </td>
-                    <td className={tdNumericRightClass}>{Number.isFinite(Number(row.quantity)) && row.quantity !== null && row.quantity !== undefined ? formatNumber(Number(row.quantity)) : "—"} {unitLabel(row.unit, language)}</td>
+                    <td className={tdNumericRightClass}>{Number.isFinite(Number(row.quantity)) && row.quantity !== null && row.quantity !== undefined ? formatNumber(Number(row.quantity)) : "—"} {unitLabel(row.unit, language, Number(row.quantity))}</td>
                     <td className={tdNowrapClass}>
                       <StatusChip label={`${responded} / ${row.supplierCount ?? 0}`} tone={quotesIn(row) ? "success" : responded > 0 ? "info" : "neutral"} />
                     </td>
