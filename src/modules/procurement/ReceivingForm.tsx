@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { RetryButton } from "../../components/ui/listLayout";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
@@ -299,8 +300,8 @@ function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: Recei
   if (state === "loading") return <Card className="flex items-center justify-center gap-2 py-16 text-sm" style={{ color: A.sub }}><Loader2 className="animate-spin" size={16} />{tr("loading")}</Card>;
   if (state === "error" || !po) return (
     <Card className="py-16 text-center" data-testid="receiving-form-error">
-      <div className="text-sm font-semibold">{tr("loadFailed")}</div>
-      <button type="button" onClick={() => void load()} className="mt-3 text-sm font-semibold text-blue-600">{tr("retry")}</button>
+      <div className="text-sm font-semibold" style={{ color: A.label }}>{tr("loadFailed")}</div>
+      <RetryButton onClick={() => void load()} label={tr("retry")} />
     </Card>
   );
 

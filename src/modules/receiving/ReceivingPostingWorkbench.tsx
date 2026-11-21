@@ -2,13 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
-import { AlertTriangle, ArrowRight, Link2, Loader2, Printer, ShieldCheck } from "lucide-react";
+import { ArrowRight, Link2, Loader2, Printer, ShieldCheck } from "lucide-react";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { usePermissionSet } from "../../lib/usePermissionSet";
 import { useRouteAvailability } from "../../app/routeAvailability";
-import { A, useConfirm } from "../../components/ui";
+import { A, Card, useConfirm } from "../../components/ui";
 import { OverviewFieldGrid } from "../../components/document/DocumentShell";
-import { StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, statusToneOf } from "../../components/ui/listLayout";
+import { StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, statusToneOf, RetryButton } from "../../components/ui/listLayout";
 import { listTableCardsRef, tableMinSmClass, tableScrollClass, tdClass, tdIdClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
@@ -302,8 +302,8 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
     } finally { setSaving(false); }
   }
 
-  if (loading) return <div className="flex min-h-[320px] items-center justify-center gap-2 text-sm" data-testid="receiving-loading"><Loader2 className="animate-spin" size={18} />{say("Loading receipt…", "正在读取收货单…")}</div>;
-  if (!detail) return <div className="space-y-3"><BackToListLink list="receiving" /><div className="rounded-xl border p-6" data-testid="receiving-error" title={errorCode}><AlertTriangle className="mb-2" color={A.red} />{error || say("This receipt is unavailable.", "该收货单暂时无法查看。")}<button className="ml-3 underline" onClick={() => void refresh()}>{say("Retry", "重试")}</button></div></div>;
+  if (loading) return <div className="space-y-3"><BackToListLink list="receiving" /><Card className="flex items-center justify-center gap-2 py-16 text-sm" style={{ color: A.sub }} data-testid="receiving-loading"><Loader2 className="animate-spin" size={16} />{say("Loading receipt…", "正在读取收货单…")}</Card></div>;
+  if (!detail) return <div className="space-y-3"><BackToListLink list="receiving" /><Card className="py-16 text-center" data-testid="receiving-error" title={errorCode}><div className="text-sm font-semibold" style={{ color: A.label }}>{error || say("This receipt is unavailable.", "该收货单暂时无法查看。")}</div><RetryButton onClick={() => void refresh()} label={say("Retry", "重试")} /></Card></div>;
 
   const unavailable = say("Unavailable", "不可用");
   // A disabled related-records button says why in the interface language.

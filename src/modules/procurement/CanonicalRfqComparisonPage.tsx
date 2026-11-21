@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, CheckCircle2, CircleAlert, RefreshCw, Scale, ShieldCheck, TriangleAlert } from "lucide-react";
+import { ArrowLeft, CheckCircle2, CircleAlert, Scale, ShieldCheck, TriangleAlert } from "lucide-react";
 import { Link } from "react-router";
 import { A, Card, useConfirm } from "../../components/ui";
-import { StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
+import { StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf, RetryButton } from "../../components/ui/listLayout";
 import { listTableCardsRef, tableBodyTextClass, tableScrollClass, tdClass, thClass } from "../../components/ui/workbenchTable";
 import { typography } from "../../components/ui/typography";
 import { ApiError } from "../../lib/api-client";
@@ -415,5 +415,5 @@ export function CanonicalRfqComparisonPage({ documentId, effectivePermissionCode
     error: tr("供应商报价比较加载失败，请稍后重试。", "The supplier quotation comparison is temporarily unavailable. Try again later."),
     network: tr("无法连接到供应商报价比较服务，请检查网络后重试。", "The supplier quotation comparison service could not be reached. Check your connection and try again."),
   };
-  return <div className="space-y-4" data-testid="canonical-rfq-comparison-state"><Card className="p-8 text-center">{state === "loading" ? <div className="text-sm" style={{ color: A.sub }}>{tr("正在读取供应商报价比较…", "Loading supplier quotation comparison…")}</div> : <><TriangleAlert className="mx-auto text-amber-600" size={30} /><div className="mt-3 text-sm font-semibold">{messages[state]}</div>{state !== "malformed" && <button className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-blue-600" onClick={() => void load()} type="button"><RefreshCw size={15} />{tr("重试", "Retry")}</button>}</>}</Card><Link className="inline-flex items-center gap-2 text-sm font-semibold text-blue-600" to={documentId ? `/app/procurement/rfq/${encodeURIComponent(documentId)}` : "/app/procurement/rfq"}><ArrowLeft size={16} />{tr("返回询价单", "Back to RFQ")}</Link></div>;
+  return <div className="space-y-4" data-testid="canonical-rfq-comparison-state"><Card className="py-16 text-center">{state === "loading" ? <div className="text-sm" style={{ color: A.sub }}>{tr("正在读取供应商报价比较…", "Loading supplier quotation comparison…")}</div> : <><div className="text-sm font-semibold" style={{ color: A.label }}>{messages[state]}</div>{state !== "malformed" && <RetryButton onClick={() => void load()} label={tr("重试", "Retry")} />}</>}</Card><Link className="inline-flex items-center gap-2 text-sm font-semibold text-blue-600" to={documentId ? `/app/procurement/rfq/${encodeURIComponent(documentId)}` : "/app/procurement/rfq"}><ArrowLeft size={16} />{tr("返回询价单", "Back to RFQ")}</Link></div>;
 }

@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { RefreshCw } from "lucide-react";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { A, Card } from "../../components/ui";
-import { StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
+import { StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, statusToneOf, type StatusTone, RetryButton } from "../../components/ui/listLayout";
 import { listTableCardsRef, tableBodyTextClass, tableScrollClass, tdClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { unitLabel } from "../../i18n/unitLabels";
 import { formatCalendarDay, formatInstantDay } from "../business-documents/documentFormat";
@@ -433,7 +433,7 @@ export function ProcurementDocumentDetailPage({
           <div className="py-16 text-center" data-testid="procurement-document-read-error">
             <div className="text-sm font-semibold">{copy("This document cannot be read right now. Try again.")}</div>
             <div className="mt-2 text-xs" style={{ color: A.sub }}>{copy("The service or network could not be reached. Try again in a moment.")}</div>
-            <button type="button" onClick={() => void load()} className="mt-3 text-sm font-semibold text-blue-600">{copy("Retry")}</button>
+            <RetryButton onClick={() => void load()} label={copy("Retry")} />
           </div>
         ) : !record ? (
           <div className="py-16 text-center" data-testid="procurement-document-read-error">

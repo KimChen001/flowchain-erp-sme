@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { Ban, ExternalLink, FilePlus2, Play, RefreshCw, Scale, TriangleAlert } from "lucide-react";
+import { Ban, ExternalLink, FilePlus2, Play, Scale, TriangleAlert } from "lucide-react";
 import { Link } from "react-router";
 import { A, Card, useConfirm } from "../../components/ui";
-import { StatusChip, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
+import { StatusChip, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf, RetryButton } from "../../components/ui/listLayout";
 import { listTableCardsRef, tableBodyTextClass, tableScrollClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { ApiError } from "../../lib/api-client";
 import { apiErrorText } from "../../lib/apiErrorText";
@@ -412,11 +412,10 @@ export function CanonicalRfqDetailPage({ documentId, effectivePermissionCodes, a
   return (
     <div className="space-y-4" data-testid="canonical-rfq-detail-state">
       <BackToListLink list="rfq" />
-      <Card className="p-8 text-center">
+      <Card className="py-16 text-center">
         {state === "loading" ? <div className="text-sm" style={{ color: A.sub }}>{tr("正在读取询价单…", "Loading RFQ…")}</div> : <>
-          <TriangleAlert className="mx-auto text-amber-600" size={30} />
-          <div className="mt-3 text-sm font-semibold">{messages[state]}</div>
-          {state !== "malformed" && <button type="button" onClick={() => void load()} className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-blue-600"><RefreshCw size={15} />{tr("重试", "Retry")}</button>}
+          <div className="text-sm font-semibold" style={{ color: A.label }}>{messages[state]}</div>
+          {state !== "malformed" && <RetryButton onClick={() => void load()} label={tr("重试", "Retry")} />}
         </>}
       </Card>
     </div>
