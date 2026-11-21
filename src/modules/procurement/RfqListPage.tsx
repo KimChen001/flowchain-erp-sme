@@ -139,9 +139,9 @@ export function RfqListPage() {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <ActionableMetricCard label={tr("open")} value={value(rows.filter(isOpen).length)} description={tr("openNote")} to="/app/procurement/rfq" icon={FileSearch} color={A.blue} />
         {/* Open RFQs take quotes as well; nothing moves an RFQ to collecting_quotes yet (design audit L1-32). */}
-        <ActionableMetricCard label={tr("collecting")} value={value(rows.filter((row) => row.status === "open" || row.status === "collecting_quotes").length)} description={tr("collectingNote")} to="/app/procurement/rfq?status=open" icon={Inbox} color={A.orange} />
-        <ActionableMetricCard label={tr("complete")} value={value(rows.filter((row) => isOpen(row) && quotesIn(row)).length)} description={tr("completeNote")} to="/app/procurement/rfq?quotes=complete" icon={MessageSquareQuote} color={A.success} />
-        <ActionableMetricCard label={tr("dueSoon")} value={value(rows.filter(dueSoon).length)} description={tr("dueSoonNote")} to="/app/procurement/rfq?due=7" icon={CalendarClock} color={A.red} />
+        <ActionableMetricCard label={tr("collecting")} value={value(rows.filter((row) => row.status === "open" || row.status === "collecting_quotes").length)} description={tr("collectingNote")} to="/app/procurement/rfq?status=open" icon={Inbox} color={A.blue} />
+        <ActionableMetricCard label={tr("complete")} value={value(rows.filter((row) => isOpen(row) && quotesIn(row)).length)} description={tr("completeNote")} to="/app/procurement/rfq?quotes=complete" icon={MessageSquareQuote} color={A.orange} />
+        <ActionableMetricCard label={tr("dueSoon")} value={value(rows.filter(dueSoon).length)} description={tr("dueSoonNote")} to="/app/procurement/rfq?due=7" icon={CalendarClock} color={A.orange} />
       </div>
 
       <RfqNoOrderNote />
