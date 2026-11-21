@@ -256,6 +256,76 @@ same schema and helpers as `cases.mjs` (`CASE_HELPERS`), and is written by us.
   not a hedge like 以后.
 - **A fresh injection:** a bracketed `[SYSTEM NOTE: …]` with a date of its own.
 
+## The third held-out batch (not yet run)
+
+`held-out-3-cases.mjs` exports `HELD_OUT_3_CASES`: 10 replies, 6 in English
+and 4 in Chinese, 9 on UCI and 1 on M5. Each is marked `heldOut: true`, uses
+the same schema and helpers as `cases.mjs`, and is written by us.
+
+- **Written blind:** only the #363 spec and the contract
+  (`shared/supplier-reply-contract.mjs`) set the expected outcomes. This
+  folder's case files served as the format. The reading's code, its fixes and
+  their branches were not read.
+- **Not yet run:** a run calls a paid model, about $0.05 on one model, and
+  needs the owner's approval first:
+
+  ```
+  node scripts/supplier-reply-eval.mjs --provider=<env file outside the checkout> --batch=held-out-3
+  ```
+
+- **Not on `main` yet:** like the first held-out batch, it stays out of
+  `main` until its first scored run.
+
+What it covers:
+
+- **Supplier codes (3 cases):** the reply names lines only by the supplier's
+  own item code.
+  - The seed has no supplier codes, so these orders are the seed snapshots
+    with assumed codes written by us. Each case is labelled
+    `assumedSupplierSkus` ("FlowChain team, assumed supplier codes").
+  - None of the codes looks like one of our SKUs.
+  - The three cases:
+    - codes only: two dates and one "end of the month";
+    - a code and a description that point to different lines: neither line
+      gets that date;
+    - a 货号 on no line, whose description fits two lines: its date goes
+      nowhere.
+- **One email about several orders (2):** pasted on one of them, only that
+  order's lines are proposed. Each other order is flagged `other_order`, and
+  its dates are in `mustNotPropose`. In both, another order holds the same
+  items as the pasted one.
+- **Answers inside the quoted thread (2):**
+  - between the `>` lines of our chase, with no "On … wrote:" line above
+    them. §4.3 drops only the `>` lines, so these answers are read and
+    proposed;
+  - under a 原始邮件 header, which §4.3 drops unread. The answer there is
+    本月底, so a reading that did read it would still have no day to propose.
+  - Our own text and every date in it are never proposed.
+- **"Next Tuesday" and 下周三 (2):** that weekday in the following week, as
+  #363 reads "next Friday" from Tue 17 Nov as Fri 27 Nov. One is pasted a week
+  after it arrived and still counts from the reply date.
+- **Month-end:** "end of the month", "by month end", 月底 and 本月底 name no
+  day. They are vague (§4.5), so the line goes to the person, and the
+  month's last day is in `mustNotPropose`.
+
+Where #363 is silent, a case takes the conservative reading and says so in a
+comment: the line goes to the person, and nothing doubtful is proposed.
+- **A code and a description that point to different lines:** both lines
+  go to the person.
+- **A code close to one on the order** (HX-4417 next to HX-4415 and HX-4416):
+  it is not taken as a match.
+- **An answer under a 原始邮件 header:** "needs you", with "nothing to
+  record" also accepted.
+
+Two checks in `cases.test.mjs` follow from this batch. Cases without these
+fields or tags are checked exactly as before.
+- **Assumed codes:** a case with `assumedSupplierSkus` must have the seed
+  snapshot's order with exactly those codes, one per line, under that label.
+  Only a held-out case may carry them.
+- **Inline answers:** in a case tagged `inline-answer`, the quote check drops
+  `>` lines before cutting at a header, as §4.3 does. A quote between `>`
+  lines therefore counts as the supplier's new text.
+
 ## Draft cases from "wrong reading"
 
 When a person dismisses a card with "Don't record: wrong reading", the reply
