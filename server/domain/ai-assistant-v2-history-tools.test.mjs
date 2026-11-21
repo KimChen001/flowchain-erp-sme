@@ -376,3 +376,32 @@ test('no supplier words reach the model from a reply, and the open card comes fi
   assert.equal(history.rows.find((row) => row.reply).reply.instructionsIgnored, true)
   assert.deepEqual(listed.rows.find((row) => row.supplierReply).supplierReply, { received: '2026-09-18', date: '2026-12-04', outcome: 'waiting_for_buyer' })
 })
+
+// #420 recheck: the open card is shown however many replies came after it,
+// and the newest reply of each order is read through groupBy, never every
+// reply.
+test('replies: an old open card still comes first; the newest per order uses groupBy', async () => {
+  const { supplierRepliesOfOrder, latestSupplierReplyByOrder } = await import('./ai-assistant-v2-history-tools.mjs')
+  const day = (n) => new Date(Date.UTC(2026, 8, n, 9))
+  const reply = (id, order, n, extra = {}) => ({ id, tenantId: 'T', purchaseOrderId: order, createdAt: day(n), receivedOn: `2026-09-${String(n).padStart(2, '0')}`, source: 'paste', state: 'needs_you', readingStatus: 'failed', instructionsIgnored: false, reasonCode: null, revisionIds: null, check: null, activeKey: null, ...extra })
+  const rows = [reply('R-open', 'PO-1', 1, { activeKey: 'PO-1', state: 'proposed', readingStatus: 'read', check: { lines: [{ outcome: 'proposed', proposedDate: '2026-10-04', purchaseOrderLineId: 'L1' }] } }), ...[2, 3, 4, 5, 6].map((n) => reply(`R-${n}`, 'PO-1', n)), reply('R-other', 'PO-2', 7)]
+  const calls = []
+  const matches = (row, where = {}) => row.tenantId === where.tenantId
+    && (!where.purchaseOrderId || (where.purchaseOrderId.in ? where.purchaseOrderId.in.includes(row.purchaseOrderId) : row.purchaseOrderId === where.purchaseOrderId))
+    && (!where.id?.in || where.id.in.includes(row.id)) && (!where.state?.not || row.state !== where.state.not)
+    && (!where.activeKey || Boolean(row.activeKey)) && (!where.OR || where.OR.some((entry) => entry.purchaseOrderId === row.purchaseOrderId && entry.createdAt.getTime() === row.createdAt.getTime()))
+  const supplierReply = {
+    findMany: async ({ where, take }) => { calls.push({ where, take }); const found = rows.filter((row) => matches(row, where)).sort((a, b) => b.createdAt - a.createdAt); return take ? found.slice(0, take) : found },
+    groupBy: async ({ where }) => { const latest = new Map(); for (const row of rows.filter((entry) => matches(entry, where))) if (!latest.has(row.purchaseOrderId) || latest.get(row.purchaseOrderId) < row.createdAt) latest.set(row.purchaseOrderId, row.createdAt); return [...latest].map(([purchaseOrderId, createdAt]) => ({ purchaseOrderId, _max: { createdAt } })) },
+  }
+  const context = { tenantId: 'T', prisma: { supplierReply, purchaseOrderPromiseRevision: { findMany: async () => [] } } }
+  const shown = await supplierRepliesOfOrder(context, { id: 'PO-1' })
+  assert.equal(shown.rows[0].received, '2026-09-01')
+  assert.equal(shown.rows.length, 3)
+  assert.equal(shown.more, true)
+  calls.length = 0
+  const latest = await latestSupplierReplyByOrder(context, ['PO-1', 'PO-2'])
+  assert.deepEqual([latest.get('PO-1').received, latest.get('PO-2').received], ['2026-09-01', '2026-09-07'])
+  // No read of every reply: the newest come by order and time.
+  assert.ok(calls.every((call) => call.where.activeKey || call.where.OR || call.where.id), JSON.stringify(calls.map((call) => Object.keys(call.where))))
+})

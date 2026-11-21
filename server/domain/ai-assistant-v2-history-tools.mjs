@@ -246,18 +246,22 @@ function placeReplyDetails(rows, details) {
 export const ORDER_REPLIES_SHOWN = 3
 export async function supplierRepliesOfOrder(context, { id, order = null }) {
   if (!context?.prisma?.supplierReply || !text(id)) return null
-  const rows = array(await context.prisma.supplierReply.findMany({
-    where: { tenantId: context.tenantId, purchaseOrderId: text(id), state: { not: 'superseded' } },
-    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-    take: ORDER_REPLIES_SHOWN + 1,
-    select: { id: true, createdAt: true, activeKey: true },
-  }))
-  // The card open on the order first, then the newest (#420 review).
-  const shown = [...rows].sort((a, b) => Number(Boolean(text(b.activeKey))) - Number(Boolean(text(a.activeKey)))).slice(0, ORDER_REPLIES_SHOWN)
+  const where = { tenantId: context.tenantId, purchaseOrderId: text(id), state: { not: 'superseded' } }
+  const select = { id: true, createdAt: true, activeKey: true }
+  // The card open on the order first, read on its own (an order has one at
+  // most), so it is shown however many replies came after it; then the
+  // newest (#420 review).
+  const [rows, active] = await Promise.all([
+    context.prisma.supplierReply.findMany({ where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: ORDER_REPLIES_SHOWN + 1, select }),
+    context.prisma.supplierReply.findMany({ where: { ...where, activeKey: { not: null } }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 1, select }),
+  ])
+  const open = array(active).find((row) => text(row.activeKey)) || null
+  const merged = open ? [open, ...array(rows).filter((row) => text(row.id) !== text(open.id))] : array(rows)
+  const shown = merged.slice(0, ORDER_REPLIES_SHOWN)
   const details = await supplierReplyDetails(shown.map((row) => text(row.id)), { context, found: { id: text(id), order } })
   return {
     rows: shown.filter((row) => details.has(text(row.id))).map((row) => ({ pasted: atText(row.createdAt), ...details.get(text(row.id)) })),
-    more: rows.length > ORDER_REPLIES_SHOWN,
+    more: merged.length > ORDER_REPLIES_SHOWN,
   }
 }
 
@@ -273,11 +277,22 @@ export async function latestSupplierReplyByOrder(context, orderIds = []) {
   const select = { purchaseOrderId: true, receivedOn: true, state: true, check: true, reasonCode: true, activeKey: true, createdAt: true }
   const where = { tenantId: context.tenantId, purchaseOrderId: { in: ids }, state: { not: 'superseded' } }
   // The card each order has open, else its newest reply: a paste during an
-  // outage beside an open card is not the order's reply (#420 review). One
-  // row per order each (distinct), so no reply list is read in full.
+  // outage beside an open card is not the order's reply (#420 review). An
+  // order has one open card at most (activeKey is unique). The newest of
+  // each order is found by its latest time (groupBy), then read: Prisma's
+  // distinct reads every row and drops the rest in memory (#420 recheck).
+  // A client without groupBy (the test scenarios) reads them ordered, and
+  // the first of each order is kept below.
+  const reply = context.prisma.supplierReply
+  const newestRows = async () => {
+    if (typeof reply.groupBy !== 'function') return reply.findMany({ where, orderBy: [{ purchaseOrderId: 'asc' }, { createdAt: 'desc' }], select })
+    const groups = array(await reply.groupBy({ by: ['purchaseOrderId'], where, _max: { createdAt: true } })).filter((group) => group?._max?.createdAt)
+    if (!groups.length) return []
+    return reply.findMany({ where: { ...where, OR: groups.map((group) => ({ purchaseOrderId: group.purchaseOrderId, createdAt: group._max.createdAt })) }, orderBy: [{ purchaseOrderId: 'asc' }, { createdAt: 'desc' }, { id: 'desc' }], select })
+  }
   const [active, newest] = await Promise.all([
-    context.prisma.supplierReply.findMany({ where: { ...where, activeKey: { not: null } }, distinct: ['purchaseOrderId'], orderBy: [{ purchaseOrderId: 'asc' }, { createdAt: 'desc' }], select }),
-    context.prisma.supplierReply.findMany({ where, distinct: ['purchaseOrderId'], orderBy: [{ purchaseOrderId: 'asc' }, { createdAt: 'desc' }], select }),
+    reply.findMany({ where: { ...where, activeKey: { not: null } }, orderBy: [{ purchaseOrderId: 'asc' }, { createdAt: 'desc' }], select }),
+    newestRows(),
   ])
   const latest = new Map()
   for (const row of [...array(active).filter((entry) => text(entry.activeKey)), ...array(newest)]) {
