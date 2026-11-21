@@ -127,8 +127,8 @@ export default function MasterDataPage({
   const filteredTemplates = useMemo(() => templateCatalog.filter((item) => matches([item.name, copy(item.name), item.documentType, copy(item.documentType)]) && matchesStatus(item.documentType)), [query, statusFilter, templateCatalog, copy]);
 
   function exportCurrent() {
-    if (tab === "warehouses" || tab === "tax-codes" || tab === "payment-terms") {
-      exportMasterDataCsv(tab, { warehouses: filteredWarehouses, taxCodes: filteredTaxCodes, paymentTerms: filteredPaymentTerms }, copy);
+    if (tab === "customers" || tab === "warehouses" || tab === "tax-codes" || tab === "payment-terms") {
+      exportMasterDataCsv(tab, { customers: filteredCustomers, warehouses: filteredWarehouses, taxCodes: filteredTaxCodes, paymentTerms: filteredPaymentTerms }, copy);
     }
   }
 
@@ -143,7 +143,7 @@ export default function MasterDataPage({
   }
 
   const view = VIEWS[tab];
-  const canExport = tab === "warehouses" || tab === "tax-codes" || tab === "payment-terms";
+  const canExport = tab === "customers" || tab === "warehouses" || tab === "tax-codes" || tab === "payment-terms";
   const [all, shown, statusValues] =
     tab === "customers" ? [masterData.customers.length, filteredCustomers.length, masterData.customers.map((item) => item.status)]
     : tab === "warehouses" ? [masterData.warehouses.length, filteredWarehouses.length, masterData.warehouses.map((item) => item.qaStatus)]
