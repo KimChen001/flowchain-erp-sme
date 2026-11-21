@@ -595,3 +595,41 @@ test('the line check reads codes and names as whole words, and skips quotes abou
   assert.deepEqual(at(short, 'ACM-77 ships on 28 November.', 'L2'), proposed('L2'))
   assert.deepEqual(at(short, 'ACM ships on 28 November.', 'L2'), held('L2'))
 })
+
+test('the line check reads the clause that holds the date: items left out, the rest of the order, and whole-order words next to an item', () => {
+  const lineOf = (ref, fields) => ({ ref, purchaseOrderLineId: `pol-${ref}`, sku: null, supplierSku: null, itemName: null, remaining: 10, unit: 'pcs', promisedDate: '2026-11-12', ...fields })
+  const at = (lines, reply, line, date) => outcomes(check(reply, reading([{ line, date, quote: reply.replace(/[.。]$/, ''), dateKind: 'stated' }]), { order: { ...order, lines } }))
+  const proposed = (ref, date) => [[ref, 'proposed', null, date]]
+  const held = (ref) => [[ref, 'needs_you', 'line_mismatch', null]]
+  // One item's date, and the rest of the order's.
+  const split = 'ACM-5521 ships on 10 December, everything else on 4 December.'
+  assert.deepEqual(at(order.lines, split, 'L1', '2026-12-10'), proposed('L1', '2026-12-10'))
+  assert.deepEqual(at(order.lines, split, 'L2', '2026-12-10'), held('L2'))
+  assert.deepEqual(at(order.lines, split, 'L2', '2026-12-04'), proposed('L2', '2026-12-04'))
+  assert.deepEqual(at(order.lines, split, 'L1', '2026-12-04'), held('L1'))
+  // The same with "except".
+  const except = 'Everything except ACM-5521 ships on 4 December, ACM-5521 on 10 December.'
+  assert.deepEqual(at(order.lines, except, 'L2', '2026-12-04'), proposed('L2', '2026-12-04'))
+  assert.deepEqual(at(order.lines, except, 'L1', '2026-12-04'), held('L1'))
+  assert.deepEqual(at(order.lines, except, 'L2', '2026-12-10'), held('L2'))
+  // Whole-order words next to an item are about that item.
+  const zh = [lineOf('L1', { sku: '20727', itemName: '支架' }), lineOf('L2', { itemName: '铰链' })]
+  assert.deepEqual(at(zh, '所有支架11月28日发货。', 'L2', '2026-11-28'), held('L2'))
+  assert.deepEqual(at(zh, '所有支架11月28日发货。', 'L1', '2026-11-28'), proposed('L1', '2026-11-28'))
+  assert.deepEqual(at(zh, '20727全部11月28日发出。', 'L2', '2026-11-28'), held('L2'))
+  // A whole-order clause, with an item named only as the reason, is for every line.
+  assert.deepEqual(at(zh, '因为支架要等新一批配件，我们想一起发，所有品项统一在11月28日发货。', 'L2', '2026-11-28'), proposed('L2', '2026-11-28'))
+  // A code followed by a word that is not a unit is the code.
+  assert.deepEqual(at(zh, '20727打包后11月28日发出。', 'L2', '2026-11-28'), held('L2'))
+  assert.deepEqual(at(zh, '20727包装好11月28日发出。', 'L2', '2026-11-28'), held('L2'))
+  const digits = [lineOf('L1', { supplierSku: '300' }), lineOf('L2', { itemName: '铰链' })]
+  assert.deepEqual(at(digits, '300件11月28日发出。', 'L2', '2026-11-28'), proposed('L2', '2026-11-28'))
+  // A list keeps its lines apart, and a sentence ends a clause: the next item, or "everything else", is not this date's.
+  const list = [lineOf('L1', { sku: '82494L', itemName: 'Wooden Frame' }), lineOf('L2', { sku: '82583', itemName: 'Metal Sign' })]
+  const lines = '82494L Wooden Frame - 76 pcs, dispatch 26 November\n82583 Metal Sign - 48 pcs, dispatch 1 December'
+  assert.deepEqual(at(list, lines, 'L1', '2026-11-26'), proposed('L1', '2026-11-26'))
+  assert.deepEqual(at(list, lines, 'L2', '2026-12-01'), proposed('L2', '2026-12-01'))
+  assert.deepEqual(at(list, lines, 'L2', '2026-11-26'), held('L2'))
+  const backordered = '82494L and 82583 are backordered and will now deliver on 9 December. Everything else ships on schedule.'
+  for (const ref of ['L1', 'L2']) assert.deepEqual(at(list, backordered, ref, '2026-12-09'), proposed(ref, '2026-12-09'))
+})

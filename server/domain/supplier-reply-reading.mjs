@@ -687,24 +687,34 @@ function partQuantity(sentence) {
 // model chose:
 //   - codes: our SKU and the supplier's own code (its item-supplier link),
 //     three characters or more, as a whole code: not inside a longer one
-//     ("ACM" is not in "ACM-77"), and an all-digit code is not a quantity
-//     ("300 pcs", "x 300");
+//     ("ACM" is not in "ACM-77"), and an all-digit code followed by a unit
+//     word ("300 pcs", "300件") or after "x" is a quantity;
 //   - names: the line's item name as a whole word (a plural counts; "Pen" is
 //     not in "open"), three characters or more, two for Chinese.
-// Only the quote is read, never the text around it: a sentence can name an
-// item only as the reason for a date that is for every line ("the lights
-// wait for plugs, so all 6 items ship on 28 Nov"). A quote about the whole
-// order, or one that leaves items out ("everything except 85123A"), is not
-// checked.
+// Only the quote is read, never the text around it. Inside the quote, the
+// clause that holds the date the model gave is read first ("85123A ships
+// 10 Dec, everything else 4 Dec": 10 Dec is 85123A's, 4 Dec is not):
+//   - the clause names items: the line must be one of them, or, when the
+//     clause leaves items out ("everything except 85123A"), not one of them;
+//   - it names none but leaves out the items named around it ("everything
+//     else 4 Dec"): the line must not be one of those;
+//   - it names none and is about the whole order ("6 items all ship on
+//     28 Nov", 统一): not checked, even if the quote names an item as a reason;
+//   - otherwise the items of the date's line or sentence count ("82494L
+//     Frame - 76 pcs, dispatch 26 Nov"), and failing those, the whole quote's.
 const escapeForPattern = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const CJK_NAME = /[㐀-鿿]/
 const lineCodes = (line) => [line.sku, line.supplierSku].map(text).filter((value) => value.length >= 3).map((value) => quoteForm(value))
-const QUANTITY_AFTER = /^\s*(?:pcs?|pieces?|units?|boxe?s|cartons?|ctns?|sets?|pairs?|dozens?|kgs?|件|个|箱|套|只|台|包|盒|打|条|双|支)/
+const QUANTITY_AFTER = /^\s*(?:pcs|pc|pieces?|units?|boxes|box|cartons?|ctns?|sets?|pairs?|dozens?|kgs?|kg)\b|^\s*[件个箱套盒]/
 const QUANTITY_BEFORE = /[x×*]\s*$/
 const WHOLE_ORDER = /\b(?:all (?:the )?(?:items|lines|goods|products)|all of (?:it|them|the order)|every (?:item|line)|everything|the (?:whole|entire|full) order)\b|全部|所有|整张单|整单|统一|每个品项|各品项/
-const LEAVES_OUT = /\b(?:except|excluding|other than|apart from|but not)\b|除了|除.{0,20}外|不含|不包括|以外/
+const LEAVES_OUT = /\b(?:else|the rest|remaining|except|excluding|other than|apart from|but not)\b|其余|其他|其它|剩下|除了|除.{0,20}外|以外|不含|不包括/
 // A code and a name with only this between them are one item mentioned twice.
 const SEPARATOR = /\b(?:and|or|plus|with)\b|[,，、;；&+和及与]/
+// Where a clause ends: a comma, a semicolon, the end of a sentence (". "),
+// a line break or a list marker (" - ", "•"); and where a line or sentence does.
+const CLAUSE_BREAK = /[,，;；。!?！？\n•·]|\.\s|\s[-–—]\s/g
+const SENTENCE_BREAK = /[。!?！？\n•·]|\.\s/g
 
 function codeMentions(form, code) {
   const pattern = new RegExp(`(?<![a-z0-9])(?<![a-z0-9][-_/.])${escapeForPattern(code)}(?![a-z0-9])(?![-_/.][a-z0-9])`, 'g')
@@ -729,13 +739,28 @@ export function linesNamedInQuote(order, quote) {
     names: lines.flatMap((line) => nameMentions(form, line).map((at) => ({ ref: line.ref, ...at }))),
   }
 }
-// Whether the line the model chose is not one the quote names: the quote
-// names other lines only, or one item's code and name side by side point to
-// different lines (then it is unclear which line it is for).
-export function lineNamedElsewhere(order, quote, ref) {
-  const form = quoteForm(quote)
-  if (WHOLE_ORDER.test(form) || LEAVES_OUT.test(form)) return false
-  const { codes, names } = linesNamedInQuote(order, quote)
+// The clause, and the line or sentence, of the quote around the first place
+// it writes the date given; the whole quote for both when it writes none.
+// Read with its line breaks kept (quoteForm folds them), so the items of a
+// list stay apart.
+function around(source, from, to, breaks) {
+  let start = 0
+  let end = source.length
+  for (const mark of source.matchAll(breaks)) {
+    if (mark.index + mark[0].length <= from) start = mark.index + mark[0].length
+    else if (mark.index >= to) { end = mark.index; break }
+  }
+  return source.slice(start, end)
+}
+function dateParts(quote, date, receivedOn) {
+  const source = String(quote ?? '').normalize('NFKC').replace(INVISIBLE, '').replace(/\r\n?/g, '\n').replace(/[ \t]+/g, ' ').toLowerCase()
+  const place = date ? datesWithPlaces(source, receivedOn).find((row) => row.date === date && Number.isInteger(row.index)) : null
+  if (!place) return { clause: source, sentence: source }
+  const to = place.index + place.phrase.length
+  return { clause: around(source, place.index, to, CLAUSE_BREAK), sentence: around(source, place.index, to, SENTENCE_BREAK) }
+}
+// One item's code and name side by side that point to different lines.
+function codeNameConflict(form, { codes, names }) {
   for (const code of codes) {
     for (const name of names) {
       if (code.ref === name.ref || (code.start < name.end && name.start < code.end)) continue
@@ -743,8 +768,30 @@ export function lineNamedElsewhere(order, quote, ref) {
       if (gap.length <= 20 && !SEPARATOR.test(gap)) return true
     }
   }
-  const named = new Set([...codes, ...names].map((mention) => mention.ref))
-  return named.size > 0 && !named.has(ref)
+  return false
+}
+const refsOf = ({ codes, names }) => new Set([...codes, ...names].map((mention) => mention.ref))
+// Whether the date given to line `ref` belongs, by the quote's own words, to
+// another line (see above).
+export function lineNamedElsewhere(order, quote, ref, { date = null, receivedOn = null } = {}) {
+  const parts = dateParts(quote, date, receivedOn)
+  const clause = quoteForm(parts.clause)
+  const inClause = linesNamedInQuote(order, clause)
+  const named = refsOf(inClause)
+  if (named.size) {
+    if (LEAVES_OUT.test(clause)) return named.has(ref)
+    return codeNameConflict(clause, inClause) || !named.has(ref)
+  }
+  // The clause names no item: the items around it, in its sentence, else in the quote.
+  for (const wider of [quoteForm(parts.sentence), quoteForm(quote)]) {
+    const inWider = linesNamedInQuote(order, wider)
+    const namedWider = refsOf(inWider)
+    if (!namedWider.size) continue
+    if (LEAVES_OUT.test(clause)) return namedWider.has(ref)
+    if (WHOLE_ORDER.test(clause)) return false
+    return codeNameConflict(wider, inWider) || !namedWider.has(ref)
+  }
+  return false
 }
 
 // The reading checked against the reply and the order (supplierReplyOrderSchema):
@@ -797,7 +844,7 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
     if (!open || !(Number(line.remaining) > 0)) { out.push(lineRow({ ...base, issue: 'not_open' })); continue }
     // The reply names this date by another line's code or name: the person
     // decides which line it is for, rather than code moving it.
-    const misnamed = entries.find((entry) => lineNamedElsewhere(order, entry.quote, ref))
+    const misnamed = entries.find((entry) => lineNamedElsewhere(order, entry.quote, ref, { date: entry.date, receivedOn }))
     if (misnamed) { out.push(lineRow({ ...base, outcome: 'needs_you', issue: 'line_mismatch', quote: misnamed.quote, dateKind: misnamed.dateKind })); continue }
     const resolved = entries.map((entry) => ({ entry, ...resolveDate(entry, receivedOn, line.promisedDate || null, reply) }))
     const failed = resolved.find((row) => row.issue)
