@@ -686,32 +686,65 @@ function partQuantity(sentence) {
 // The lines a quote is about by name, checked in code against the line the
 // model chose:
 //   - codes: our SKU and the supplier's own code (its item-supplier link),
-//     three characters or more, as a whole word, never inside a longer code;
-//   - names: the line's item name, three characters or more, inside the quote.
+//     three characters or more, as a whole code: not inside a longer one
+//     ("ACM" is not in "ACM-77"), and an all-digit code is not a quantity
+//     ("300 pcs", "x 300");
+//   - names: the line's item name as a whole word (a plural counts; "Pen" is
+//     not in "open"), three characters or more, two for Chinese.
 // Only the quote is read, never the text around it: a sentence can name an
 // item only as the reason for a date that is for every line ("the lights
-// wait for plugs, so all 6 items ship on 28 Nov").
-const CODE_EDGE = '[^a-z0-9]'
+// wait for plugs, so all 6 items ship on 28 Nov"). A quote about the whole
+// order, or one that leaves items out ("everything except 85123A"), is not
+// checked.
 const escapeForPattern = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const CJK_NAME = /[㐀-鿿]/
 const lineCodes = (line) => [line.sku, line.supplierSku].map(text).filter((value) => value.length >= 3).map((value) => quoteForm(value))
-const namesCode = (form, code) => new RegExp(`(?:^|${CODE_EDGE})${escapeForPattern(code)}(?:$|${CODE_EDGE})`).test(form)
+const QUANTITY_AFTER = /^\s*(?:pcs?|pieces?|units?|boxe?s|cartons?|ctns?|sets?|pairs?|dozens?|kgs?|件|个|箱|套|只|台|包|盒|打|条|双|支)/
+const QUANTITY_BEFORE = /[x×*]\s*$/
+const WHOLE_ORDER = /\b(?:all (?:the )?(?:items|lines|goods|products)|all of (?:it|them|the order)|every (?:item|line)|everything|the (?:whole|entire|full) order)\b|全部|所有|整张单|整单|统一|每个品项|各品项/
+const LEAVES_OUT = /\b(?:except|excluding|other than|apart from|but not)\b|除了|除.{0,20}外|不含|不包括|以外/
+// A code and a name with only this between them are one item mentioned twice.
+const SEPARATOR = /\b(?:and|or|plus|with)\b|[,，、;；&+和及与]/
+
+function codeMentions(form, code) {
+  const pattern = new RegExp(`(?<![a-z0-9])(?<![a-z0-9][-_/.])${escapeForPattern(code)}(?![a-z0-9])(?![-_/.][a-z0-9])`, 'g')
+  const digits = /^\d+$/.test(code)
+  return [...form.matchAll(pattern)]
+    .filter((match) => !digits || !(QUANTITY_AFTER.test(form.slice(match.index + code.length)) || QUANTITY_BEFORE.test(form.slice(0, match.index))))
+    .map((match) => ({ start: match.index, end: match.index + code.length }))
+}
+function nameMentions(form, line) {
+  const name = quoteForm(line.itemName)
+  if (CJK_NAME.test(name) ? name.length < 2 : name.length < 3) return []
+  const pattern = CJK_NAME.test(name)
+    ? new RegExp(escapeForPattern(name), 'g')
+    : new RegExp(`(?<![a-z0-9])${escapeForPattern(name)}(?:e?s)?(?![a-z0-9])`, 'g')
+  return [...form.matchAll(pattern)].map((match) => ({ start: match.index, end: match.index + match[0].length }))
+}
 export function linesNamedInQuote(order, quote) {
-  const lines = array(order?.lines)
   const form = quoteForm(quote)
+  const lines = array(order?.lines)
   return {
-    byCode: lines.filter((line) => lineCodes(line).some((code) => namesCode(form, code))),
-    byName: lines.filter((line) => { const name = quoteForm(line.itemName); return name.length >= 3 && form.includes(name) }),
+    codes: lines.flatMap((line) => lineCodes(line).flatMap((code) => codeMentions(form, code)).map((at) => ({ ref: line.ref, ...at }))),
+    names: lines.flatMap((line) => nameMentions(form, line).map((at) => ({ ref: line.ref, ...at }))),
   }
 }
-// Whether the line the model chose is not the one the quote names: the code
-// names other lines, the name names other lines, or the code and the name
-// point to different lines.
+// Whether the line the model chose is not one the quote names: the quote
+// names other lines only, or one item's code and name side by side point to
+// different lines (then it is unclear which line it is for).
 export function lineNamedElsewhere(order, quote, ref) {
-  const { byCode, byName } = linesNamedInQuote(order, quote)
-  const refs = (lines) => lines.map((line) => line.ref)
-  if (byCode.length && byName.length && !refs(byCode).some((one) => refs(byName).includes(one))) return true
-  const named = byCode.length ? byCode : byName
-  return named.length > 0 && !refs(named).includes(ref)
+  const form = quoteForm(quote)
+  if (WHOLE_ORDER.test(form) || LEAVES_OUT.test(form)) return false
+  const { codes, names } = linesNamedInQuote(order, quote)
+  for (const code of codes) {
+    for (const name of names) {
+      if (code.ref === name.ref || (code.start < name.end && name.start < code.end)) continue
+      const gap = code.end <= name.start ? form.slice(code.end, name.start) : form.slice(name.end, code.start)
+      if (gap.length <= 20 && !SEPARATOR.test(gap)) return true
+    }
+  }
+  const named = new Set([...codes, ...names].map((mention) => mention.ref))
+  return named.size > 0 && !named.has(ref)
 }
 
 // The reading checked against the reply and the order (supplierReplyOrderSchema):

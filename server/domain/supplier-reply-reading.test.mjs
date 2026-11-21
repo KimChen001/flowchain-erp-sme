@@ -566,3 +566,32 @@ test('a date the reply gives by another line\'s code or name goes to the person,
   // A line without codes or a name in the reply is not checked: the reading stands.
   assert.deepEqual(at('All of it ships on 28 November.', 'All of it ships on 28 November', 'L2'), [['L2', 'proposed', null, '2026-11-28']])
 })
+
+test('the line check reads codes and names as whole words, and skips quotes about the whole order or with items left out', () => {
+  const lineOf = (ref, fields) => ({ ref, purchaseOrderLineId: `pol-${ref}`, sku: null, supplierSku: null, itemName: null, remaining: 10, unit: 'pcs', promisedDate: '2026-11-12', ...fields })
+  const at = (lines, reply, line) => outcomes(check(reply, reading([{ line, date: '2026-11-28', quote: reply.replace(/\.$/, ''), dateKind: 'stated' }]), { order: { ...order, lines } }))
+  const proposed = (ref) => [[ref, 'proposed', null, '2026-11-28']]
+  const held = (ref) => [[ref, 'needs_you', 'line_mismatch', null]]
+  // Two items, one by code and one by name: either line may take the date.
+  for (const ref of ['L1', 'L2']) assert.deepEqual(at(order.lines, 'ACM-5521 and the hinges both ship on 28 November.', ref), proposed(ref))
+  // Items left out, or the whole order: not checked.
+  assert.deepEqual(at(order.lines, 'Everything except ACM-5521 ships on 28 November.', 'L2'), proposed('L2'))
+  assert.deepEqual(at(order.lines, '除了ACM-5521以外，其他11月28日发货。', 'L2'), proposed('L2'))
+  // A name is a whole word: "Pen" is not in "open".
+  const pens = [lineOf('L1', { itemName: 'Pen' }), lineOf('L2', { itemName: 'Hinge' })]
+  assert.deepEqual(at(pens, 'The open items ship on 28 November.', 'L2'), proposed('L2'))
+  assert.deepEqual(at(pens, 'The pens ship on 28 November.', 'L2'), held('L2'))
+  // An all-digit code next to a quantity is the quantity.
+  const digits = [lineOf('L1', { supplierSku: '300' }), lineOf('L2', { itemName: 'Hinge' })]
+  assert.deepEqual(at(digits, '300 pcs ship on 28 November.', 'L2'), proposed('L2'))
+  assert.deepEqual(at(digits, 'Hinge x 300 ships on 28 November.', 'L2'), proposed('L2'))
+  assert.deepEqual(at(digits, 'Item 300 ships on 28 November.', 'L2'), held('L2'))
+  // A two-character Chinese name counts.
+  const zh = [lineOf('L1', { itemName: '支架' }), lineOf('L2', { itemName: '铰链' })]
+  assert.deepEqual(at(zh, '支架11月28日发货。', 'L2'), held('L2'))
+  assert.deepEqual(at(zh, '支架11月28日发货。', 'L1'), proposed('L1'))
+  // A code is not part of a longer one joined by a hyphen.
+  const short = [lineOf('L1', { supplierSku: 'ACM' }), lineOf('L2', { itemName: 'Hinge' })]
+  assert.deepEqual(at(short, 'ACM-77 ships on 28 November.', 'L2'), proposed('L2'))
+  assert.deepEqual(at(short, 'ACM ships on 28 November.', 'L2'), held('L2'))
+})
