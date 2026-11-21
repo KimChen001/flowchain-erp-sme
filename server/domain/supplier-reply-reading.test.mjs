@@ -541,3 +541,28 @@ test('order data written for a machine shows the notice, and a supplier\'s own t
   const check = checkReplyReading({ order, text, receivedOn: '2026-11-19', reading: { replyKind: 'dates', lines: [{ line: 'L1', date: '2026-12-02', quote: 'All lines ship on 2 December', dateKind: 'stated' }], flags: [], reason: null } })
   assert.deepEqual(check.lines.map((line) => [line.outcome, line.proposedDate]), [['proposed', '2026-12-02']])
 })
+
+test('a date the reply gives by another line\'s code or name goes to the person, not to the line the model chose', () => {
+  const at = (reply, quote, line) => outcomes(check(reply, reading([{ line, date: '2026-11-28', quote, dateKind: 'stated' }])))
+  // The supplier's own code names the line the model chose: proposed.
+  assert.deepEqual(at('ACM-5521 ships on 28 November.', 'ACM-5521 ships on 28 November', 'L1'), [['L1', 'proposed', null, '2026-11-28']])
+  // It names another line: the person decides which line it is for.
+  assert.deepEqual(at('ACM-5521 ships on 28 November.', 'ACM-5521 ships on 28 November', 'L2'), [['L2', 'needs_you', 'line_mismatch', null]])
+  // Our SKU or the item name count the same way.
+  assert.deepEqual(at('SKU-2210 ships on 28 November.', 'SKU-2210 ships on 28 November', 'L1'), [['L1', 'needs_you', 'line_mismatch', null]])
+  assert.deepEqual(at('The hinges ship on 28 November.', 'The hinges ship on 28 November', 'L1'), [['L1', 'needs_you', 'line_mismatch', null]])
+  assert.deepEqual(at('The hinges ship on 28 November.', 'The hinges ship on 28 November', 'L2'), [['L2', 'proposed', null, '2026-11-28']])
+  // The code and the name point to different lines: whichever line was chosen, the person decides.
+  for (const line of ['L1', 'L2']) assert.deepEqual(at('ACM-5521 (the hinge) ships on 28 November.', 'ACM-5521 (the hinge) ships on 28 November', line), [[line, 'needs_you', 'line_mismatch', null]])
+  // A code inside a longer code is not that code.
+  assert.deepEqual(at('ACM-55210 ships on 28 November.', 'ACM-55210 ships on 28 November', 'L2'), [['L2', 'proposed', null, '2026-11-28']])
+  // Only the quote is read: an item named around it, as the reason for a date
+  // that is for every line, does not move the date.
+  assert.deepEqual(at('ACM-5521 waits for plugs, so all items ship on 28 November.', 'all items ship on 28 November', 'L2'), [['L2', 'proposed', null, '2026-11-28']])
+  // A quote naming two lines' codes covers either of them.
+  assert.deepEqual(at('ACM-5521 and SKU-2210 ship on 28 November.', 'ACM-5521 and SKU-2210 ship on 28 November', 'L2'), [['L2', 'proposed', null, '2026-11-28']])
+  // Next to Chinese text, a code is still a whole word.
+  assert.deepEqual(outcomes(check('ACM-5521已安排11月28日发货。', reading([{ line: 'L2', date: '2026-11-28', quote: 'ACM-5521已安排11月28日发货', dateKind: 'stated' }]))), [['L2', 'needs_you', 'line_mismatch', null]])
+  // A line without codes or a name in the reply is not checked: the reading stands.
+  assert.deepEqual(at('All of it ships on 28 November.', 'All of it ships on 28 November', 'L2'), [['L2', 'proposed', null, '2026-11-28']])
+})

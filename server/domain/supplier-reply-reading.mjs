@@ -683,6 +683,37 @@ function partQuantity(sentence) {
   return first ? Number(first[1] ?? first[2]) : null
 }
 
+// The lines a quote is about by name, checked in code against the line the
+// model chose:
+//   - codes: our SKU and the supplier's own code (its item-supplier link),
+//     three characters or more, as a whole word, never inside a longer code;
+//   - names: the line's item name, three characters or more, inside the quote.
+// Only the quote is read, never the text around it: a sentence can name an
+// item only as the reason for a date that is for every line ("the lights
+// wait for plugs, so all 6 items ship on 28 Nov").
+const CODE_EDGE = '[^a-z0-9]'
+const escapeForPattern = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const lineCodes = (line) => [line.sku, line.supplierSku].map(text).filter((value) => value.length >= 3).map((value) => quoteForm(value))
+const namesCode = (form, code) => new RegExp(`(?:^|${CODE_EDGE})${escapeForPattern(code)}(?:$|${CODE_EDGE})`).test(form)
+export function linesNamedInQuote(order, quote) {
+  const lines = array(order?.lines)
+  const form = quoteForm(quote)
+  return {
+    byCode: lines.filter((line) => lineCodes(line).some((code) => namesCode(form, code))),
+    byName: lines.filter((line) => { const name = quoteForm(line.itemName); return name.length >= 3 && form.includes(name) }),
+  }
+}
+// Whether the line the model chose is not the one the quote names: the code
+// names other lines, the name names other lines, or the code and the name
+// point to different lines.
+export function lineNamedElsewhere(order, quote, ref) {
+  const { byCode, byName } = linesNamedInQuote(order, quote)
+  const refs = (lines) => lines.map((line) => line.ref)
+  if (byCode.length && byName.length && !refs(byCode).some((one) => refs(byName).includes(one))) return true
+  const named = byCode.length ? byCode : byName
+  return named.length > 0 && !refs(named).includes(ref)
+}
+
 // The reading checked against the reply and the order (supplierReplyOrderSchema):
 // each line proposed, for the person, dropped or confirmed, the flags whose
 // quotes are in the reply, and the card's state.
@@ -731,6 +762,10 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
     const line = byRef.get(ref)
     const base = { ref, purchaseOrderLineId: line.purchaseOrderLineId, currentDate: line.promisedDate || null, quote: entries[0].quote, dateKind: entries[0].dateKind }
     if (!open || !(Number(line.remaining) > 0)) { out.push(lineRow({ ...base, issue: 'not_open' })); continue }
+    // The reply names this date by another line's code or name: the person
+    // decides which line it is for, rather than code moving it.
+    const misnamed = entries.find((entry) => lineNamedElsewhere(order, entry.quote, ref))
+    if (misnamed) { out.push(lineRow({ ...base, outcome: 'needs_you', issue: 'line_mismatch', quote: misnamed.quote, dateKind: misnamed.dateKind })); continue }
     const resolved = entries.map((entry) => ({ entry, ...resolveDate(entry, receivedOn, line.promisedDate || null, reply) }))
     const failed = resolved.find((row) => row.issue)
     if (failed) { out.push(lineRow({ ...base, outcome: 'needs_you', issue: failed.issue, quote: failed.entry.quote, dateKind: failed.entry.dateKind, readings: failed.readings || null })); continue }

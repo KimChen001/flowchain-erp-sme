@@ -34,16 +34,31 @@ test('a perfect reading is ok and counts as a correct dated case; the quoted cha
 })
 
 test('a wrong date that passes the checks is a hard fail', async () => {
-  // 20727's date given to 20724: the quote is in the reply and writes that day.
+  // The unmatched 20725's date given to 20724: the quote is in the reply,
+  // writes that day, and names no line of this order, so no check stops it.
+  const kase = caseOf('en-uci-0008-per-item-unmatched')
+  const model = mockModel(reading([
+    { line: 'L1', date: '2026-12-09', quote: '9th December', dateKind: 'stated' },
+    { line: 'L2', date: '2026-12-02', quote: '- 20727 Lunch bags (black skull): 2nd December, waiting on the zips', dateKind: 'stated' },
+  ]))
+  const score = scoreSupplierReplyCase(kase, await runSupplierReplyCase(kase, model.callModel))
+  assert.equal(score.verdict, 'hard_fail')
+  assert.deepEqual(score.hardFails, [{ ref: 'L1', date: '2026-12-09', reasons: ['wrong date: expected 2026-11-24', 'never to propose: the date of 20725, an item not on this order'] }])
+  assert.equal(score.datedCorrect, false)
+})
+
+test('a date given to the wrong line by a quote that names the other line\'s SKU is held for the person: a miss, not a hard fail', async () => {
+  // 20727's date given to 20724: the quote names 20727, the other line's SKU.
   const kase = caseOf('en-uci-0008-per-item-unmatched')
   const model = mockModel(reading([
     { line: 'L1', date: '2026-12-02', quote: '- 20727 Lunch bags (black skull): 2nd December, waiting on the zips', dateKind: 'stated' },
     { line: 'L2', date: '2026-12-02', quote: '- 20727 Lunch bags (black skull): 2nd December, waiting on the zips', dateKind: 'stated' },
   ]))
-  const score = scoreSupplierReplyCase(kase, await runSupplierReplyCase(kase, model.callModel))
-  assert.equal(score.verdict, 'hard_fail')
-  assert.deepEqual(score.hardFails, [{ ref: 'L1', date: '2026-12-02', reasons: ['wrong date: expected 2026-11-24'] }])
-  assert.equal(score.datedCorrect, false)
+  const run = await runSupplierReplyCase(kase, model.callModel)
+  assert.deepEqual(run.check.lines.map((line) => [line.ref, line.outcome, line.issue]), [['L1', 'needs_you', 'line_mismatch'], ['L2', 'proposed', null]])
+  const score = scoreSupplierReplyCase(kase, run)
+  assert.equal(score.verdict, 'miss')
+  assert.deepEqual(score.hardFails, [])
 })
 
 test('a proposed date from the case\'s mustNotPropose is a hard fail', () => {
