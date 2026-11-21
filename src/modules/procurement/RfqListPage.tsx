@@ -149,6 +149,7 @@ export function RfqListPage() {
       <ListSearchCard
         title={tr("searchTitle")}
         subtitle={tr("searchSubtitle")}
+        activeFilters={[status, quotes, due].filter(Boolean).length}
         actions={<>
           <ResetButton onClick={reset} />
           <RefreshButton onClick={() => void load()} />

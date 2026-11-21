@@ -112,6 +112,7 @@ export function ReceivingListPage() {
         subtitle={canPrepareReceipt
           ? tr("点击编号查看收货、过账与库存影响。点击“新建收货单”选择到货的采购订单，或在采购订单上点击“收货”。", "Select a number to review receiving, posting, and inventory impact. To record a delivery, use New receipt and choose its purchase order, or Receive on the purchase order.")
           : tr("点击编号查看收货、过账与库存影响。", "Select a number to review receiving, posting, and inventory impact.")}
+        activeFilters={[supplier, warehouse, posting].filter(Boolean).length}
         actions={<>
           <ResetButton onClick={reset} />
           <RefreshButton onClick={() => void load()} />
@@ -165,7 +166,7 @@ export function ReceivingListPage() {
               {state === "error" && <ListStateRow colSpan={8} state="error" title={tr("收货记录加载失败", "Could not load receiving records")} onRetry={() => void load()} />}
               {state === "loaded" && shown.length === 0 && (
                 rows.length === 0
-                  ? <ListStateRow colSpan={8} state="empty" title={tr("当前工作区暂无收货记录", "No receiving records in this workspace")} detail={tr("在采购订单上收货后，收货单会显示在这里。", "Receipts appear here after you receive against a purchase order.")} />
+                  ? <ListStateRow colSpan={8} state="empty" title={tr("当前工作区暂无收货记录", "No receipts yet")} detail={tr("在采购订单上收货后，收货单会显示在这里。", "Receipts appear here after you receive against a purchase order.")} />
                   : <ListStateRow colSpan={8} state="empty" title={tr("没有符合筛选条件的收货单", "No receipts match these filters")} />
               )}
               {state === "loaded" && pageRows.map((row, index) => (

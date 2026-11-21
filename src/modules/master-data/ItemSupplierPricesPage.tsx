@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { apiJson } from "../../lib/api-client";
 import { A, Card, Field, inputStyle } from "../../components/ui";
-import { StatusChip, statusToneOf } from "../../components/ui/listLayout";
+import { ListSearchCard, ListStateBlock, RefreshButton, ResetButton, StatusChip, listButtonClass, statusToneOf } from "../../components/ui/listLayout";
 import {
   listTableCardsRef,
   tableBodyTextClass,
@@ -119,19 +119,16 @@ export default function ItemSupplierPricesPage() {
 
   return (
     <div className="space-y-5" data-testid="item-supplier-prices">
-      <Card className="p-5">
-        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="fc-section-title" style={{ color: A.label }}>{copy("Supplier price search")}</h2>
-            <div className="mt-1 text-xs" style={{ color: A.sub }}>{copy("Read only. Search every item's suppliers by item, supplier or supplier SKU.")}</div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={resetFilters} className="h-8 rounded-lg px-3 text-xs font-medium" style={{ background: A.gray6, color: A.label }}>{copy("Reset")}</button>
-            <button type="button" onClick={() => load(page)} className="h-8 rounded-lg px-3 text-xs font-medium" style={{ background: A.gray6, color: A.label }}>{copy("Refresh")}</button>
-            <DataImportLink type="item-suppliers" className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700" />
-          </div>
-        </div>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+      <ListSearchCard
+        title={copy("Supplier price search")}
+        subtitle={copy("Read only. Search every item's suppliers by item, supplier or supplier SKU.")}
+        activeFilters={[supplierId, itemId].filter(Boolean).length}
+        actions={<>
+          <ResetButton onClick={resetFilters} />
+          <RefreshButton onClick={() => load(page)} />
+          <DataImportLink type="item-suppliers" className={listButtonClass.secondary} />
+        </>}
+      >
           <Field label={copy("Search")}>
             <input aria-label={copy("Search supplier prices")} placeholder={copy("SKU, item, supplier or supplier SKU")} value={query} onChange={(event) => setQuery(event.target.value)} style={inputStyle} />
           </Field>
@@ -147,11 +144,10 @@ export default function ItemSupplierPricesPage() {
               {items.map((item) => <option key={item.id} value={item.id}>{item.sku}{item.itemName ? ` · ${item.itemName}` : ""}</option>)}
             </select>
           </Field>
-        </div>
-      </Card>
+      </ListSearchCard>
 
       <Card>
-        <div className="flex items-center gap-3 px-5 py-3.5" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
+        <div className="flex items-center gap-3 px-4 py-3.5 sm:px-5" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
           <div>
             <div className="text-sm font-semibold" style={{ color: A.label }}>{copy("Supplier price list")}</div>
             <div className="mt-0.5 text-[11px]" style={{ color: A.sub }} data-testid="item-supplier-prices-count">
@@ -159,21 +155,15 @@ export default function ItemSupplierPricesPage() {
             </div>
           </div>
         </div>
-        {!pricesVisible && <p className="px-5 pt-3 text-[11px]" style={{ color: A.sub }} data-testid="item-supplier-prices-hidden">{copy("Reference prices are hidden for your role.")}</p>}
-        {truncated && <p className="px-5 pt-1 text-[11px] text-amber-700">{copy("Not every link could be read at once. Choose a supplier or an item to see all of its links.")}</p>}
+        {!pricesVisible && <p className="px-4 pt-3 text-[11px] sm:px-5" style={{ color: A.sub }} data-testid="item-supplier-prices-hidden">{copy("Reference prices are hidden for your role.")}</p>}
+        {truncated && <p className="px-4 pt-1 text-[11px] text-amber-700 sm:px-5">{copy("Not every link could be read at once. Choose a supplier or an item to see all of its links.")}</p>}
+        {/* Loading, a load error and nothing to show as every list shows them. */}
         {error ? (
-          <div className="p-8 text-center">
-            <div className="text-sm" style={{ color: A.danger }}>{copy("Could not load supplier prices.")}</div>
-            <button type="button" onClick={() => load(page)} className="mt-3 text-xs text-blue-600">{copy("Try again")}</button>
-          </div>
+          <ListStateBlock state="error" title={copy("Could not load supplier prices.")} onRetry={() => load(page)} />
         ) : loading && rows.length === 0 ? (
-          <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{copy("Loading supplier prices…")}</div>
+          <ListStateBlock state="loading" />
         ) : rows.length === 0 ? (
-          <div className="py-14 text-center text-sm" style={{ color: A.sub }} data-testid="item-supplier-prices-empty">
-            <span className="font-semibold" style={{ color: A.label }}>{copy(filtered ? "No supplier prices match these filters" : "No supplier prices yet")}</span>
-            <br />
-            <span className="text-xs">{copy(filtered ? "Reset the filters to see every link." : "Link items to a supplier under Supplied items on the supplier's page, or import a file of item–supplier links.")}</span>
-          </div>
+          <ListStateBlock state="empty" title={copy(filtered ? "No supplier prices match these filters" : "No supplier prices yet")} detail={copy(filtered ? "Reset the filters to see every link." : "Link items to a supplier under Supplied items on the supplier's page, or import a file of item–supplier links.")} testId="item-supplier-prices-empty" />
         ) : (
           <div className={tableScrollClass} ref={listTableCardsRef}>
             <table className={`w-full min-w-[1040px] text-left ${tableBodyTextClass}`} data-testid="item-supplier-prices-table">

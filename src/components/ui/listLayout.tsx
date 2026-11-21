@@ -236,26 +236,42 @@ export function RowPopover({ summary, summaryClassName, panelClassName, closeOnC
 
 // A table row standing in for the rows: loading, a load error with Retry, or
 // nothing to show.
-export function ListStateRow({ colSpan, state, title, detail, onRetry }: {
-  colSpan: number;
+type ListState = {
   state: "loading" | "error" | "empty";
   title?: string;
   detail?: string;
   onRetry?: () => void;
-}) {
+  testId?: string;
+};
+
+function ListStateContent({ state, title, detail, onRetry }: ListState) {
   const say = useListCopy();
+  if (state === "loading") return <>{say("loading")}</>;
   return (
-    <tr>
+    <>
+      {title && <div className="font-semibold" style={{ color: A.label }}>{title}</div>}
+      {detail && <div className="mt-1 text-xs">{detail}</div>}
+      {state === "error" && onRetry && <button type="button" onClick={onRetry} className="mt-3 text-xs font-semibold text-blue-600">{say("retry")}</button>}
+    </>
+  );
+}
+
+export function ListStateRow({ colSpan, testId, ...content }: ListState & { colSpan: number }) {
+  return (
+    <tr data-testid={testId}>
       <td colSpan={colSpan} className="px-4 py-12 text-center text-sm" style={{ color: A.sub }}>
-        {state === "loading" ? say("loading") : (
-          <>
-            {title && <div className="font-semibold" style={{ color: A.label }}>{title}</div>}
-            {detail && <div className="mt-1 text-xs">{detail}</div>}
-            {state === "error" && onRetry && <button type="button" onClick={onRetry} className="mt-3 text-xs font-semibold text-blue-600">{say("retry")}</button>}
-          </>
-        )}
+        <ListStateContent {...content} />
       </td>
     </tr>
+  );
+}
+
+// The same states in a list card that draws no table until its rows arrive.
+export function ListStateBlock({ testId, ...content }: ListState) {
+  return (
+    <div className="px-4 py-12 text-center text-sm" style={{ color: A.sub }} role={content.state === "error" ? "alert" : undefined} data-testid={testId}>
+      <ListStateContent {...content} />
+    </div>
   );
 }
 

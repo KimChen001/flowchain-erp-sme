@@ -757,6 +757,7 @@ function FinanceList({
         <ListSearchCard
           title={tr("searchTitle")}
           subtitle={tr("searchSubtitle")}
+          activeFilters={[supplier, status, variance].filter(Boolean).length}
           actions={<>
             <ResetButton onClick={reset} />
             <RefreshButton onClick={load} />
@@ -784,6 +785,7 @@ function FinanceList({
         <ListSearchCard
           title={tr(kind === "payable" ? "payableSearch" : kind === "credit" ? "creditSearch" : "matchSearch")}
           subtitle={tr(kind === "payable" ? "payableSearchSubtitle" : kind === "credit" ? "creditSearchSubtitle" : "matchSearchSubtitle")}
+          activeFilters={status ? 1 : 0}
           actions={<>
             <ResetButton onClick={reset} />
             <RefreshButton onClick={load} />

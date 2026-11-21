@@ -51,7 +51,7 @@ const COPY = {
   noSupplier: ["No supplier linked", "未关联供应商"],
   loading: ["Loading three-way matches…", "正在读取三单匹配…"],
   loadFailed: ["Three-way matches could not be loaded", "三单匹配加载失败"],
-  empty: ["No matching records in this workspace", "当前工作区暂无可匹配记录"],
+  empty: ["No three-way matches yet", "暂无三单匹配记录"],
   emptyDetail: ["A match needs a real purchase order, receipt and supplier invoice.", "需要真实采购订单、收货单和采购发票后才能形成匹配。"],
   noMatch: ["No matches fit these filters", "没有符合筛选条件的匹配记录"],
   actions: ["Actions", "操作"],
@@ -132,6 +132,7 @@ export function ThreeWayMatchListPage() {
       <ListSearchCard
         title={tr("searchTitle")}
         subtitle={tr("searchSubtitle")}
+        activeFilters={[supplier, result].filter(Boolean).length}
         actions={<>
           <ResetButton onClick={reset} />
           <RefreshButton onClick={() => void load()} />

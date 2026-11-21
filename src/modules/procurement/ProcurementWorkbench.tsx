@@ -214,6 +214,7 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
       <ListSearchCard
         title={tr("searchTitle")}
         subtitle={tr("searchSubtitle")}
+        activeFilters={[type, queue === "all" ? "" : queue, status].filter(Boolean).length}
         actions={<>
           <ResetButton onClick={reset} />
           <RefreshButton onClick={() => void load()} />
