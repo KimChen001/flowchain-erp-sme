@@ -91,6 +91,7 @@ export const SUPPLIER_REPLY_COPY = {
   issue_before_reply: ["the date is before the reply date", "日期早于回复日期"],
   issue_too_far: ["the date is more than a year after the reply", "日期晚于回复日期一年以上"],
   issue_unknown_line: ["not a line of this order", "不是本订单的行"],
+  issue_inline_answer: ["read from inside the quoted email: check the date and the line", "读自引用邮件内部：请核对日期和对应的行"],
   issue_not_open: ["nothing left to receive on this line", "该行已无待收数量"],
   issue_unchanged: ["same as the current date", "与当前交期相同"],
   issue_split_incomplete: ["the parts do not cover what is still open", "分批数量未覆盖剩余待收数量"],

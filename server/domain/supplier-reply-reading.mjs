@@ -70,11 +70,95 @@ const HEADER_NEXT = /^\s*(?:Sent|Date|发送时间|时间)\s*[:：]/i
 // The signature delimiter is "-- " with its space (RFC 3676); a bare "--" is
 // the supplier's own text.
 const SIGNATURE = /^-- $/
+// Markers after which mail clients quote the earlier message line by line
+// ("On … wrote:", 在…写道): a supplier may answer inside it, between the
+// quoted lines (an inline reply).
+const QUOTING_MARKERS = [THREAD_START[0], THREAD_START[5]]
+// Inside such a quote: a quoted line (">", the full-width "＞", or "|").
+const QUOTED = /^\s*[>＞|]/
+// Where the supplier's own text inside a quote ends: a signature, an older
+// message (a marker, any header line, a forwarded message), a disclaimer or
+// a client's footer.
+const INLINE_STOP = [
+  SIGNATURE,
+  /^\s*(?:From|To|Cc|Sent|Date|Subject|发件人|收件人|抄送|发送时间|时间|日期|主题)\s*[:：]/i,
+  /^\s*Begin forwarded message\s*:?\s*$/i,
+  /^\s*(?:this (?:e-?mail|message)\b|confidential|disclaimer|privileged|sent from my|get outlook for|免责声明|本邮件|此邮件|发自我的)/i,
+]
+// A line that ends a sentence (so the line after a blank is not its wrap).
+const SENTENCE_DONE = /[.?!。？！:：)）]\s*$/
+// Taken out of the pointer to our question, so no date of ours, written or
+// relative, comes with an answer: digits, month and weekday names, words of
+// time ("next", "week", "end"), number words and ordinals, and Chinese date
+// characters and numerals.
+const POINTER_DATE_WORDS = /\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:r(?:s(?:day)?)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?|today|tonight|tomorrow|yesterday|next|this|last|coming|weeks?|weekend|fortnight|months?|years?|days?|end|early|mid|late|beginning|start|asap|eod|eow|eom)\b\.?/gi
+// Number words and ordinals ("twenty-eighth", "the 28th" once its digits are gone).
+const POINTER_NUMBER_WORDS = /\b(?:(?:twenty|thirty)[- ]?)?(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|one|two|three|four|five|six|seven|eight|nine)\b|\b(?:tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty)\b|(?<=\s|^)(?:st|nd|rd|th)\b/gi
+const POINTER_DATE_CHARS = /[0-9０-９年月日号號周週星期礼禮拜今明后後昨前天下本上底初旬内內一二三四五六七八九十〇零两兩百千]/g
+const pointerOf = (quoted) => quoted.replace(POINTER_DATE_CHARS, '').replace(POINTER_DATE_WORDS, ' ').replace(POINTER_NUMBER_WORDS, ' ').replace(/\(\s*\)/g, '').replace(/\s+([,.?!，。？！)）])/g, '$1').replace(/\s+/g, ' ').trim().slice(0, 60)
+
+// The supplier's answers inside a ">"-quoted earlier message, read only
+// where they cannot be our own text:
+//   - the quote must look like one: two quoted lines or more, and at least
+//     as many quoted lines as other lines (a pasted HTML email with one ">"
+//     line is not an inline reply);
+//   - an answer starts after a blank line that follows a quoted line or an
+//     answer. A line right below a quoted line, with no blank between, is
+//     taken as the quote's own text broken out or re-wrapped, and so is
+//     everything after it up to a blank line. A line that starts in lower
+//     case below an unfinished quoted line is a wrap too;
+//   - a line that is in our sent chase is ours;
+//   - reading stops at a signature, an older message, a disclaimer or a
+//     footer (INLINE_STOP, the thread markers, a wrapped "On … / wrote:").
+// Each answer keeps a pointer to the quoted line it answers, without its
+// digits or date words (so no date of ours comes with it): "[re: Brackets?] 3 Dec".
+// Returns the answers as read, and the indexes of the region's lines read.
+function inlineAnswers(region, sent = []) {
+  const quoted = region.filter((line) => QUOTED.test(line)).length
+  const stop = region.findIndex((line, at) => !QUOTED.test(line) && (INLINE_STOP.some((pattern) => pattern.test(line)) || THREAD_START.some((pattern) => pattern.test(line)) || (/^\s*On\b/i.test(line) && /^\s*wrote:\s*$/i.test(region[at + 1] || ''))))
+  const body = stop < 0 ? region : region.slice(0, stop)
+  const others = body.filter((line) => line.trim() && !QUOTED.test(line)).length
+  if (quoted < 2 || quoted < others || !body.some((line) => QUOTED.test(line))) return { answers: [], read: [] }
+  const ours = sent.map(quoteForm).filter(Boolean)
+  const isOurs = (line) => { const form = quoteForm(line); return form.length >= 6 && ours.some((chase) => chase.includes(form)) }
+  const answers = []
+  const read = []
+  let state = 'before'
+  let lastQuoted = ''
+  let block = null
+  for (let at = 0; at < body.length; at += 1) {
+    const line = body[at]
+    if (QUOTED.test(line)) { state = 'quoted'; lastQuoted = line.replace(QUOTED, '').trim(); block = null; continue }
+    if (!line.trim()) { if (state !== 'before') state = state === 'continuation' ? 'gap-after-continuation' : `gap-after-${state}`; block = null; continue }
+    const startsAnswer = state === 'gap-after-quoted' || state === 'gap-after-answer'
+    const wrap = state === 'gap-after-quoted' && /^[a-z]/.test(line.trim()) && !SENTENCE_DONE.test(lastQuoted)
+    if (state === 'answer' || (startsAnswer && !wrap)) {
+      if (isOurs(line)) { state = 'continuation'; block = null; continue }
+      if (!block) {
+        const question = pointerOf(lastQuoted)
+        block = { question }
+        answers.push(question ? `[re: ${question}] ${line.trim()}` : line.trim())
+      } else answers.push(line.trim())
+      read.push(at)
+      state = 'answer'
+      continue
+    }
+    // Right below a quoted line, or continuing such a line: the quote's own text.
+    state = 'continuation'
+    block = null
+  }
+  return { answers, read }
+}
 
 // The reply as the reading sees it: invisible characters stripped, the quoted
 // earlier message and a trailing signature dropped (kept apart for display,
-// never read), whitespace normalised so quotes can be found again.
-export function cleanSupplierReply(value) {
+// never read), whitespace normalised so quotes can be found again. The
+// supplier's answers inside a ">"-quoted earlier message are read (see
+// inlineAnswers above); `sent` is our sent chase, whose lines are never
+// read as answers. `inline` lists the answers as they stand in `text`;
+// `inlineFrom` is where they start in `text` (null without any), for the
+// check: a date quoted from there, or across into there, goes to the person.
+export function cleanSupplierReply(value, { sent = [] } = {}) {
   const raw = String(value ?? '').slice(0, SUPPLIER_REPLY_LIMITS.text * 2)
   let invisibleRemoved = 0
   // The supplier's characters are kept as written (full-width punctuation
@@ -87,13 +171,24 @@ export function cleanSupplierReply(value) {
   const visible = unhidden.replace(/<!--[\s\S]*?(?:-->|$)/g, (comment) => { comments.push(comment); return '' }).replace(/[ 　]/g, ' ')
   const lines = visible.split('\n')
   let cut = lines.length
+  // Where the marker ends, when it is one after which the earlier message is
+  // quoted with ">" (an inline reply may follow); null otherwise.
+  let quotingFrom = null
   for (let at = 0; at < lines.length && cut === lines.length; at += 1) {
     const line = lines[at]
-    if (THREAD_START.some((pattern) => pattern.test(line))) cut = at
+    if (THREAD_START.some((pattern) => pattern.test(line))) {
+      cut = at
+      if (QUOTING_MARKERS.some((pattern) => pattern.test(line))) quotingFrom = at + 1
     // "On Mon, 17 Nov 2026 at 10:00, Kim <kim@x.com>" wrapped before "wrote:".
-    else if (/^\s*On\b/i.test(line) && /^\s*wrote:\s*$/i.test(lines[at + 1] || '')) cut = at
-    else if (HEADER_FROM.test(line) && lines.slice(at + 1, at + 5).some((next) => HEADER_NEXT.test(next))) cut = at
+    } else if (/^\s*On\b/i.test(line) && /^\s*wrote:\s*$/i.test(lines[at + 1] || '')) {
+      cut = at
+      quotingFrom = at + 2
+    } else if (HEADER_FROM.test(line) && lines.slice(at + 1, at + 5).some((next) => HEADER_NEXT.test(next))) cut = at
   }
+  // The supplier's answers written inside our quoted chase are read; the
+  // quoted lines, with our dates, are not.
+  const found = quotingFrom === null ? { answers: [], read: [] } : inlineAnswers(lines.slice(quotingFrom), array(sent))
+  const inline = new Set(found.read.map((at) => at + quotingFrom))
   const kept = []
   const dropped = []
   let signature = false
@@ -103,10 +198,18 @@ export function cleanSupplierReply(value) {
     if (/^\s*>/.test(line)) { dropped.push(line); continue }
     kept.push(line)
   }
-  const tidy = kept.map((line) => line.replace(/[ \t]+/g, ' ').trim()).join('\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, SUPPLIER_REPLY_LIMITS.text)
-  // In reading order: a signature or quoted lines, then the earlier message.
-  const hidden = [...dropped, ...lines.slice(cut), ...comments].join('\n').trim()
-  return { text: tidy, quoted: hidden || null, quotedTextHidden: Boolean(hidden), invisibleRemoved }
+  // Inline answers follow what the supplier wrote above the quote, each on its own line.
+  const answers = found.answers.map((line) => line.replace(/[ \t]+/g, ' ').trim())
+  const top = kept.map((line) => line.replace(/[ \t]+/g, ' ').trim()).join('\n').replace(/\n{3,}/g, '\n\n').trim()
+  const joined = answers.length ? (top ? `${top}\n\n${answers.join('\n')}` : answers.join('\n')) : top
+  const tidy = joined.slice(0, SUPPLIER_REPLY_LIMITS.text)
+  const startsAt = answers.length ? (top ? top.length + 2 : 0) : null
+  const inlineFrom = startsAt !== null && startsAt < tidy.length ? startsAt : null
+  // In reading order: a signature or quoted lines, then the earlier message
+  // without the inline answers (they are read, above).
+  const earlier = lines.slice(cut).filter((_line, at) => !inline.has(at + cut))
+  const hidden = [...dropped, ...earlier, ...comments].join('\n').trim()
+  return { text: tidy, quoted: hidden || null, quotedTextHidden: Boolean(hidden), invisibleRemoved, inlineAnswers: answers.length, inline: answers, inlineFrom }
 }
 
 // Whether the reply holds text addressed to the system rather than to the
@@ -686,7 +789,19 @@ function partQuantity(sentence) {
 // The reading checked against the reply and the order (supplierReplyOrderSchema):
 // each line proposed, for the person, dropped or confirmed, the flags whose
 // quotes are in the reply, and the card's state.
-export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
+export function checkReplyReading({ order, text: reply, receivedOn, reading, inlineFrom = null }) {
+  // The answers read from inside the quoted email start at inlineFrom in the
+  // reply (cleanSupplierReply). A quote that reaches into them, across a line
+  // break or across from the text above, is from them: its date is never
+  // proposed, only offered to the person.
+  const replyForm = quoteForm(reply)
+  const inlineStart = Number.isInteger(inlineFrom) && inlineFrom >= 0 ? quoteForm(String(reply ?? '').slice(0, inlineFrom)).length : null
+  const fromInline = (quote) => {
+    const part = quoteForm(quote)
+    if (inlineStart === null || !part) return false
+    for (let at = replyForm.indexOf(part); at >= 0; at = replyForm.indexOf(part, at + 1)) if (at + part.length > inlineStart) return true
+    return false
+  }
   const open = SUPPLIER_REPLY_ORDER_STATES.includes(text(order?.status))
   const byRef = new Map(array(order?.lines).map((line) => [line.ref, line]))
   const openLines = array(order?.lines).filter((line) => Number(line.remaining) > 0).length
@@ -731,6 +846,8 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
     const line = byRef.get(ref)
     const base = { ref, purchaseOrderLineId: line.purchaseOrderLineId, currentDate: line.promisedDate || null, quote: entries[0].quote, dateKind: entries[0].dateKind }
     if (!open || !(Number(line.remaining) > 0)) { out.push(lineRow({ ...base, issue: 'not_open' })); continue }
+    const inlineEntry = entries.find((entry) => fromInline(entry.quote))
+    if (inlineEntry) { out.push(lineRow({ ...base, outcome: 'needs_you', issue: 'inline_answer', quote: inlineEntry.quote, dateKind: inlineEntry.dateKind })); continue }
     const resolved = entries.map((entry) => ({ entry, ...resolveDate(entry, receivedOn, line.promisedDate || null, reply) }))
     const failed = resolved.find((row) => row.issue)
     if (failed) { out.push(lineRow({ ...base, outcome: 'needs_you', issue: failed.issue, quote: failed.entry.quote, dateKind: failed.entry.dateKind, readings: failed.readings || null })); continue }
