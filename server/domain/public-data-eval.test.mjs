@@ -12,6 +12,7 @@ import { buildCases, inventoryWorth, itemEconomics, readReference } from '../../
 import { answerLanguage, countWordsIn, dateForms, englishRun, numbersIn, repeatedPart, scoreAnswer, tidyProblems } from '../../tests/ai-eval/v2-public/score.mjs'
 import { uciEconomics, uciFacts } from '../../tests/ai-eval/v2-public/uci-facts.mjs'
 import { buildUciCases, lastWholeMonths } from '../../tests/ai-eval/v2-public/uci-cases.mjs'
+import { WALKTHROUGH_DEMO_PORTS, setupRefusal } from '../../tests/ai-eval/v2-public/setup-guard.mjs'
 
 // 90 days averaging 54.49 a day, as FOODS_3_090 does in the M5 window.
 const steadyDaily = Array.from({ length: 90 }, (_, index) => (index < 44 ? 54 : 55))
@@ -342,7 +343,8 @@ test('the UCI figures with purchase requests, orders still being filled and revi
   const byId = Object.fromEntries(cases.map((row) => [row.id, row]))
   assert.deepEqual(byId['invoice-quantity-en'].expect.matches.map((entry) => entry.label), ['says there is none'])
   assert.deepEqual(byId['invoice-price-en'].expect.mentions, [{ label: 'INV-G-0001', any: ['INV-G-0001'] }])
-  const records = cases.slice(cases.findIndex((row) => row.id === 'requests-rejected-en'))
+  // The supplier reply cases follow the records cases (#363 §4.10).
+  const records = cases.slice(cases.findIndex((row) => row.id === 'requests-rejected-en'), cases.findIndex((row) => row.id === 'reply-said-en'))
   // No request waits for approval or is approved here, and the one order
   // being filled is reserved, so those cases are left out.
   assert.deepEqual(records.map((row) => row.id), ['requests-rejected-en', 'requests-draft-zh', 'open-sales-en', 'reviewed-differences-en', 'tier-one-en'])
@@ -354,6 +356,48 @@ test('the UCI figures with purchase requests, orders still being filled and revi
   assert.deepEqual(byId['tier-one-en'].expect.mentions, [{ label: 'Acme Home Goods', any: ['Acme Home Goods'] }])
   // Without the C12 documents in the plan there are no records cases.
   assert.equal(buildUciCases(uciFacts(smallPlan())).filter((row) => row.kind === 'records').length, 0)
+})
+
+// #363 §4.10: a supplier reply read back from the order's history. The
+// reply cases come last, asked by the manager; the reply is pasted first
+// (setup) and names a day 14 days after the day asked.
+test('the supplier reply cases come last: the reply pasted first, its day, and an order with none', () => {
+  const facts = uciFacts(smallPlan(), { today: '2026-11-20' })
+  const cases = buildUciCases(facts)
+  const replies = cases.slice(-3)
+  assert.deepEqual(replies.map((row) => row.id), ['reply-said-en', 'reply-said-zh', 'reply-none-en'])
+  assert.ok(replies.every((row) => row.asUser === 'kim@example.com' && row.setup))
+  const [en, zh, none] = replies
+  assert.equal(en.setup.supplierReply, zh.setup.supplierReply)
+  assert.deepEqual([en.setup.supplierReply.receivedOn, en.expect.dates], ['2026-11-20', [{ label: 'the day the reply names', date: '2026-12-04' }]])
+  assert.match(en.setup.supplierReply.text, /\{order\}.*will ship on 4 December 2026/s)
+  assert.ok(en.setup.supplierReply.text.includes(facts.scene.hero.sku))
+  assert.deepEqual(en.setup.supplierReply.dismiss, { reason: 'supplier_will_confirm' })
+  assert.deepEqual(en.turns, [{ text: 'What did Acme say about {order}?', order: { supplier: 'Acme', late: true } }])
+  assert.equal(zh.language, 'zh-CN')
+  assert.deepEqual(none.setup, { noSupplierReply: { supplier: 'Globex', late: true } })
+  assert.ok(none.expect.notMatches.length && !none.expect.dates)
+  // The checks read what they should: "not recorded" passes, a made-up reply fails.
+  const said = new RegExp(en.expect.matches[0].pattern, 'i')
+  assert.ok(said.test('Acme said 85123A will ship on 4 December; it was not recorded, as the supplier will confirm.'))
+  const noReply = new RegExp(none.expect.matches[0].pattern, 'i')
+  const invented = new RegExp(none.expect.notMatches[0].pattern, 'i')
+  assert.ok(noReply.test('No supplier reply is recorded on PO-202610-0031.'))
+  assert.equal(noReply.test('The order is not late.'), false)
+  assert.ok(invented.test('Globex said it will ship on 2 December.'))
+})
+
+// --setup writes a supplier reply, so it is refused on the walkthrough people
+// use, whichever of its ports is passed; a test instance's ports pass.
+test('the runner refuses --setup against the walkthrough\'s app and API ports', () => {
+  assert.deepEqual(WALKTHROUGH_DEMO_PORTS, [15231, 15232, 18831, 18832])
+  for (const port of [15231, 15232, 18831, 18832, '18831']) assert.match(setupRefusal({ setup: true, port }), /does not run against the walkthrough/)
+  // The port as the runner's base URL reads it, whatever follows it.
+  for (const port of ['15231/', '15231#', '15231?x', '18832/api', '15232#top']) assert.match(setupRefusal({ setup: true, port }), /does not run against the walkthrough/, port)
+  assert.match(setupRefusal({ setup: true, port: 'not a port' }), /is not one/)
+  for (const port of [18801, 18802, 18941]) assert.equal(setupRefusal({ setup: true, port }), null)
+  // Without --setup nothing is written, so any port may be read.
+  assert.equal(setupRefusal({ setup: undefined, port: 18831 }), null)
 })
 
 // 2026-11-11, the owner's "先测再改" on hard limits.

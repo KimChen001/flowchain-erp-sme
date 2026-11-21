@@ -112,18 +112,21 @@ async function handleDesktopReceiving(ctx) {
   const path = ctx.url.pathname
   const method = ctx.req.method
   const list = method === 'GET' && path === '/api/procurement/receiving'
+  // The orders a receiver may receive now (New receipt), read with receiving.prepare.
+  const toReceive = method === 'GET' && path === '/api/procurement/receivable-orders'
   const receivable = method === 'GET' ? path.match(/^\/api\/procurement\/purchase-orders\/([^/]+)\/receivable-lines$/) : null
   const create = method === 'POST' && path === '/api/procurement/receiving'
   const revise = method === 'PATCH' ? path.match(/^\/api\/procurement\/receiving\/([^/]+)$/) : null
   const submit = method === 'POST' ? path.match(/^\/api\/procurement\/receiving\/([^/]+)\/submit$/) : null
   const cancel = method === 'POST' ? path.match(/^\/api\/procurement\/receiving\/([^/]+)\/cancel$/) : null
-  if (!list && !receivable && !create && !revise && !submit && !cancel) return false
+  if (!list && !toReceive && !receivable && !create && !revise && !submit && !cancel) return false
   if (!ctx.identity?.authenticated) { ctx.send(ctx.res, 401, { code: 'AUTHENTICATION_REQUIRED', message: 'Authentication is required.' }); return true }
   if (!ctx.identity?.tenantId) { ctx.send(ctx.res, 403, { code: 'TENANT_CONTEXT_REQUIRED', message: 'A server-resolved tenant context is required.' }); return true }
   if ((create || revise || submit || cancel) && !capabilityForEnvironment('receiving-posting', ctx.env || process.env)?.enabled) { sendCapabilityUnavailable(ctx, 'receiving-posting'); return true }
   try {
     const service = await draftService(ctx)
     if (list) { ctx.send(ctx.res, 200, await service.listReceivingDocuments({ purchaseOrderId: ctx.url.searchParams.get('poId') || '' }, ctx)); return true }
+    if (toReceive) { ctx.send(ctx.res, 200, await service.listOrdersToReceive(ctx)); return true }
     if (receivable) {
       const result = await service.listReceivablePurchaseOrders({ purchaseOrderId: decodeURIComponent(receivable[1]) }, ctx, DESKTOP)
       if (!result.items.length) { ctx.send(ctx.res, 404, { code: 'PURCHASE_ORDER_NOT_FOUND', message: 'Purchase order was not found.' }); return true }

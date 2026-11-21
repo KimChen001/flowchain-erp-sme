@@ -5,7 +5,7 @@ export function OverviewAttention({ items, copy, onDrill }: { items: NonNullable
   const icons: Record<string, typeof Truck> = { open_orders: Truck, items_to_reorder: ShoppingCart, inventory_shortages: PackageSearch, unfulfilled_sales: ClipboardList };
   return <section className="rounded-2xl border border-slate-200 bg-white p-5" data-testid="overview-attention">
     <h2 className="text-base font-semibold text-slate-900">{copy('Needs attention')}</h2>
-    <p className="mt-1 text-xs text-slate-500">{copy('Counts use the current filters. Select a card to review the source records.')}</p>
+    <p className="mt-1 text-xs text-slate-500">{copy('Counts use the current filters, except Items to reorder, which is the reorder list as it stands today. Select a card to review the source records.')}</p>
     {/* A reader who may not read a subject gets no card for it, so there may be fewer than four. */}
     <div className={`mt-4 grid gap-3 ${items.length === 4 ? "sm:grid-cols-2 xl:grid-cols-4" : items.length === 3 ? "md:grid-cols-3" : "sm:grid-cols-2"}`}>{items.map((item) => {
       const Icon = icons[item.id] || ClipboardList;

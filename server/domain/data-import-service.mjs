@@ -321,13 +321,14 @@ function checkItemSupplier(values, lookups) {
     input.preferred = true
     preferredSource = 'item'
   } else if (itemPrefers && input.preferred === false) {
-    issues.push(issue('preferred', 'PREFERRED_WOULD_CLEAR', `${supplier.code} is this item's preferred supplier. Leave Preferred blank or write Yes, or change the preferred supplier on the item.`, { supplierCode: supplier.code }))
+    issues.push(issue('preferred', 'PREFERRED_WOULD_CLEAR', `${supplier.code} is this item's preferred supplier. Leave Preferred blank or write Yes, or make another supplier preferred with Set as preferred under its Supplied items.`, { supplierCode: supplier.code }))
   }
   // Saving a preferred link moves the item's preferred supplier, which the
-  // import never changes: the person does that on the item.
+  // import never changes: the person does that with Set as preferred on the
+  // supplier's Supplied items.
   const current = item ? (lookups.preferredSuppliersByItemId.get(item.id) || []).find((entry) => entry.id !== supplier?.id) : null
   if (!existing && input.preferred && current) {
-    issues.push(issue('preferred', 'PREFERRED_EXISTS', `This item already prefers ${current.code}. Change the preferred supplier on the item, or write No.`, { supplierCode: current.code }))
+    issues.push(issue('preferred', 'PREFERRED_EXISTS', `This item already prefers ${current.code}. To make this supplier preferred, first add the item under Supplied items on this supplier's page, then use Set as preferred there; or write No.`, { supplierCode: current.code }))
   }
   return {
     input,

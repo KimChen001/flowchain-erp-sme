@@ -186,4 +186,38 @@ test.describe("the supplier reply card's states", () => {
     // Another order the reply names links to it.
     await expect(view.getByTestId("supplier-reply-other-order")).toHaveAttribute("href", "/app/procurement/orders/PO-TEST-2");
   });
+
+  // Review of #396, finding 7: a chased order back on Today after 3 workdays
+  // keeps the reply box (chasedOn); one back from "Not now", never chased,
+  // shows none. Today's decisions are stubbed.
+  test("a chased order back on Today keeps the reply box; one never chased has none", async ({ page, request }) => {
+    const auth = await signIn(page, request);
+    await useLanguage(page, "en-US");
+    const orderId = await anIssuedOrder(request, auth);
+    const entry = (key: string, recordId: string, label: string, chasedOn: string | null) => ({
+      key, raisedAt: "2026-11-10T09:00:00.000Z", returned: true, chasedOn,
+      row: { id: key, kind: "purchase_order_overdue", entityType: "purchase_order", recordId, label, name: "Acme Ltd", href: `/app/procurement/orders/${recordId}`, actionHref: null, date: "2026-11-12", dateKind: "promised", overdueDays: 5, detail: {} },
+      draft: { type: "supplier_follow_up", purchaseOrderId: recordId, orderNumber: label, dueDate: "2026-11-12", overdueDays: 5, supplier: { id: "SUP-1", name: "Acme Ltd", contactName: "Pat", email: "orders@acme.example" }, lines: [{ sku: "SKU-1040", itemName: "Bracket", remaining: 60, unit: "pcs", promisedDate: "2026-11-12" }], moreLines: 0 },
+    });
+    await page.route("**/api/home/overview", async (route) => {
+      const response = await route.fetch();
+      await route.fulfill({ response, json: { ...(await response.json()), decisions: {
+        available: true, canDecide: true, canDecideKinds: ["purchase_order_overdue"], supplierEmail: { enabled: false, canSend: false, outbox: true },
+        waiting: [entry("purchase_order_overdue:CHASED", orderId, "PO-TEST-1", "2026-11-12"), entry("purchase_order_overdue:LATER", "PO-NOT-CHASED", "PO-TEST-2", null)],
+        setAside: [],
+      } } });
+    });
+    const stub = await stubReplies(page, () => [card(orderId)]);
+    await page.goto("/app/overview/risks");
+    const chased = page.locator('[data-testid="today-decision"][data-key="purchase_order_overdue:CHASED"]');
+    const later = page.locator('[data-testid="today-decision"][data-key="purchase_order_overdue:LATER"]');
+    await expect(chased.getByTestId("decision-primary")).toHaveText("Copy and mark chased");
+    await expect(later.getByTestId("decision-primary")).toBeVisible();
+    await expect(later.getByTestId("supplier-reply-open")).toHaveCount(0);
+    // Closed, the box reads nothing; opened, it shows the order's open reply.
+    expect(stub.gets()).toBe(0);
+    await chased.getByTestId("supplier-reply-open").click();
+    await expect(chased.getByTestId("supplier-reply-card")).toHaveAttribute("data-state", "proposed");
+    await expect(chased.getByTestId("supplier-reply-paste-again")).toBeVisible();
+  });
 });

@@ -374,6 +374,10 @@ test('three-way match outcomes come from the recorded match status', () => {
   assert.equal(invoiceMatchOutcome({ status: 'submitted', matchStatus: 'pending' }), 'pending')
   assert.equal(invoiceMatchOutcome({ status: 'approved', matchStatus: null }), 'matched')
   assert.equal(invoiceMatchOutcome({ status: 'submitted' }), 'pending')
+  // Differences approved by a person: matched, never awaiting match, also once paid.
+  assert.equal(invoiceMatchOutcome({ status: 'approved', matchStatus: 'variance_approved' }), 'matched')
+  assert.equal(invoiceMatchOutcome({ status: 'settled', matchStatus: 'variance_approved' }), 'matched')
+  assert.equal(invoiceMatchOutcome({ status: 'submitted', matchStatus: 'variance_approved' }), 'matched')
 })
 
 test('finance visuals cover submitted invoices only and keep match counts consistent', () => {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { FocusFirstField } from "../../components/ui/FocusFirstField";
-import { useLocation, useSearchParams } from "react-router";
+import { Link, useLocation, useSearchParams } from "react-router";
 import { useDetailBack } from "../../components/navigation/useDetailBack";
 import { ListPager, usePagedRows } from "../procurement/listPaging";
 
@@ -502,6 +502,10 @@ export default function ItemMasterWorkbench({
             </div>
           ))}
         </div>
+        <p className="mt-4 text-xs" style={{ color: A.sub }} data-testid="item-detail-suppliers-hint">
+          {copy("Suppliers for this item are added on each supplier's page, under Supplied items; Set as preferred there makes one the default.")}{" "}
+          <Link to="/app/master-data/suppliers" className="font-medium text-blue-600 hover:underline">{copy("Open suppliers")}</Link>
+        </p>
         <div className="mt-4 text-xs text-slate-500">
           {copy("Created: {by} · {at}", { by: actorName(selected.createdBy), at: auditTime(selected.createdAt) })}
           <br />

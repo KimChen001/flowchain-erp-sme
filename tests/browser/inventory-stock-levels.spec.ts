@@ -10,7 +10,7 @@ import { expect, test } from "@playwright/test";
 // below safety stock is a separate signal that says when open orders cover it.
 
 // The chips in either interface language.
-const REPLENISH = /Need replenishment|需补货/;
+const REPLENISH = /Order now|立即下单/;
 const BELOW_SAFETY = /Below safety stock \(on hand\)|低于安全库存（现有）/;
 const COVERED = /covered by open orders|已有在途采购覆盖/;
 
@@ -61,5 +61,5 @@ test("the balances and warnings pages judge an item on its stock over every loca
   await expect(warned.filter({ hasText: "LAMP-200" })).toContainText(COVERED);
   // One item to reorder, as on the reorder list; one shelf below safety stock, covered.
   const cards = page.getByTestId("inventory-warning-cards");
-  await expect(cards).toContainText(/Need replenishment\s*1|1\s*Need replenishment|需补货\s*1|1\s*需补货/);
+  await expect(cards).toContainText(/Items to reorder\s*1|1\s*Items to reorder|待补货物料\s*1|1\s*待补货物料/);
 });

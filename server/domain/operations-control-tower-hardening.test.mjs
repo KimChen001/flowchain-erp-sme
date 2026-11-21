@@ -176,7 +176,9 @@ test('R280/R290/R300 source guardrails preserve boundaries no keys and no standa
   assert.match(uiSource, /打印入库单/)
   assert.doesNotMatch(uiSource, /收货复核边界/)
   assert.match(uiSource, /EntityLink/)
-  assert.match(uiSource, /需补货/)
+  // The stock page's replenishment signal: the reorder list's words (product review 2026-11-20).
+  assert.match(uiSource, /立即下单/)
+  assert.match(uiSource, /待补货物料/)
   assert.match(uiSource, /质检/)
   assert.match(uiSource, /可用量/)
   assert.match(uiSource, /风险与异常/)
