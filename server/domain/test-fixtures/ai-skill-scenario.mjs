@@ -168,7 +168,7 @@ export function readOnlyPrisma(data, calls = [], tenant = { locale: 'en-US', cur
     // record_history's read-back of a reply (#363 §4.10); none unless a test
     // adds them.
     supplierReply: {
-      findMany: ({ where }) => array(data.supplierReplies).filter((row) => (row.tenantId || AI_SKILL_TENANT) === where.tenantId && row.purchaseOrderId === where.purchaseOrderId && (!where.id?.in || where.id.in.includes(row.id))),
+      findMany: ({ where }) => array(data.supplierReplies).filter((row) => (row.tenantId || AI_SKILL_TENANT) === where.tenantId && (where.purchaseOrderId?.in ? where.purchaseOrderId.in.includes(row.purchaseOrderId) : row.purchaseOrderId === where.purchaseOrderId) && (!where.id?.in || where.id.in.includes(row.id)) && (!where.state?.not || row.state !== where.state.not)).sort((a, b) => String(b.createdAt?.toISOString?.() || '').localeCompare(String(a.createdAt?.toISOString?.() || ''))),
       count: ({ where }) => array(data.supplierReplies).filter((row) => (row.tenantId || AI_SKILL_TENANT) === where.tenantId && row.purchaseOrderId === where.purchaseOrderId && row.state !== where.state?.not).length,
     },
     purchaseOrderPromiseRevision: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : array(data.promiseRevisions).filter((row) => (!where.purchaseOrderId || row.purchaseOrderId === where.purchaseOrderId) && (!where.id?.in || where.id.in.includes(row.id))) },
