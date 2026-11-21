@@ -632,4 +632,17 @@ test('the line check reads the clause that holds the date: items left out, the r
   assert.deepEqual(at(list, lines, 'L2', '2026-11-26'), held('L2'))
   const backordered = '82494L and 82583 are backordered and will now deliver on 9 December. Everything else ships on schedule.'
   for (const ref of ['L1', 'L2']) assert.deepEqual(at(list, backordered, ref, '2026-12-09'), proposed(ref, '2026-12-09'))
+  // "The rest" or 剩下 next to an item is about that item: the rest of it.
+  assert.deepEqual(at(list, 'The remaining 100 pcs of 82494L ship on 4 December.', 'L1', '2026-12-04'), proposed('L1', '2026-12-04'))
+  assert.deepEqual(at(list, 'The remaining 100 pcs of 82494L ship on 4 December.', 'L2', '2026-12-04'), held('L2'))
+  assert.deepEqual(at(zh, '剩下的130个支架12月4日发货。', 'L1', '2026-12-04'), proposed('L1', '2026-12-04'))
+  assert.deepEqual(at(zh, '剩下的130个支架12月4日发货。', 'L2', '2026-12-04'), held('L2'))
+  // On its own in its clause it still leaves the named items out.
+  assert.deepEqual(at(list, '82494L ships on 26 November, the rest on 4 December.', 'L2', '2026-12-04'), proposed('L2', '2026-12-04'))
+  assert.deepEqual(at(list, '82494L ships on 26 November, the rest on 4 December.', 'L1', '2026-12-04'), held('L1'))
+  // A Chinese unit starts no word: 套装 after a code leaves it a code; 300套 is a count.
+  assert.deepEqual(at(zh, '20727套装12月4日发货。', 'L2', '2026-12-04'), held('L2'))
+  assert.deepEqual(at(zh, '20727盒装12月4日发货。', 'L2', '2026-12-04'), held('L2'))
+  const sets = [lineOf('L1', { supplierSku: '300' }), lineOf('L2', { itemName: '铰链' })]
+  assert.deepEqual(at(sets, '300套12月4日发货。', 'L2', '2026-12-04'), proposed('L2', '2026-12-04'))
 })

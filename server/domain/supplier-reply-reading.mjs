@@ -705,10 +705,18 @@ function partQuantity(sentence) {
 const escapeForPattern = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const CJK_NAME = /[㐀-鿿]/
 const lineCodes = (line) => [line.sku, line.supplierSku].map(text).filter((value) => value.length >= 3).map((value) => quoteForm(value))
-const QUANTITY_AFTER = /^\s*(?:pcs|pc|pieces?|units?|boxes|box|cartons?|ctns?|sets?|pairs?|dozens?|kgs?|kg)\b|^\s*[件个箱套盒]/
+// A unit word after the number; a Chinese unit only on its own, not as the
+// start of a word (套装, 盒装 and 箱子 are words, 300件 and 300个 are counts).
+const QUANTITY_AFTER = /^\s*(?:pcs|pc|pieces?|units?|boxes|box|cartons?|ctns?|sets?|pairs?|dozens?|kgs?|kg)\b|^\s*[件个箱套盒](?![装子件餐人性])/
 const QUANTITY_BEFORE = /[x×*]\s*$/
 const WHOLE_ORDER = /\b(?:all (?:the )?(?:items|lines|goods|products)|all of (?:it|them|the order)|every (?:item|line)|everything|the (?:whole|entire|full) order)\b|全部|所有|整张单|整单|统一|每个品项|各品项/
-const LEAVES_OUT = /\b(?:else|the rest|remaining|except|excluding|other than|apart from|but not)\b|其余|其他|其它|剩下|除了|除.{0,20}外|以外|不含|不包括/
+// Words that leave items out. "Except" and its kind do so even next to an
+// item ("everything except 85123A"); "the rest", "remaining", 剩下 and the
+// like only in a clause that names no item ("the remaining 100 pcs of 85123A"
+// is about 85123A).
+const EXCEPT = /\b(?:except|excluding|other than|apart from|but not)\b|除了|除.{0,20}外|以外|不含|不包括/
+const REMAINDER = /\b(?:else|the rest|remaining|others?)\b|其余|其他|其它|剩下|剩余/
+const LEAVES_OUT = { test: (value) => EXCEPT.test(value) || REMAINDER.test(value) }
 // A code and a name with only this between them are one item mentioned twice.
 const SEPARATOR = /\b(?:and|or|plus|with)\b|[,，、;；&+和及与]/
 // Where a clause ends: a comma, a semicolon, the end of a sentence (". "),
@@ -779,7 +787,7 @@ export function lineNamedElsewhere(order, quote, ref, { date = null, receivedOn 
   const inClause = linesNamedInQuote(order, clause)
   const named = refsOf(inClause)
   if (named.size) {
-    if (LEAVES_OUT.test(clause)) return named.has(ref)
+    if (EXCEPT.test(clause)) return named.has(ref)
     return codeNameConflict(clause, inClause) || !named.has(ref)
   }
   // The clause names no item: the items around it, in its sentence, else in the quote.
