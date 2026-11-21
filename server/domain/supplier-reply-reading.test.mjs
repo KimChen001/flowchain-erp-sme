@@ -702,6 +702,13 @@ test('the line check holds dates put on the wrong line however the reply orders 
     [codes, 'ETA (85123A, 20727 4 Dec; 22423 10 Dec)', 'L3', D4, true],
     [codes, '10 Dec (85123A, the rest 4 Dec)', 'L1', D4, true],
     [codes, 'Delivery 10 Dec (85123A, 20727 follows on 4 Dec)', 'L1', D4, true],
+    // A date before a bracketed list is not the date of every item in it.
+    [codes, 'Delivery 4 Dec (85123A, 20727 still TBC)', 'L2', D4, true],
+    [codes, 'Delivery 4 Dec (85123A, 20727 still TBC)', 'L1', D4, false],
+    [codes, '12月4日发货（85123A，20727待定）', 'L2', D4, true],
+    // Known false hold, as before this check: "4 Dec (85123A, 20727)" holds
+    // 4 Dec on 20727 for the person.
+    [codes, '4 Dec (85123A, 20727)', 'L2', D4, true],
     // A line's old date next to its new one is no other line's date.
     [codes, '85123A was due 12 Nov, now ships 4 Dec', 'L1', D4, false],
     [codes, '85123A moved from 12 Nov to 4 Dec', 'L1', D4, false],

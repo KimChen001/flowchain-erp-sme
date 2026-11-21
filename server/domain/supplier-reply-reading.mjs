@@ -751,19 +751,26 @@ export function linesNamedInQuote(order, quote) {
 // it writes the date given; the whole quote for both when it writes none.
 // Read with its line breaks kept (quoteForm folds them), so the items of a
 // list stay apart. A comma ends no clause only when what stands before it,
-// back to the previous break (or to a bracket still open), is a bare item (a
-// code or a name and nothing else), and the clause it would join holds one
-// date at most: "82494L, 82583 and 82600 on 30 Nov", "all three lines
-// (82494L, 82583, 82600) on 30 Nov" and "Hinges, brackets ship 4 Dec" are one
-// clause; "10 Dec for 85123A, 20727 on 4 Dec" and "10 Dec (85123A, 20727 on
-// 4 Dec)" are two.
+// back to the previous break (or to a bracket still open, with no date before
+// that bracket), is a bare item (a code or a name and nothing else), and the
+// clause it would join holds one date at most: "82494L, 82583 and 82600 on
+// 30 Nov", "all three lines (82494L, 82583, 82600) on 30 Nov" and "Hinges,
+// brackets ship 4 Dec" are one clause; "10 Dec for 85123A, 20727 on 4 Dec",
+// "10 Dec (85123A, 20727 on 4 Dec)" and "Delivery 4 Dec (85123A, 20727
+// still TBC)" are two. (So "4 Dec (85123A, 20727)" holds 4 Dec on 20727 for
+// the person: a safe false hold.)
 const quoteSource = (quote) => String(quote ?? '').normalize('NFKC').replace(INVISIBLE, '').replace(/\r\n?/g, '\n').replace(/[ \t]+/g, ' ').toLowerCase()
 // A list opened by a bracket still open at the comma ("all three lines
 // (82494L, 82583, …") starts after that bracket; a bracket closed before
-// the comma ("10 Dec (85123A), …") starts nothing.
-function bareItem(segment, lines) {
+// the comma ("10 Dec (85123A), …") starts nothing. Where that bracket is in
+// the segment, or -1.
+function openBracketAt(segment) {
   const open = Math.max(...['(', '（', '[', '【'].map((mark) => segment.lastIndexOf(mark)))
-  const listed = open >= 0 && !/[)）\]】]/.test(segment.slice(open + 1)) ? segment.slice(open + 1) : segment
+  return open >= 0 && !/[)）\]】]/.test(segment.slice(open + 1)) ? open : -1
+}
+function bareItem(segment, lines) {
+  const open = openBracketAt(segment)
+  const listed = open >= 0 ? segment.slice(open + 1) : segment
   const item = listed.replace(/^[\s(（[【]*(?:(?:and|or)\s+|[&和及与]\s*)?/, '').replace(/[\s)）\]】]*$/, '')
   if (!item) return false
   return lines.some((line) => {
@@ -772,7 +779,8 @@ function bareItem(segment, lines) {
   })
 }
 // The clauses of a source, in order, as [start, end) places. joins(segment
-// before the mark, the mark, the clause joining would make up to the next mark).
+// before the mark, the mark, the clause joining would make up to the next
+// mark, where the clause starts).
 function clausePlaces(source, breaks, joins) {
   const marks = [...source.matchAll(breaks)]
   const places = []
@@ -780,7 +788,7 @@ function clausePlaces(source, breaks, joins) {
   let previous = 0
   marks.forEach((mark, at) => {
     const next = at + 1 < marks.length ? marks[at + 1].index : source.length
-    const joined = joins(source.slice(previous, mark.index), mark, source.slice(start, next))
+    const joined = joins(source.slice(previous, mark.index), mark, source.slice(start, next), start)
     previous = mark.index + mark[0].length
     if (joined) return
     places.push([start, mark.index])
@@ -793,7 +801,13 @@ const datesIn = (value, receivedOn) => new Set(datesWithPlaces(value, receivedOn
 function partsOf(quote, order, receivedOn) {
   const source = quoteSource(quote)
   const lines = array(order?.lines)
-  const listComma = (segment, mark, joined) => /^[,，]$/.test(mark[0]) && bareItem(segment, lines) && datesIn(joined, receivedOn) <= 1
+  // A list in brackets comes before its date: with a date before the bracket
+  // ("Delivery 4 Dec (85123A, 20727 still TBC)") the items stay apart.
+  const listComma = (segment, mark, joined, clauseStart) => {
+    if (!/^[,，]$/.test(mark[0]) || !bareItem(segment, lines) || datesIn(joined, receivedOn) > 1) return false
+    const open = openBracketAt(segment)
+    return open < 0 || datesIn(source.slice(clauseStart, mark.index - segment.length + open), receivedOn) === 0
+  }
   return {
     source,
     clauses: clausePlaces(source, CLAUSE_BREAK, listComma),
