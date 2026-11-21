@@ -589,7 +589,7 @@ function LinkReceipt({ invoice, onDone }: { invoice: { id: string; version: numb
   const base = `/api/finance/supplier-invoices/${encodeURIComponent(invoice.id)}`;
   const body = () => ({ expectedVersion: invoice.version, receivingDocumentId: receiptId });
   if (!candidates.length) return <p className="text-xs text-slate-500" data-testid="link-receipt-none">{t("finance.noReceiptToLink", { po: poNumber })}</p>;
-  if (!open) return <button type="button" data-testid="link-receipt" className={listButtonClass.primary} onClick={() => setOpen(true)}>{t("finance.action.link_receipt")}</button>;
+  if (!open) return <button type="button" data-testid="link-receipt" className={listButtonClass.secondary} onClick={() => setOpen(true)}>{t("finance.action.link_receipt")}</button>;
   const preview = async () => {
     setError("");
     try { setPlan(await apiJson<LinkPlan>(`${base}/link-receipt-preview`, { method: "POST", body: JSON.stringify(body()) })); } catch (reason) { setError(message(reason, t("finance.loadFailed"))); }
