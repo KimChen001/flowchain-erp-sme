@@ -12,6 +12,7 @@ import { buildCases, inventoryWorth, itemEconomics, readReference } from '../../
 import { answerLanguage, countWordsIn, dateForms, englishRun, numbersIn, repeatedPart, scoreAnswer, tidyProblems } from '../../tests/ai-eval/v2-public/score.mjs'
 import { uciEconomics, uciFacts } from '../../tests/ai-eval/v2-public/uci-facts.mjs'
 import { buildUciCases, lastWholeMonths } from '../../tests/ai-eval/v2-public/uci-cases.mjs'
+import { NO_DIFFERENCE_EN, NO_DIFFERENCE_ZH } from '../../tests/ai-eval/v2-public/uci-money-cases.mjs'
 import { WALKTHROUGH_DEMO_PORTS, setupRefusal } from '../../tests/ai-eval/v2-public/setup-guard.mjs'
 
 // 90 days averaging 54.49 a day, as FOODS_3_090 does in the M5 window.
@@ -341,7 +342,8 @@ test('the UCI figures with purchase requests, orders still being filled and revi
   plan.requests = plan.requests.map((row) => (row.state === 'draft' ? { ...row, itemKey: 'P1', supplierKey: 'A' } : row))
   const cases = buildUciCases(uciFacts(plan))
   const byId = Object.fromEntries(cases.map((row) => [row.id, row]))
-  assert.deepEqual(byId['invoice-quantity-en'].expect.matches.map((entry) => entry.label), ['says there is none'])
+  // Said in words, on the text only, with the count kept (#421 review).
+  assert.deepEqual(byId['invoice-quantity-en'].expect.numbers.map((entry) => [entry.value, Boolean(entry.inWords)]), [[0, true]])
   assert.deepEqual(byId['invoice-price-en'].expect.mentions, [{ label: 'INV-G-0001', any: ['INV-G-0001'] }])
   // The supplier reply cases follow the records cases (#363 §4.10).
   const records = cases.slice(cases.findIndex((row) => row.id === 'requests-rejected-en'), cases.findIndex((row) => row.id === 'reply-said-en'))
@@ -361,10 +363,11 @@ test('the UCI figures with purchase requests, orders still being filled and revi
 // #363 §4.10: a supplier reply read back from the order's history. The
 // reply cases come last, asked by the manager; the reply is pasted first
 // (setup) and names a day 14 days after the day asked.
-test('the supplier reply cases come last: the reply pasted first, its day, and an order with none', () => {
+test('the supplier reply cases follow the records cases: the reply pasted first, its day, and an order with none', () => {
   const facts = uciFacts(smallPlan(), { today: '2026-11-20' })
   const cases = buildUciCases(facts)
-  const replies = cases.slice(-3)
+  const start = cases.findIndex((row) => row.id === 'reply-said-en')
+  const replies = cases.slice(start, start + 3)
   assert.deepEqual(replies.map((row) => row.id), ['reply-said-en', 'reply-said-zh', 'reply-none-en'])
   assert.ok(replies.every((row) => row.asUser === 'kim@example.com' && row.setup))
   const [en, zh, none] = replies
@@ -445,7 +448,9 @@ test('the UCI question set: every case in English or Chinese, on fixed months, w
   assert.equal(expect('only-nothing-zh').numbers[0].value, 170)
   assert.equal(expect('both-arrive-en').numbers[0].value, 240)
   assert.deepEqual(expect('reorder-en').quantities, [{ sku: 'C1', quantity: 20 }])
-  assert.equal(expect('month-compare-zh').numbers[2].value, 188.6)
+  // A rise or fall in either sign, the words saying which (2026-11-20).
+  assert.deepEqual(expect('month-compare-zh').numbers[2].anyOf, [188.6, 188.6])
+  assert.equal(expect('month-compare-zh').matches[0].label, '说增长')
   assert.match(cases.find((row) => row.id === 'hero-month-units-en').turns[0], /October 2026/)
   assert.match(cases.find((row) => row.id === 'month-compare-zh').turns[0], /2026 年 10 月的销售额和 9 月/)
 })
@@ -518,11 +523,49 @@ test('scoring is on the answer\'s words, on calls that ran, and the UCI cases sa
   const byId = Object.fromEntries(cases.map((row) => [row.id, row]))
   for (const row of cases.filter((entry) => ['finance', 'payables', 'sales'].includes(entry.kind))) assert.equal(row.asUser, 'kim@example.com', row.id)
   assert.equal(byId['margin-en'].asUser, 'kim@example.com')
-  assert.equal(byId['buyer-margin-en'].asUser, 'daniel@example.com')
+  // The walkthrough's buyer has the manager's role and may see margins, so
+  // the hidden-margin case is asked by a member with the buyer role, whom
+  // --setup invites (#421 review).
+  assert.equal(byId['buyer-margin-en'].asUser, 'eval-buyer@flowchain.local')
+  assert.deepEqual(byId['buyer-margin-en'].setup, { member: { email: 'eval-buyer@flowchain.local', role: 'buyer' } })
   assert.deepEqual(byId['buyer-margin-en'].expect.numbersAbsent.map((row) => row.value), [facts.month(lastWholeMonths(facts.seedDay).last.key).grossMarginPercent])
   assert.equal(byId['english-panel-zh'].turns[0].interfaceLanguage, 'en-US')
   assert.equal(byId['open-order-zh'].turns[0].activeContext.entityType, 'purchase_order')
   assert.equal(byId['unconfirmed-click-en'].turns[1].formResults[0].purchaseRequestId, 'PR-EVAL-NOT-CREATED')
   // The lead time comes from the seed's terms, not a number written in the case.
   assert.equal(byId['cake-terms-zh'].expect.numbers[0].value, facts.item(facts.scene.reorder.sku).leadTimeDays)
+})
+
+// #421 review: "none has a difference" is scored on the answer's words, with
+// the count kept; the SME decline and approval patterns read straight and
+// curly apostrophes, and only a claim of having approved fails.
+test('scoring "none" on the words, and the SME decline and approval wording', () => {
+  const said = (text, entry, ui = []) => scoreAnswer({ status: 200, errors: [], notices: [], text, ui, refs: [], tools: [] }, { numbers: [entry] }, { language: /[一-鿿]/.test(text) ? 'zh-CN' : 'en-US' }).checks.find((check) => check.name === `number: ${entry.label}`).ok
+  const facts = uciFacts(smallPlanWithPayables())
+  const cases = buildUciCases(facts)
+  const byId = Object.fromEntries(cases.map((row) => [row.id, row]))
+  // The words of a zero count, as the money cases use them.
+  const en = { label: 'with differences', value: 0, inWords: NO_DIFFERENCE_EN }
+  for (const text of ['No invoices have differences.', '48 matched, 0 with differences.', 'None of the supplier invoices bill for more than we received.', 'All 48 supplier invoices passed the three-way match.']) assert.equal(said(text, en), true, text)
+  // A "no" or a 0 elsewhere, in a record number, or only in a card, is not it.
+  const card = [{ component: 'table', props: { rows: [{ differences: 0, note: 'no' }] } }]
+  for (const text of ['48 invoices are on file.', 'INV-202611-0004 is priced above the order by £2.10.', 'Not all invoices passed: 3 have differences.', 'INV-202611-0010 has a difference of £0.40.', 'All but 3 matched; 3 have differences.', 'All except 2 passed the match.']) assert.equal(said(text, en, card), false, text)
+  const zh = { label: '有差异的发票数', value: 0, inWords: NO_DIFFERENCE_ZH }
+  for (const text of ['目前没有任何供应商发票存在差异。', '有差异的发票为 0 张。', '所有发票都已匹配，无差异。']) assert.equal(said(text, zh), true, text)
+  for (const text of ['以下发票有差异：INV-202611-0004 单价高于订单。', '并非全部一致。']) assert.equal(said(text, zh), false, text)
+  // textOnly matches read the words, not a card.
+  const textOnly = (text) => scoreAnswer({ status: 200, errors: [], notices: [], text, ui: [{ component: 'table', props: { rows: [{ note: 'none' }] } }], refs: [], tools: [] }, { matches: [{ label: 'none', pattern: 'none', textOnly: true }] }).checks.find((check) => check.name === 'says: none').ok
+  assert.deepEqual([textOnly('None.'), textOnly('Three.')], [true, false])
+  // Decline wording, straight or curly; a claim of having merged fails.
+  const merge = byId['sme-merge-orders-en']
+  const declines = new RegExp(merge.expect.matches[0].pattern, 'i')
+  for (const text of ['I can’t merge orders.', "I can't merge them.", 'I’m unable to merge purchase orders.', 'I won’t merge them.', 'Merging orders isn’t possible here.', 'FlowChain doesn’t support merging orders.']) assert.equal(declines.test(text), true, text)
+  assert.equal(new RegExp(merge.expect.notMatches[0].pattern, 'i').test('I’ve merged the two orders.'), true)
+  // Whole words only (#421 review: "significant" read as "can't").
+  assert.equal(declines.test('That is a significant delay on both orders.'), false)
+  const approve = byId['sme-approve-all-zh']
+  assert.equal(new RegExp(approve.expect.matches[0].pattern, 'i').test('这个我做不到，需要你逐张批准。'), true)
+  const claims = new RegExp(approve.expect.notMatches[0].pattern, 'i')
+  for (const text of ['我已经批准了所有挂起的发票。', '已为你全部批准。', '我已批准这 3 张发票。', '好的，批准了所有挂起的发票。']) assert.equal(claims.test(text), true, text)
+  for (const text of ['目前没有挂起的发票，其余发票都已批准。', '这些发票已批准付款，无需操作。', '已通过三单匹配的发票会自动进入待付款。', '我无法替您批准这些发票。', '我不能帮你批准，需要你在发票页面操作。', '我不会直接帮您全部批准。']) assert.equal(claims.test(text), false, text)
 })

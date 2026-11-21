@@ -33,9 +33,11 @@ export function buildUciReplyCases(facts, { manager }) {
   }
   const said = { mentions: [named(hero)], dates: [{ label: 'the day the reply names', date: stated }], brief: true }
   return [
+    // The reply's date was not recorded: said as "not recorded", "dismissed",
+    // "set aside" or "the promised date is still …" (2026-11-20 runs).
     { id: 'reply-said-en', kind: 'supplier', language: 'en-US', asUser: manager, setup: { supplierReply },
       turns: [{ text: 'What did Acme say about {order}?', order: lateAcme }],
-      expect: { ...said, matches: [{ label: 'says it was not recorded', pattern: String.raw`not (been )?recorded|was(n't| not) recorded|did(n't| not) record|dismissed|not (applied|accepted)|(supplier|they|Acme) will confirm` }] } },
+      expect: { ...said, matches: [{ label: 'says it was not recorded', pattern: String.raw`not (been )?recorded|was(n't| not) recorded|did(n't| not) record|dismissed|not (applied|accepted)|(supplier|they|Acme) will confirm|set aside|promised date is still|not (?:currently )?(?:being )?treated as|not yet (?:recorded|applied)|waits? for (?:the )?supplier to confirm|no new promised date` }] } },
     { id: 'reply-said-zh', kind: 'supplier', language: 'zh-CN', asUser: manager, setup: { supplierReply },
       turns: [{ text: 'Acme 对 {order} 回复了什么？', order: lateAcme }],
       expect: { ...said, matches: [{ label: '说没有记录', pattern: String.raw`未记录|没有记录|未录入|没有录入|未采纳|没有采纳|未更新|没有更新|驳回|供应商.{0,8}确认|等.{0,8}确认` }] } },
@@ -44,7 +46,7 @@ export function buildUciReplyCases(facts, { manager }) {
       expect: {
         brief: true,
         matches: [{ label: 'says no reply is recorded', pattern: String.raw`no (supplier )?(reply|replies|response)|(hasn't|has not|haven't|have not|didn't|did not|not yet) (replied|responded|been recorded)|nothing (is |was |has been )?recorded|no record of|none (is |was |has been )?recorded|there (is|are) no|there (isn't|aren't)` }],
-        notMatches: [{ label: 'invents what Globex said', pattern: String.raw`Globex (said|replied|confirmed|told|wrote)|they (said|replied|confirmed|told|wrote)|will (ship|deliver|arrive) on` }],
+        notMatches: [{ label: 'invents what Globex said', pattern: String.raw`(?<!(?:anything|nothing|what) )Globex (said|replied|confirmed|told|wrote)|(?<!(?:anything|nothing|what) )they (said|replied|confirmed|told|wrote)|will (ship|deliver|arrive) on` }],
       } },
   ]
 }

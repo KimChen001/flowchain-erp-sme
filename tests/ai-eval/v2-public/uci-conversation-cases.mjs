@@ -79,7 +79,7 @@ export function buildUciConversationCases(facts) {
   // Since 2026-11-12 the purchase price is an assumed share of the selling
   // price: a margin can be worked out, and the answer says it rests on that.
   add({ id: 'margin-en', kind: 'invented', language: 'en-US', turns: [`What is our gross margin on ${hero.sku}?`],
-    expect: { matches: [{ label: 'says the purchase price is assumed', pattern: String.raw`assum|estimated purchase|not (?:an? )?(?:real|actual|recorded) (?:cost|purchase price)` }] } })
+    expect: { matches: [{ label: 'says the purchase price is assumed', pattern: String.raw`assum|estimat|not (?:an? )?(?:real|actual|recorded) (?:cost|purchase price)|doesn(?:'|’)t record the actual cost` }] } })
 
   // Follow-ups.
   add({ id: 'correction-en', kind: 'followup', language: 'en-US', turns: [`How much ${hero.sku} do we have in stock?`, `no, I meant ${second.sku}`],
