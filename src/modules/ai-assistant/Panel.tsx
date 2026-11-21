@@ -14,6 +14,7 @@ import type { PrReceipt, RecordActionReceipt, SetupReceipt } from "./v2/parts/ty
 import { setupCreatedRecords } from "./v2/parts/SetupRecordsPart";
 import { assistantV2Failure, newThreadId, streamAssistantV2, type AssistantV2FormResult } from "./v2/streamClient";
 import { previousTurnsOf } from "./v2/previousTurns";
+import { NOTICES_WITHOUT_ANSWERS, NoAssistantLinks } from "./v2/NoAssistantLinks";
 
 export type ActiveContext = {
   module?: string;
@@ -466,6 +467,7 @@ export default function FloatingAiAssistant({
                     {translate(language, `ai.v2.notice.${notice}` as const)}
                   </p>
                 ) : null}
+                {notice && NOTICES_WITHOUT_ANSWERS.has(notice) ? <NoAssistantLinks onNavigate={minimizeAfterNavigate} /> : null}
                 {/* The decisions waiting on Today, with their buttons (docs/drafted-decisions-design.md §4.8). */}
                 <div className="mt-5"><TodayDecisionCards /></div>
                 {emptyPrompts.length ? (

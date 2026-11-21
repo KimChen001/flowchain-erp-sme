@@ -745,6 +745,23 @@ test("human-readable route authority matrix covers the executable manifest", () 
   assert.match(matrix, /158\/158 frontend route stability audit/);
 });
 
+test("the assistant's no-answer links offer only pages each default role may open", async () => {
+  // Product review 2026-11-20, item 23 (#407 review): the Finance Specialist
+  // has no inventory.balance.read, so "Reorder list" would land on Access denied.
+  const { defaultRoleTemplates } = await import("../auth/permission-catalog.mjs");
+  const { elsewhereLinks, ELSEWHERE_LINKS } = await vite.ssrLoadModule("/src/modules/ai-assistant/v2/assistantElsewhere.ts");
+  const byId = (id) => routes.find((route) => route.id === id);
+  for (const [routeId] of ELSEWHERE_LINKS) assert.ok(byId(routeId), routeId);
+  const offered = (permissions) => elsewhereLinks((routeId) => invariants.hasRoutePermission(byId(routeId), new Set(permissions))).map(([routeId]) => routeId);
+  const role = (key) => defaultRoleTemplates.find((row) => row.roleKey === key).permissions;
+  assert.ok(!offered(role("finance-specialist")).includes("inventory:reorder"));
+  assert.ok(offered(role("finance-specialist")).includes("overview:risks"));
+  for (const template of defaultRoleTemplates) {
+    for (const routeId of offered(template.permissions)) assert.ok(invariants.hasRoutePermission(byId(routeId), new Set(template.permissions)), `${template.roleKey} ${routeId}`);
+  }
+  assert.deepEqual(offered([]).filter((routeId) => byId(routeId).requiredPermission), []);
+});
+
 test("My profile is every member's own page; the rest of Settings keeps its permission", () => {
   // Product review 2026-11-20: Procurement, Operations and Finance specialists
   // lack settings.workspace.read, so a gated profile locked them out of their
