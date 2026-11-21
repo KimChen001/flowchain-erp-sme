@@ -412,9 +412,12 @@ mapPermission(
   "mobile-operations:receiving mobile-operations:receiving-detail",
 );
 mapPermission("intake.batch.read", "universal-intake");
+// My profile (settings:profile) is not gated: every member sets their own
+// interface language, default warehouse and approval emails there, and the
+// server answers /api/me/profile for every member (product review 2026-11-20).
 mapPermission(
   "settings.workspace.read",
-  "settings settings:profile settings:warehouse-access settings:company settings:ai",
+  "settings settings:warehouse-access settings:company settings:ai",
 );
 mapPermission("settings.diagnostics.read", "settings:readiness");
 mapPermission("settings.roles.read", "settings:roles");

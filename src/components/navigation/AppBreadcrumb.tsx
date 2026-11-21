@@ -1,6 +1,7 @@
 import { ChevronRight, Home } from "lucide-react";
 import { Link, generatePath, matchPath, useLocation } from "react-router";
 import { breadcrumbRoutes, type AppRouteDefinition } from "../../app/routeRegistry";
+import { useRouteAvailability } from "../../app/routeAvailability";
 import { A } from "../ui";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
@@ -11,6 +12,9 @@ export function AppBreadcrumb({ route }: { route: AppRouteDefinition }) {
   const { routeLabel, t, language } = useI18n();
   const items = breadcrumbRoutes(route);
   const detailLabel = useDetailCrumbLabel(location.pathname);
+  // A crumb links only to a page this person may open (My profile sits under
+  // Settings, which a specialist cannot open).
+  const canOpenRoute = useRouteAvailability();
   // A sidebar entry is named as the sidebar names it (Today, Purchasing,
   // Receiving); other pages by their own label.
   const crumbLabel = (item: AppRouteDefinition) => {
@@ -46,7 +50,7 @@ export function AppBreadcrumb({ route }: { route: AppRouteDefinition }) {
     <nav aria-label={t("breadcrumb")} className={`fc-breadcrumb ${route.pageType === "detail" ? "" : "max-sm:hidden"}`} data-testid="app-breadcrumb">
       {items.map((item, index) => {
         const current = index === items.length - 1;
-        const href = current ? null : crumbHref(item);
+        const href = current || !canOpenRoute(item.id) ? null : crumbHref(item);
         return <span key={item.id} className="inline-flex min-w-0 items-center gap-1.5">
           {index > 0 && <ChevronRight size={12} aria-hidden style={{ color: A.gray3 }} />}
           {current ? (
