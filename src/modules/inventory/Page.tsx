@@ -131,7 +131,10 @@ const endpointFor: Record<string, { url: string; key: string }> = {
 const COPY = {
   stockedItems: ["Stocked items", "有库存的物料"],
   stockedItemsNote: ["SKUs with a posted balance", "已过账余额的 SKU"],
-  short: ["Need replenishment", "需补货"],
+  // A row's status, as the reorder list words it, and the count of those
+  // rows, as Reports, Purchasing and Today word it (product review 2026-11-20).
+  short: ["Order now", "立即下单"],
+  shortCount: ["Items to reorder", "待补货物料"],
   shortNote: ["Stock position at or below the reorder point, as on the reorder list", "库存头寸等于或低于再订货点，与补货清单一致"],
   positionUnknown: ["The reorder list cannot judge your view, so only stock on hand is shown", "补货清单无法判断你可见的库存，因此只显示现有库存信号"],
   reserved: ["Reserved lines", "有预留的行"],
@@ -525,7 +528,7 @@ export default function InventoryPage({
   const statuses = [...new Set(rows.map((row: any) => row.status).filter(Boolean))] as string[];
   const balances = view === "overview" || view === "warnings";
   const count = (value: number) => (state === "ready" ? String(value) : "—");
-  // Need replenishment needs the stock position; without it the card says so.
+  // Items to reorder needs the stock position; without it the card says so.
   const replenishCount = () => (state === "ready" && signalCounts.positionUnknown ? "—" : count(signalCounts.needsReplenishment));
   const stateRow = (colSpan: number) =>
     state === "loading" ? <ListStateRow colSpan={colSpan} state="loading" />
@@ -557,7 +560,7 @@ export default function InventoryPage({
     <div className="space-y-5">
       {view === "warnings" && (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="inventory-warning-cards">
-          <ActionableMetricCard label={tr("short")} value={replenishCount()} description={signalCounts.positionUnknown ? tr("positionUnknown") : tr("shortNote")} to="/app/inventory/reorder" icon={AlertTriangle} color={A.orange} />
+          <ActionableMetricCard label={tr("shortCount")} value={replenishCount()} description={signalCounts.positionUnknown ? tr("positionUnknown") : tr("shortNote")} to="/app/inventory/reorder" icon={AlertTriangle} color={A.orange} />
           <ActionableMetricCard label={tr("belowSafety")} value={count(signalCounts.belowSafetyOnHand)} description={tr("belowSafetyNote")} to="/app/inventory/warnings" icon={PackageOpen} color={A.red} />
           <ActionableMetricCard label={tr("covered")} value={state === "ready" && signalCounts.positionUnknown ? "—" : count(signalCounts.coveredByOpenOrders)} description={tr("coveredNote")} to="/app/inventory/warnings" icon={Boxes} color={A.blue} />
           <ActionableMetricCard label={tr("noneAvailable")} value={count(signalCounts.noneAvailable)} description={tr("noneAvailableNote")} to="/app/inventory/warnings" icon={Warehouse} color={A.gray1} />
@@ -566,7 +569,7 @@ export default function InventoryPage({
       {view === "overview" && (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <ActionableMetricCard label={tr("stockedItems")} value={count(new Set(items.map((item) => item.sku)).size)} description={tr("stockedItemsNote")} to="/app/inventory/stock" icon={Boxes} color={A.blue} />
-          <ActionableMetricCard label={tr("short")} value={replenishCount()} description={signalCounts.positionUnknown ? tr("positionUnknown") : tr("shortNote")} to="/app/inventory/reorder" icon={AlertTriangle} color={A.orange} />
+          <ActionableMetricCard label={tr("shortCount")} value={replenishCount()} description={signalCounts.positionUnknown ? tr("positionUnknown") : tr("shortNote")} to="/app/inventory/reorder" icon={AlertTriangle} color={A.orange} />
           <ActionableMetricCard label={tr("reserved")} value={count(items.filter((item) => Number(item.reservedQuantity || 0) > 0).length)} description={tr("reservedNote")} to="/app/inventory/stock" icon={PackageOpen} color={A.purple} />
           <ActionableMetricCard label={tr("warehouses")} value={count(warehouseIds.length)} description={tr("warehousesNote")} to="/app/inventory/stock" icon={Warehouse} color={A.gray1} />
         </div>
@@ -709,7 +712,7 @@ export default function InventoryPage({
                         </td>
                         <td className={tdNumericRightClass} style={{ color: A.sub }}>{threshold(item.safetyStock)} / {threshold(item.reorderPoint)}</td>
                         <td className={tdNowrapClass}>
-                          {/* Need replenishment is the reorder list's position; below safety stock is the shelf, with whether open orders cover it. */}
+                          {/* Order now is the reorder list's position; below safety stock is the shelf, with whether open orders cover it. */}
                           {stock === "out"
                             ? <StatusChip label={tr("outOfStock")} tone="danger" />
                             : stock === "replenish"
