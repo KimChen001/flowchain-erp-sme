@@ -13,6 +13,8 @@ import { ActionableMetricCard } from "../../components/cards/ActionableMetricCar
 import { EntityLink } from "../../components/business/EntityLink";
 import { ExportButton, ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
 import { exportRowsToCsv } from "../../lib/data-export";
+import { fetchAllListRows } from "../../lib/listExport";
+import { toast } from "sonner";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
 import { useReorderListCopy } from "./reorderListCopy";
@@ -176,6 +178,8 @@ const COPY = {
   exportUnit: ["Unit", "单位"],
   exportSafety: ["Safety stock", "安全库存"],
   exportReorderPoint: ["Reorder point", "再订货点"],
+  exportDateTime: ["Date and time", "日期时间"],
+  exportMovementsCut: ["Exported the first {shown} of {total} movements. Narrow the filters to export the rest.", "已导出 {total} 条流水中的前 {shown} 条。请缩小筛选范围以导出其余流水。"],
   // Under the reorder point on hand, with open purchase orders keeping the position above it (design audit L7-22).
   onOrder: ["On order", "已有在途采购"],
   onOrderNote: ["Stock on hand is at or below the reorder point; open purchase orders keep the position above it", "现有量等于或低于再订货点，在途采购使库存头寸高于再订货点"],
@@ -456,7 +460,7 @@ export default function InventoryPage({
   });
   // Balances and warnings: every row the filters show, with the stock
   // status the list shows. Movements come a page at a time from the server,
-  // so they have no export here.
+  // so their export (below) reads every page itself.
   const stockStateText = (item: Item) => {
     const stock = stockStateOf(item);
     return tr(stock === "out" ? "outOfStock" : stock === "replenish" ? "short" : stock === "below_safety" ? "belowSafety" : stock === "on_order" ? "onOrder" : "sufficient");
@@ -478,6 +482,31 @@ export default function InventoryPage({
     [tr("status")]: stockStateText(item),
   }));
   const exportStock = () => void exportRowsToCsv(view === "warnings" ? "inventory-warnings-export.csv" : "inventory-balances-export.csv", stockExportRows(visible as Item[]), timezone);
+  // Movements: every one the search and filters match, read page after page
+  // from the server (fetchAllListRows, up to its limit, as the shipments and
+  // sales orders exports read them), worded as the list shows them.
+  const exportMovements = async () => {
+    const filters = new URLSearchParams(queryString);
+    if (query.trim()) filters.set("q", query.trim());
+    if (movementType) filters.set("movementType", movementType);
+    if (warehouse) filters.set("warehouseId", warehouse);
+    const { rows: all, total, truncated } = await fetchAllListRows<Movement>(endpointFor.movements.url, filters, { itemsKey: endpointFor.movements.key });
+    const quantity = (value?: string | number) => (Number(value || 0) ? Number(value) : "");
+    await exportRowsToCsv("inventory-movements-export.csv", all.map((row) => ({
+      [tr("type")]: movementTypeLabel(row.movementType || "", language, row.reason),
+      [tr("source")]: row.sourceDocumentNumber || row.sourceDocument || "",
+      [tr("exportSku")]: row.sku || "",
+      [tr("exportItemName")]: row.itemName || "",
+      [tr("warehouse")]: warehouseName(row.warehouseId) || row.warehouseId || "",
+      [tr("exportLocation")]: row.location || "",
+      [tr("quantityIn")]: quantity(row.quantityIn),
+      [tr("quantityOut")]: quantity(row.quantityOut),
+      [tr("exportUnit")]: row.unit || "",
+      [tr("exportDateTime")]: row.date ? formatDateTimeInTimeZone(row.date, locale, timezone) : "",
+      [tr("status")]: row.status ? statusLabel(row.status) : "",
+    })), timezone);
+    if (truncated) toast.warning(tr("exportMovementsCut").replace("{shown}", String(all.length)).replace("{total}", String(total)));
+  };
   // One page of rows is drawn; movements arrive a page at a time already.
   const paged = usePagedRows(visible, LIST_PAGE_SIZE, [view, queryString, query, warehouse, stockStatus, status, signalFilter].join("|"));
   const drawn: any[] = view === "movements" ? visible : paged.pageRows;
@@ -620,6 +649,7 @@ export default function InventoryPage({
           <ResetButton onClick={reset} />
           <RefreshButton onClick={load} />
           {(view === "overview" || view === "warnings") && state === "ready" && <ExportButton onClick={exportStock} />}
+          {view === "movements" && state === "ready" && <ExportButton onClick={() => void exportMovements()} />}
           {view === "warnings" && (
             <Link to="/app/inventory/reorder" data-testid="inventory-warnings-reorder-link" className={listButtonClass.export} title={reorderCopy("fromWarnings")}>
               <ListChecks size={13} />{tr("reorderList")}
