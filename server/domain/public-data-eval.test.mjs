@@ -448,7 +448,9 @@ test('the UCI question set: every case in English or Chinese, on fixed months, w
   assert.equal(expect('only-nothing-zh').numbers[0].value, 170)
   assert.equal(expect('both-arrive-en').numbers[0].value, 240)
   assert.deepEqual(expect('reorder-en').quantities, [{ sku: 'C1', quantity: 20 }])
-  assert.equal(expect('month-compare-zh').numbers[2].value, 188.6)
+  // A rise or fall in either sign, the words saying which (2026-11-20).
+  assert.deepEqual(expect('month-compare-zh').numbers[2].anyOf, [188.6, 188.6])
+  assert.equal(expect('month-compare-zh').matches[0].label, '说增长')
   assert.match(cases.find((row) => row.id === 'hero-month-units-en').turns[0], /October 2026/)
   assert.match(cases.find((row) => row.id === 'month-compare-zh').turns[0], /2026 年 10 月的销售额和 9 月/)
 })
