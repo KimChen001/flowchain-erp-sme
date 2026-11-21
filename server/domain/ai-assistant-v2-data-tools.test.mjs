@@ -1018,10 +1018,10 @@ test('the reorder list and suggest_purchase_lines order up to the same level', a
 })
 
 // 2026-11-20 question set: 65 items due today came by SKU, so the first page
-// was 21xxx codes and the cakestand was never named. The most urgent come
-// beside the page: fewest days of cover, then (no demand) furthest below
-// the reorder point as a share of it; with the unit (#431 review).
-test('reorder_list names the most urgent order-now items over every row, by days of cover', async () => {
+// was 21xxx codes and the cakestand was never named. The order-now items
+// furthest below their reorder point come beside the page, each with its
+// unit. No days-of-cover ranking (#431 review: dropped).
+test('reorder_list names the order-now items furthest below their reorder point, with units, and no urgency ranking', async () => {
   const scenario = aiSkillScenario()
   const loaded = await loadAiSkillContext(scenario.ctx)
   const today = (await readAiSkillFacts(loaded)).today
@@ -1032,13 +1032,14 @@ test('reorder_list names the most urgent order-now items over every row, by days
   const context = await loadAiSkillContext({ ...scenario.ctx, aiReadServices: { reorderList: { read: async () => ({ rows }) } } })
   const run = async (args) => (await runAiReadTool('reorder_list', args, { facts: await readAiSkillFacts(context), context })).result
   const list = await run({ limit: 3 })
-  // Days of cover: 20006 2.0, 20001 5.3, 20002 25.3, 20000 50, 20003 134.5,
-  // 20007 300; no demand: 20005 (90% below) before 20004 (43% below).
-  assert.deepEqual(list.mostUrgentNow.map((row) => [row.sku, row.daysOfCover, row.unit]), [['20006', 2, 'box'], ['20001', 5.3, 'pcs'], ['20002', 25.3, 'pcs'], ['20000', 50, 'pcs'], ['20003', 134.5, 'pcs']])
-  assert.equal(list.mostUrgentNow[2].raisedToMinimum, true)
-  assert.equal(list.mostUrgentNow[2].requestQuantity, 85)
+  // Shortfalls: 20005 360, 20001 201, 20003 162, 20004 97, 20002 65.
+  assert.deepEqual(list.largestShortfallsNow.map((row) => [row.sku, row.shortfall, row.unit]), [['20005', 360, 'kg'], ['20001', 201, 'pcs'], ['20003', 162, 'pcs'], ['20004', 97, 'pcs'], ['20002', 65, 'pcs']])
+  assert.deepEqual([list.largestShortfallsNow[4].raisedToMinimum, list.largestShortfallsNow[4].requestQuantity], [true, 85])
+  // No days-of-cover ranking, on the list or its rows.
+  assert.equal(list.mostUrgentNow, undefined)
+  assert.equal(list.largestShortfallsNow.some((row) => 'daysOfCover' in row), false)
   // The page itself is as before: by order-by day, then SKU.
   assert.deepEqual(list.rows.map((row) => row.sku), ['20000', '20001', '20002'])
   // One item asked for: no summary.
-  assert.equal((await run({ sku: '20001' })).mostUrgentNow, undefined)
+  assert.equal((await run({ sku: '20001' })).largestShortfallsNow, undefined)
 })
