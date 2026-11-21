@@ -12,11 +12,13 @@
 // The steps run without a database given an order snapshot
 // (supplierReplyOrderSchema), for the eval's scorer, from
 // server/domain/supplier-reply-reading.mjs:
-//   cleanSupplierReply(text)
-//     -> { text, quoted, quotedTextHidden, invisibleRemoved }
+//   cleanSupplierReply(text, { sent? })
+//     -> { text, quoted, quotedTextHidden, invisibleRemoved, inlineAnswers, inline }
+//        (sent: our sent chase; inline: the answers read from inside the
+//        quoted email, as they stand in text)
 //   readSupplierReply({ order, text, receivedOn, today, callModel, reserve? })
 //     -> { readingStatus, reading, calls, usage }   (callModel is injected)
-//   checkReplyReading({ order, text, receivedOn, reading })
+//   checkReplyReading({ order, text, receivedOn, reading, inline? })
 //     -> supplierReplyCheckSchema
 import { z } from 'zod'
 
@@ -81,10 +83,12 @@ export const SUPPLIER_REPLY_DISMISS_REASONS = Object.freeze(['wrong_reading', 's
 //   refused              the reply refuses this date ("cannot ship on 28 Nov",
 //                        "28 Nov is no longer possible", 发不了) and names no other
 //   addressed_to_system  quoted from text addressed to the system (dropped)
+//   inline_answer        the date was read from an answer inside the quoted
+//                        email: offered to the person, never proposed
 //   several_dates        the quote names more than one date, and this one is
 //                        the line's current promise or the one it replaces
 //                        (both offered in readings when there are two)
-export const SUPPLIER_REPLY_LINE_ISSUES = Object.freeze(['quote_not_found', 'date_mismatch', 'ambiguous_numeric', 'vague', 'relative_unreadable', 'before_reply', 'too_far', 'unknown_line', 'not_open', 'unchanged', 'split_incomplete', 'several_dates', 'refused', 'addressed_to_system'])
+export const SUPPLIER_REPLY_LINE_ISSUES = Object.freeze(['quote_not_found', 'date_mismatch', 'ambiguous_numeric', 'vague', 'relative_unreadable', 'before_reply', 'too_far', 'unknown_line', 'not_open', 'unchanged', 'split_incomplete', 'several_dates', 'refused', 'addressed_to_system', 'inline_answer'])
 // What became of one line of the reading.
 export const SUPPLIER_REPLY_LINE_OUTCOMES = Object.freeze(['proposed', 'needs_you', 'dropped', 'confirmed'])
 
