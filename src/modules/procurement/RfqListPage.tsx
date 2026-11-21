@@ -5,6 +5,7 @@ import { A, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { EntityLink } from "../../components/business/EntityLink";
 import { ExportButton, ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
+import { STATUS_TONE_COLORS } from "../../components/ui/statusTones";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { procurementApi } from "./procurementApi";
 import { ListPager, usePagedRows } from "./listPaging";
@@ -139,7 +140,7 @@ export function RfqListPage() {
         <ActionableMetricCard label={tr("open")} value={value(rows.filter(isOpen).length)} description={tr("openNote")} to="/app/procurement/rfq" icon={FileSearch} color={A.blue} />
         {/* Open RFQs take quotes as well; nothing moves an RFQ to collecting_quotes yet (design audit L1-32). */}
         <ActionableMetricCard label={tr("collecting")} value={value(rows.filter((row) => row.status === "open" || row.status === "collecting_quotes").length)} description={tr("collectingNote")} to="/app/procurement/rfq?status=open" icon={Inbox} color={A.orange} />
-        <ActionableMetricCard label={tr("complete")} value={value(rows.filter((row) => isOpen(row) && quotesIn(row)).length)} description={tr("completeNote")} to="/app/procurement/rfq?quotes=complete" icon={MessageSquareQuote} color={A.purple} />
+        <ActionableMetricCard label={tr("complete")} value={value(rows.filter((row) => isOpen(row) && quotesIn(row)).length)} description={tr("completeNote")} to="/app/procurement/rfq?quotes=complete" icon={MessageSquareQuote} color={A.success} />
         <ActionableMetricCard label={tr("dueSoon")} value={value(rows.filter(dueSoon).length)} description={tr("dueSoonNote")} to="/app/procurement/rfq?due=7" icon={CalendarClock} color={A.red} />
       </div>
 
@@ -222,7 +223,7 @@ export function RfqListPage() {
                     <td className={tdNowrapClass}>
                       <StatusChip label={`${responded} / ${row.supplierCount ?? 0}`} tone={quotesIn(row) ? "success" : responded > 0 ? "info" : "neutral"} />
                     </td>
-                    <td className={tdNowrapClass} style={{ color: overdue(row) ? "#b91c1c" : A.sub }}>{row.dueDate ? formatCalendarDay(row.dueDate, locale) : "—"}</td>
+                    <td className={tdNowrapClass} style={{ color: overdue(row) ? STATUS_TONE_COLORS.danger.color : A.sub }}>{row.dueDate ? formatCalendarDay(row.dueDate, locale) : "—"}</td>
                     <td className={tdNowrapClass}><StatusChip label={statusLabel(row.status)} tone={statusToneOf(row.status)} /></td>
                     <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
                       <div className="flex items-center gap-1.5">

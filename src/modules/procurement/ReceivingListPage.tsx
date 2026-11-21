@@ -6,6 +6,7 @@ import { EntityLink } from "../../components/business/EntityLink";
 import { A, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { ExportButton, ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
+import { STATUS_TONE_COLORS } from "../../components/ui/statusTones";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { receivingApi, type ReceiptListItem } from "./receivingApi";
 import { useI18n } from "../../i18n/I18n";
@@ -101,7 +102,7 @@ export function ReceivingListPage() {
     <div className="space-y-5" data-testid="procurement-receiving-list">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <ActionableMetricCard label={tr("收货单", "Receipts")} value={count(rows.length)} description={tr("当前工作区可查看的收货单", "Receipts in the warehouses you can see")} to="/app/procurement/receiving" icon={PackageCheck} color={A.blue} />
-        <ActionableMetricCard label={tr("已过账", "Posted")} value={count(rows.filter((row) => postingOf(row) === "posted").length)} description={tr("已计入库存", "Counted in inventory")} to="/app/procurement/receiving?posting=posted" icon={CheckCircle2} color={A.purple} />
+        <ActionableMetricCard label={tr("已过账", "Posted")} value={count(rows.filter((row) => postingOf(row) === "posted").length)} description={tr("已计入库存", "Counted in inventory")} to="/app/procurement/receiving?posting=posted" icon={CheckCircle2} color={A.success} />
         <ActionableMetricCard label={tr("未过账", "Not posted")} value={count(rows.filter((row) => postingOf(row) === "unposted").length)} description={tr("草稿或待过账，尚未计入库存", "Drafts or waiting to post, not in inventory yet")} to="/app/procurement/receiving?posting=unposted" icon={Clock3} color={A.orange} />
         <ActionableMetricCard label={tr("有拒收", "With rejections")} value={count(rows.filter(rejected).length)} description={tr("收货时拒收了部分数量", "Some quantity was rejected at receipt")} to="/app/procurement/receiving?posting=rejected" icon={AlertTriangle} color={A.red} />
       </div>
@@ -187,7 +188,7 @@ export function ReceivingListPage() {
                   </td>
                   <td className={tdNumericRightClass}>
                     <span className="font-semibold" style={{ color: A.label }}>{quantity(row.acceptedQuantity)}</span>
-                    <span style={{ color: rejected(row) ? "#b91c1c" : A.gray2 }}> / {quantity(row.rejectedQuantity)}</span>
+                    <span style={{ color: rejected(row) ? STATUS_TONE_COLORS.danger.color : A.gray2 }}> / {quantity(row.rejectedQuantity)}</span>
                   </td>
                   <td className={tdNowrapClass} style={{ color: A.sub }} title={row.arrivedAt || row.createdAt ? formatDateTime(String(row.arrivedAt || row.createdAt)) : undefined}>
                     {row.arrivedAt || row.createdAt ? arrivalDay(String(row.arrivedAt || row.createdAt)) : "—"}

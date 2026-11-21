@@ -133,7 +133,7 @@ export function SupplierActivityCards({ supplierId, titles, empty }: { supplierI
   const status = (testId: string) => (loading && !data
     ? <Note testId={`${testId}-loading`}>{t("loading")}</Note>
     : error
-      ? <div role="alert" className="mt-2 flex items-center gap-2 text-xs" style={{ color: A.red }}>{t("loadFailed")}<button type="button" className="underline" onClick={reload}>{t("retry")}</button></div>
+      ? <div role="alert" className="mt-2 flex items-center gap-2 text-xs" style={{ color: A.danger }}>{t("loadFailed")}<button type="button" className="underline" onClick={reload}>{t("retry")}</button></div>
       : null);
   const orders = data?.purchaseOrders;
   const invoices = data?.invoices;

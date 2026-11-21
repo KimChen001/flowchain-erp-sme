@@ -50,7 +50,7 @@ export type EvidenceRow = {
 };
 
 export function documentToneStyle(tone: DocumentTone = "neutral") {
-  if (tone === "success") return { color: A.green, bg: "#f0faf4" };
+  if (tone === "success") return { color: A.success, bg: "#f0fdfa" };
   if (tone === "warning") return { color: A.orange, bg: "#fff8f0" };
   if (tone === "danger") return { color: A.red, bg: "#fff1f0" };
   if (tone === "purple") return { color: A.purple, bg: "#faf3ff" };
@@ -252,7 +252,7 @@ export function DocumentTotals({ totals, columns = 4 }: { totals: DocumentTotal[
 export function DocumentStatusTimeline({ steps }: { steps: TimelineStep[] }) {
   const copy = useWorkspaceCopy();
   const colorFor = (status: TimelineStep["status"]) => {
-    if (status === "done") return A.green;
+    if (status === "done") return A.success;
     if (status === "current") return A.blue;
     if (status === "warning") return A.orange;
     if (status === "blocked") return A.red;

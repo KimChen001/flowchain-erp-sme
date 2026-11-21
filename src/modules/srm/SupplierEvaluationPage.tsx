@@ -217,10 +217,10 @@ export default function SupplierEvaluationPage() {
           </label>
         </div>
         <p className="px-5 pt-3 text-[11px]" style={{ color: A.sub }}>{t("Tiers are set by your team with a reason and kept in each supplier's history. FlowChain does not suggest tiers.")}</p>
-        {insightsFailed && <p role="alert" className="px-5 pt-2 text-xs" style={{ color: A.red }}>{t("Indicators could not be loaded. Refresh to try again.")}</p>}
+        {insightsFailed && <p role="alert" className="px-5 pt-2 text-xs" style={{ color: A.danger }}>{t("Indicators could not be loaded. Refresh to try again.")}</p>}
         {error ? (
           <div className="p-8 text-center">
-            <div className="text-sm" style={{ color: A.red }}>{t("Could not load suppliers.")}</div>
+            <div className="text-sm" style={{ color: A.danger }}>{t("Could not load suppliers.")}</div>
             <button type="button" onClick={load} className="mt-3 text-xs text-blue-600">{t("Retry")}</button>
           </div>
         ) : loading && rows.length === 0 ? (
@@ -270,7 +270,7 @@ export default function SupplierEvaluationPage() {
                         <td className={`${tdNumericRightClass} !px-3`}>{count(insight?.openIssues)}</td>
                         <td className={tdNowrapClass} title={row.tierReason || undefined}>
                           <TierChip tier={row.tier} short />
-                          {tierReviewPrompted(row.tier, insight) && <div className="mt-0.5 text-[11px]" style={{ color: A.orange }} data-testid="supplier-tier-review-prompt" title={t("Tier 1, with on time or OTIF below 80% over the last 90 days. Tiers are set by your team: this is only a prompt to review.")}>{t("Review tier?")}</div>}
+                          {tierReviewPrompted(row.tier, insight) && <div className="mt-0.5 text-[11px] text-amber-700" data-testid="supplier-tier-review-prompt" title={t("Tier 1, with on time or OTIF below 80% over the last 90 days. Tiers are set by your team: this is only a prompt to review.")}>{t("Review tier?")}</div>}
                         </td>
                         {canEdit && <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
                           <button type="button" data-testid="supplier-evaluation-set-tier" aria-expanded={editing === row.id} onClick={() => setEditing(editing === row.id ? null : row.id)} className={rowActionClass.neutral}>

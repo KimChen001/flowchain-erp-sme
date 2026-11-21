@@ -32,7 +32,7 @@ type SupplierRisks = {
 const KINDS: Array<{ type: SupplierIssueType; label: string; sub: string; source: keyof SupplierRisks["visibility"]; icon: ElementType; color: string }> = [
   { type: "po_overdue", label: "Overdue purchase orders", sub: "Past their promised date", source: "orders", icon: AlertTriangle, color: A.red },
   { type: "grn_rejected_qty", label: "Receipts with rejections", sub: "A quantity was rejected on receipt", source: "receipts", icon: PackageX, color: A.orange },
-  { type: "invoice_variance", label: "Invoice variances", sub: "Invoices that differ from the PO or receipt", source: "invoices", icon: FileWarning, color: A.purple },
+  { type: "invoice_variance", label: "Invoice variances", sub: "Invoices that differ from the PO or receipt", source: "invoices", icon: FileWarning, color: A.red },
 ];
 
 export default function SupplierRisksPage() {
@@ -132,7 +132,7 @@ export default function SupplierRisksPage() {
         </p>}
         {error ? (
           <div className="p-8 text-center">
-            <div className="text-sm" style={{ color: A.red }}>{t("Could not load supplier risks.")}</div>
+            <div className="text-sm" style={{ color: A.danger }}>{t("Could not load supplier risks.")}</div>
             <button type="button" onClick={() => setTick((value) => value + 1)} className="mt-3 text-xs text-blue-600">{t("Retry")}</button>
           </div>
         ) : loading && !data ? (
@@ -171,7 +171,7 @@ export default function SupplierRisksPage() {
                       <EntityLink kind={row.entityType} id={row.entityId} className={tableLinkClass}>{row.label}</EntityLink>
                     </td>
                     <td className={tdNumericRightClass}>
-                      {row.when.kind === "overdue" && row.when.days !== null ? <span style={{ color: A.red }}>{row.when.days}</span> : <span style={{ color: A.gray2 }}>—</span>}
+                      {row.when.kind === "overdue" && row.when.days !== null ? <span style={{ color: A.danger }}>{row.when.days}</span> : <span style={{ color: A.gray2 }}>—</span>}
                     </td>
                   </tr>
                 ))}

@@ -6,6 +6,7 @@ import { A, Card, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { EntityLink } from "../../components/business/EntityLink";
 import { ExportButton, ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, metricGridClass, rowActionClass, statusToneOf, useListCopy } from "../../components/ui/listLayout";
+import { STATUS_TONE_COLORS } from "../../components/ui/statusTones";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { ListPager } from "../procurement/listPaging";
 import { useI18n } from "../../i18n/I18n";
@@ -114,7 +115,7 @@ const tokenKeys: Record<string, TranslationKey> = {
 };
 // A payable still owed, the server's outstandingPayableWhere.
 const PAYABLE_OPEN_STATUSES = ["approved", "export_ready", "held", "partially_settled"];
-const PAST_DUE_COLOR = "#b91c1c";
+const PAST_DUE_COLOR = STATUS_TONE_COLORS.danger.color;
 
 function Warning({ children, title, testId }: { children: ReactNode; title?: string; testId?: string }) {
   return (
@@ -741,7 +742,7 @@ function FinanceList({
           <ActionableMetricCard label={tr("matched")} value={count("matched")} description={tr("matchedNote")} to="/app/procurement/bills?status=matched" icon={ShieldCheck} color={A.blue} />
           <ActionableMetricCard label={tr("toPay")} value={count("to_pay")} description={tr("toPayNote")} to="/app/procurement/bills?status=to_pay" icon={Wallet} color={A.blue} />
           <ActionableMetricCard label={tr("partlyPaid")} value={count("partially_settled")} description={tr("partlyPaidNote")} to="/app/procurement/bills?status=partially_settled" icon={Coins} color={A.orange} />
-          <ActionableMetricCard label={tr("paid")} value={count("settled")} description={tr("paidNote")} to="/app/procurement/bills?status=settled" icon={CheckCircle2} color={A.purple} />
+          <ActionableMetricCard label={tr("paid")} value={count("settled")} description={tr("paidNote")} to="/app/procurement/bills?status=settled" icon={CheckCircle2} color={A.success} />
         </div>
       )}
       {payables && (
@@ -749,7 +750,7 @@ function FinanceList({
           <ActionableMetricCard label={tr("unpaid")} value={count("outstanding")} description={tr("unpaidNote")} to="/app/finance/payables?status=outstanding" icon={Wallet} color={A.blue} />
           <ActionableMetricCard label={tr("overdue")} value={count("overdue")} description={tr("overdueNote")} to="/app/finance/payables?status=overdue" icon={AlertTriangle} color={A.red} />
           <ActionableMetricCard label={tr("held")} value={count("held")} description={tr("heldNote")} to="/app/finance/payables?status=held" icon={PauseCircle} color={A.orange} />
-          <ActionableMetricCard label={tr("paid")} value={count("settled")} description={tr("paidNote")} to="/app/finance/payables?status=settled" icon={CheckCircle2} color={A.purple} />
+          <ActionableMetricCard label={tr("paid")} value={count("settled")} description={tr("paidNote")} to="/app/finance/payables?status=settled" icon={CheckCircle2} color={A.success} />
         </div>
       )}
       {invoices ? (

@@ -6,6 +6,7 @@ import { BusinessEntityLink } from "../../components/business/BusinessEntityLink
 import { A, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, type StatusTone } from "../../components/ui/listLayout";
+import { STATUS_TONE_COLORS } from "../../components/ui/statusTones";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { procurementApi } from "./procurementApi";
 import { ListPager, usePagedRows } from "./listPaging";
@@ -123,7 +124,7 @@ export function ThreeWayMatchListPage() {
     <div className="space-y-5" data-testid="procurement-three-way-match-list">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <ActionableMetricCard label={tr("all")} value={value(rows.length)} description={tr("allNote")} to="/app/procurement/three-way-match" icon={Scale} color={A.blue} />
-        <ActionableMetricCard label={tr("matched")} value={value(count("matched"))} description={tr("matchedNote")} to="/app/procurement/three-way-match?result=matched" icon={CheckCircle2} color={A.purple} />
+        <ActionableMetricCard label={tr("matched")} value={value(count("matched"))} description={tr("matchedNote")} to="/app/procurement/three-way-match?result=matched" icon={CheckCircle2} color={A.success} />
         <ActionableMetricCard label={tr("pending")} value={value(count("pending"))} description={tr("pendingNote")} to="/app/procurement/three-way-match?result=pending" icon={Clock3} color={A.orange} />
         <ActionableMetricCard label={tr("variance")} value={value(count("variance"))} description={tr("varianceNote")} to="/app/procurement/three-way-match?result=variance" icon={AlertCircle} color={A.red} />
       </div>
@@ -199,7 +200,7 @@ export function ThreeWayMatchListPage() {
                     </td>
                     <td className={`${tdNumericRightClass} font-semibold`} style={{ color: A.label }}>{money(row.invoiceAmount, row.currency, locale)}</td>
                     {/* Red only while the variance waits on a decision; an approved one, or one inside the tolerance, stays on record in gray. */}
-                    <td className={tdNumericRightClass} style={{ color: variance && matchResultOf(row) === "variance" ? "#b91c1c" : A.sub }}>{money(row.varianceAmount, row.currency, locale)}</td>
+                    <td className={tdNumericRightClass} style={{ color: variance && matchResultOf(row) === "variance" ? STATUS_TONE_COLORS.danger.color : A.sub }}>{money(row.varianceAmount, row.currency, locale)}</td>
                     <td className={`${tdNameClass} min-w-[160px]`}>
                       <StatusChip label={copy(row.matchStatus || row.status || "—")} tone={RESULT_TONE[matchResultOf(row)]} />
                       {reason && <div className="mt-1 max-w-[260px] whitespace-normal text-[11px] leading-4 text-amber-800">{copy(reason)}</div>}
