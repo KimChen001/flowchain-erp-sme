@@ -600,9 +600,9 @@ function LinkReceipt({ invoice, onDone }: { invoice: { id: string; version: numb
         </select>
       </label>
       <div className="flex flex-wrap gap-2">
-        <button type="button" className={listButtonClass.secondary} onClick={() => { setOpen(false); setPlan(null); setError(""); }}>{t("finance.close")}</button>
         <button type="button" data-testid="link-receipt-preview" className={listButtonClass.secondary} onClick={() => void preview()}><RefreshCw size={13} />{t("finance.preview")}</button>
-        <button type="button" data-testid="link-receipt-confirm" className={`${listButtonClass.primary} disabled:cursor-not-allowed disabled:opacity-50`} disabled={!plan?.allowed || busy} onClick={() => void confirm()}>{t("finance.confirm")}</button>
+        <button type="button" data-testid="link-receipt-confirm" className={`${listButtonClass.primary} disabled:cursor-not-allowed`} disabled={!plan?.allowed || busy} onClick={() => void confirm()}>{t("finance.confirm")}</button>
+        <button type="button" className={listButtonClass.secondary} onClick={() => { setOpen(false); setPlan(null); setError(""); }}>{t("finance.close")}</button>
       </div>
       {plan && (plan.allowed
         ? <Notice tone="success">{t("finance.previewAllowed")}</Notice>
