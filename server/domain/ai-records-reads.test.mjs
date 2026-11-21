@@ -148,3 +148,17 @@ test('a scope that holds every warehouse reads as every warehouse', async () => 
   assert.equal(await readsEveryWarehouse({}, 'T', ['WH-1']), false)
   assert.equal(await readsEveryWarehouse({ warehouse: { findMany: async () => { throw new Error('down') } } }, 'T', ['WH-1']), false)
 })
+
+// #430 recheck: the warehouses are read only when an order outside the list
+// is to be read, and a partial reader still reads none.
+test('the warehouse check runs only when an order outside the list is to be read', async () => {
+  let checks = 0
+  const readsEvery = async () => { checks += 1; return false }
+  const prisma = { salesOrder: { findMany: async () => { throw new Error('no read expected') } } }
+  const listed = [{ id: 'SO-1' }]
+  assert.deepEqual((await openSalesOrdersOf({ listed, openIds: new Set(['SO-1']), prisma, tenantId: 'T', readsEvery })).map((row) => row.id), ['SO-1'])
+  assert.equal(checks, 0)
+  // One outside: checked; a partial reader reads none.
+  assert.deepEqual((await openSalesOrdersOf({ listed, openIds: new Set(['SO-1', 'SO-2']), prisma, tenantId: 'T', readsEvery })).map((row) => row.id), ['SO-1'])
+  assert.equal(checks, 1)
+})

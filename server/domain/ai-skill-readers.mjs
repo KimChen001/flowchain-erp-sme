@@ -22,10 +22,14 @@ const SALES_ORDERS_READ_MAX = 200
 // ones, read by id (up to SALES_ORDERS_READ_MAX) for a reader of every
 // warehouse; a reader of some keeps the listed ones.
 // notRead: the open orders past that bound, which the list says it left out.
-export async function openSalesOrdersOf({ listed = [], openIds = new Set(), prisma = null, tenantId = '', someWarehouses = false } = {}) {
+// readsEvery: an async check that the reader's warehouses are all of them,
+// run only when an order outside the list is to be read (#430 recheck).
+export async function openSalesOrdersOf({ listed = [], openIds = new Set(), prisma = null, tenantId = '', someWarehouses = false, readsEvery = null } = {}) {
   const rows = array(listed)
   const listedIds = new Set(rows.map((row) => text(row.salesOrderId || row.id)))
-  const outside = someWarehouses ? [] : [...openIds].map(text).filter((id) => id && !listedIds.has(id))
+  const candidates = [...openIds].map(text).filter((id) => id && !listedIds.has(id))
+  const restricted = someWarehouses || (candidates.length > 0 && typeof readsEvery === 'function' && !(await readsEvery()))
+  const outside = restricted ? [] : candidates
   const missing = outside.slice(0, SALES_ORDERS_READ_MAX)
   const read = missing.length && typeof prisma?.salesOrder?.findMany === 'function'
     ? await prisma.salesOrder.findMany({ where: { tenantId, id: { in: missing } }, include: { lines: true } }).catch(() => [])
@@ -576,7 +580,7 @@ export async function readAiSkillFacts(skillContext, { openPurchaseRequests = fa
       // set: two of six orders still to ship were missing). Those are read by
       // id, up to SALES_ORDERS_READ_MAX, for a reader of every warehouse (a
       // reader of some keeps the scoped list as it was).
-      const orders = await openSalesOrdersOf({ listed: business.salesOrders, openIds: open, prisma, tenantId, someWarehouses: !(await readsEveryWarehouse(prisma, tenantId, access.warehouseIds)) })
+      const orders = await openSalesOrdersOf({ listed: business.salesOrders, openIds: open, prisma, tenantId, readsEvery: () => readsEveryWarehouse(prisma, tenantId, access.warehouseIds) })
       if (orders.notRead) facts.salesOrdersNotRead = orders.notRead
       facts.salesOrders = orders.map((row) => ({
         id: text(row.salesOrderId || row.id), number: text(row.orderNumber || row.salesOrderId || row.id), customer: text(row.customerName) || null, promisedDate: dayOf(row.promisedDate),
