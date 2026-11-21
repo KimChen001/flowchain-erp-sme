@@ -411,18 +411,21 @@ function contractWork(contracts, today) {
     if (!kind) return []
     const id = text(contract.id)
     const date = calendarDay(contract.keyDate) || null
+    // Terminated from a day still to come: it ends on that day (L9-09).
+    const terminatesOn = calendarDay(contract.terminatesOn) || null
     return [row(kind, 'contract', id, {
       label: text(contract.number) || id,
       name: text(contract.supplierName) || null,
       href: `/app/contracts/${encode(id)}`,
       date,
-      dateKind: CONTRACT_DATE_KIND[kind],
+      dateKind: terminatesOn ? 'terminates' : CONTRACT_DATE_KIND[kind],
       overdueDays: kind === 'contract_past_end' ? daysLate(date, today) : 0,
       detail: {
         title: text(contract.title) || null,
         renewal: text(contract.renewal) || null,
         endDate: calendarDay(contract.endDate) || null,
         noticeDeadline: calendarDay(contract.noticeDeadline) || null,
+        terminatesOn,
       },
     })]
   })

@@ -20,7 +20,7 @@ import {
   contractSnapshot,
   storedDay,
 } from './contract-policy.mjs'
-import { addContractDays, contractCalendarDay } from '../../shared/contract-status.mjs'
+import { addContractDays, contractCalendarDay, contractMayTerminate, contractShownState, contractTerminationDateIssues } from '../../shared/contract-status.mjs'
 
 // Contract commands (docs/contracts-module-design.md, K1). Each needs
 // contracts.contract.manage and the contracts capability, and follows the
@@ -301,8 +301,15 @@ export function createContractCommandService({ prisma, env = process.env, idFact
         const row = await lockContract(tx, actor.tenantId, id)
         assertVersion(row, expectedVersion)
         assertStatus(row, ['active'], 'INVALID_STATE_TRANSITION', 'Only an active contract can be terminated.')
-        const signedOn = contractCalendarDay(row.signedOn)
-        if (signedOn && terminatedOn < signedOn) assertNoIssues([{ field: 'terminatedOn', code: 'BEFORE_SIGNED_ON', message: 'The termination date cannot be before the signed date.' }])
+        // Only one still in force, by its shown state: not one that has
+        // ended, is past its end date or was renewed (design audit L9-09).
+        const { today } = await workspaceDay(tx, actor.tenantId, now())
+        const renewalActivated = (row.renewals || []).some((renewal) => renewal.activatedAt)
+        const shown = contractShownState({ status: row.status, renewal: row.renewal, endDate: row.endDate, noticeDays: row.noticeDays, reminderDays: row.reminderDays }, { today, renewalActivated })
+        if (!contractMayTerminate({ status: row.status, state: shown.state })) fail('INVALID_STATE_TRANSITION', 'Only a contract still in force can be terminated: this one has ended, is past its end date or was renewed.', 409, [], { entityId: row.id, currentStatus: row.status, currentVersion: row.version, currentState: shown.state })
+        // The date within the contract: not before it was signed or started,
+        // not after it ends. A day still to come keeps it in force until then.
+        assertNoIssues(contractTerminationDateIssues(row, terminatedOn))
         const version = row.version + 1
         await tx.contract.update({ where: { id: row.id }, data: { status: 'terminated', terminatedOn: storedDay(terminatedOn), terminationReason: reason, terminatedAt: now(), terminatedById: actor.user.id, version, updatedById: actor.user.id } })
         return { result: { contractId: row.id, number: row.number }, entityId: row.id, audit: { action: 'contract_terminated', summary: `Terminated contract ${row.number}.`, metadata: { number: row.number, expectedVersion, version, terminatedOn, reason } } }

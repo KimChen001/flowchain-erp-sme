@@ -6,7 +6,9 @@ import {
   addContractDays,
   contractCalendarDay,
   contractDaysBetween,
+  contractMayTerminate,
   contractShownState,
+  contractTerminationDateIssues,
 } from '../../shared/contract-status.mjs'
 import { tenantCalendarDay } from './tenant-calendar-day.mjs'
 
@@ -33,13 +35,56 @@ test('calendar days are read as the day stored, never in a timezone', () => {
   assert.equal(addContractDays('2028-03-01', -1), '2028-02-29')
 })
 
-test('drafts and terminated contracts show their status, whatever the dates', () => {
-  assert.deepEqual(shown({ status: 'draft', endDate: '2026-01-01' }, '2026-10-09'), { state: 'draft', keyDate: null, keyDateKind: null, daysUntilKeyDate: null, noticeDeadline: null, inReminderWindow: false })
+test('drafts and contracts terminated from a past day show their status, whatever the dates', () => {
+  assert.deepEqual(shown({ status: 'draft', endDate: '2026-01-01' }, '2026-10-09'), { state: 'draft', keyDate: null, keyDateKind: null, daysUntilKeyDate: null, noticeDeadline: null, inReminderWindow: false, terminatesOn: null })
   const terminated = shown(active({ status: 'terminated', terminatedOn: '2026-09-30' }), '2026-10-09')
   assert.deepEqual([terminated.state, terminated.keyDate, terminated.keyDateKind, terminated.daysUntilKeyDate], ['terminated', '2026-09-30', 'terminated', -9])
   // A renewal recorded for a terminated contract does not make it renewed.
   assert.equal(state(active({ status: 'terminated', terminatedOn: '2026-09-30' }), '2026-10-09', { renewalActivated: true }), 'terminated')
   assert.equal(state({ status: 'draft' }, '2026-10-09', { renewalActivated: true }), 'draft')
+})
+
+// Design audit L9-09: a termination from a day still to come keeps the
+// contract in force until then, ending on that day, so Today keeps reminding.
+test('terminated from a day still to come: active, then ending inside the reminder window, terminated from that day', () => {
+  const terminating = active({ status: 'terminated', terminatedOn: '2026-10-31', renewal: 'automatic', noticeDays: 30 })
+  const early = shown(terminating, '2026-08-01')
+  assert.deepEqual([early.state, early.keyDate, early.keyDateKind, early.daysUntilKeyDate, early.terminatesOn, early.noticeDeadline, early.inReminderWindow], ['active', '2026-10-31', 'terminates', 91, '2026-10-31', null, false])
+  const soon = shown(terminating, '2026-10-09')
+  assert.deepEqual([soon.state, soon.keyDate, soon.keyDateKind, soon.daysUntilKeyDate, soon.terminatesOn, soon.inReminderWindow], ['ending', '2026-10-31', 'terminates', 22, '2026-10-31', true])
+  // The day itself and after: terminated, with no date still to come.
+  for (const today of ['2026-10-31', '2026-11-15']) {
+    const done = shown(terminating, today)
+    assert.deepEqual([done.state, done.keyDateKind, done.terminatesOn], ['terminated', 'terminated', null], today)
+  }
+  // A contract in force carries no termination date.
+  assert.equal(shown(active(), '2026-10-09').terminatesOn, null)
+})
+
+test('Terminate is offered while the contract is in force, by its shown state', () => {
+  const may = (contract, today, options) => contractMayTerminate({ status: contract.status, state: state(contract, today, options) })
+  assert.equal(may(active(), '2026-06-01'), true)
+  assert.equal(may(active(), '2026-12-01'), true, 'ending')
+  assert.equal(may(active({ renewal: 'automatic', noticeDays: 30 }), '2026-11-15'), true, 'notice due')
+  assert.equal(may(active(), '2027-01-05'), false, 'ended')
+  assert.equal(may(active({ renewal: 'automatic' }), '2027-01-05'), false, 'past its end date')
+  assert.equal(may(active(), '2026-06-01', { renewalActivated: true }), false, 'renewed')
+  assert.equal(may(active({ status: 'terminated', terminatedOn: '2026-10-31' }), '2026-08-01'), false, 'already terminated from a day to come')
+  assert.equal(may(active({ status: 'draft' }), '2026-06-01'), false)
+})
+
+test('the termination date falls within the contract: not before it was signed or started, not after it ends', () => {
+  const contract = { signedOn: '2025-12-15', startDate: '2026-01-01', endDate: '2026-12-31' }
+  const codes = (day) => contractTerminationDateIssues(contract, day).map((issue) => [issue.field, issue.code])
+  assert.deepEqual(codes('2025-12-01'), [['terminatedOn', 'BEFORE_SIGNED_ON']])
+  assert.deepEqual(codes('2025-12-20'), [['terminatedOn', 'BEFORE_START_DATE']])
+  assert.deepEqual(codes('2027-01-01'), [['terminatedOn', 'AFTER_END_DATE']])
+  for (const day of ['2026-01-01', '2026-06-30', '2026-12-31']) assert.deepEqual(codes(day), [], day)
+  // Open-ended, or without its dates recorded: only what is recorded bounds it.
+  assert.deepEqual(contractTerminationDateIssues({ startDate: '2026-01-01' }, '2030-01-01'), [])
+  assert.deepEqual(contractTerminationDateIssues({}, '2026-06-01'), [])
+  // Stored days as Dates, as the command reads its row.
+  assert.deepEqual(contractTerminationDateIssues({ startDate: new Date('2026-01-01T00:00:00Z'), endDate: new Date('2026-12-31T00:00:00Z') }, '2027-02-01').map((issue) => issue.code), ['AFTER_END_DATE'])
 })
 
 test('an open-ended contract stays active and never reminds', () => {

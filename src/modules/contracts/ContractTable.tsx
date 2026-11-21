@@ -61,7 +61,7 @@ export function ContractTable({ contracts, canManage, showSupplier = true, testI
                   ) : <span style={{ color: A.gray2 }}>—</span>}
                 </td>
                 <td className={`${td} min-w-[80px] max-w-[110px]`} style={{ color: A.sub }}>{contract.owner?.name || "—"}</td>
-                <td className={`${td} whitespace-nowrap`}><ContractStateChip state={contract.state} /></td>
+                <td className={`${td} whitespace-nowrap`}><ContractStateChip state={contract.state} terminatesOn={contract.terminatesOn} /></td>
                 <td className={`${td} sticky right-0 z-10 whitespace-nowrap bg-white pr-4`}>
                   {editable ? (
                     <Link to={`/app/contracts/${encodeURIComponent(contract.id)}?edit=1`} data-testid="contract-row-edit" className="rounded-md px-2 py-1 text-[11px] font-medium" style={{ background: "#f0f6ff", color: A.blue }}>{t("Edit")}</Link>

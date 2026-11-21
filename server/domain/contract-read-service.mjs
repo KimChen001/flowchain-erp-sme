@@ -189,7 +189,16 @@ export async function readContractWork(client, { tenantId, today, ownerId = null
   // No key date can be further out than the longest notice plus reminder.
   const horizon = new Date(`${addContractDays(today, CONTRACT_MAX_NOTICE_DAYS + CONTRACT_MAX_REMINDER_DAYS)}T00:00:00.000Z`)
   const rows = await client.contract.findMany({
-    where: { tenantId, status: 'active', endDate: { not: null, lte: horizon }, ...(ownerId ? { ownerId } : {}) },
+    where: {
+      tenantId,
+      ...(ownerId ? { ownerId } : {}),
+      OR: [
+        { status: 'active', endDate: { not: null, lte: horizon } },
+        // Terminated from a day still to come: in force, and on Today inside
+        // its reminder window, until that day (design audit L9-09).
+        { status: 'terminated', terminatedOn: { gt: new Date(`${today}T00:00:00.000Z`), lte: horizon } },
+      ],
+    },
     include: CONTRACT_VIEW_INCLUDE,
     orderBy: [{ endDate: 'asc' }, { id: 'asc' }],
     take: CONTRACT_TODAY_SCAN_LIMIT + 1,
@@ -209,6 +218,7 @@ export async function readContractWork(client, { tenantId, today, ownerId = null
       endDate: view.endDate,
       noticeDeadline: view.noticeDeadline,
       renewal: view.renewal,
+      terminatesOn: view.terminatesOn,
     }))
   return { contracts, truncated }
 }

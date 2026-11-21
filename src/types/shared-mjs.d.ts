@@ -192,7 +192,7 @@ declare module '../../../shared/contract-status.mjs' {
   export type ContractStatus = 'draft' | 'active' | 'terminated';
   export type ContractRenewal = 'none' | 'automatic' | 'by_agreement';
   export type ContractState = 'draft' | 'active' | 'notice_due' | 'ending' | 'ended' | 'past_end' | 'renewed' | 'terminated';
-  export type ContractKeyDateKind = 'notice_deadline' | 'end' | 'terminated';
+  export type ContractKeyDateKind = 'notice_deadline' | 'end' | 'terminates' | 'terminated';
   export type ContractShownState = {
     state: ContractState;
     keyDate: string | null;
@@ -200,7 +200,14 @@ declare module '../../../shared/contract-status.mjs' {
     daysUntilKeyDate: number | null;
     noticeDeadline: string | null;
     inReminderWindow: boolean;
+    terminatesOn: string | null;
   };
+  export const CONTRACT_TERMINABLE_STATES: readonly ContractState[];
+  export function contractMayTerminate(contract: { status?: string; state?: string }): boolean;
+  export function contractTerminationDateIssues(
+    contract: { signedOn?: string | Date | null; startDate?: string | Date | null; endDate?: string | Date | null },
+    terminatedOn: string | null | undefined,
+  ): Array<{ field: 'terminatedOn'; code: 'BEFORE_SIGNED_ON' | 'BEFORE_START_DATE' | 'AFTER_END_DATE'; message: string }>;
   export const CONTRACT_TYPES: readonly ContractType[];
   export const CONTRACT_STATUSES: readonly ContractStatus[];
   export const CONTRACT_RENEWALS: readonly ContractRenewal[];

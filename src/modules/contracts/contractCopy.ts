@@ -114,6 +114,13 @@ const zh: Record<string, string> = {
   'The termination date cannot be before the signed date.': '终止日期不能早于签署日期。', 'Choose a supplier of this workspace.': '请选择本工作区的供应商。',
   'Choose an active user of this workspace.': '请选择本工作区的在职用户。', 'Choose one of the workspace payment terms.': '请选择工作区中的付款条款。',
   'An active contract keeps its supplier and type.': '生效中的合同保留其供应商和类型。', 'Upload the file first.': '请先上传文件。', 'Check this field.': '请检查此字段。',
+  // Terminated from a day still to come (design audit L9-09).
+  'Terminates on': '将终止于', 'Terminates on {date}': '将于 {date} 终止',
+  'The termination date cannot be before the start date.': '终止日期不能早于开始日期。',
+  'The termination date cannot be after the end date.': '终止日期不能晚于到期日。',
+  'Termination recorded, effective {date}. It stays in force, and on Today, until then.': '已登记终止，{date} 生效。在此之前合同仍有效，也仍会出现在今日待办中。',
+  'Pick a day from {from} to {to}. A day still to come keeps the contract in force until then.': '请选择 {from} 至 {to} 之间的日期。选择将来的日期时，合同在该日前仍有效。',
+  'Pick a day from {from}. A day still to come keeps the contract in force until then.': '请选择 {from} 或之后的日期。选择将来的日期时，合同在该日前仍有效。',
 };
 
 const fill = (text: string, variables: Record<string, string | number>) =>

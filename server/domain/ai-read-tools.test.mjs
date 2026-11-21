@@ -377,6 +377,19 @@ test('list_contracts gives a contract\'s title, dates, value and terms, the valu
   assert.equal(viewer.rows[0].currency, 'USD')
 })
 
+// Design audit L9-09: a contract terminated from a day still to come shows as
+// ending until then; the model gets that day, not only the end date.
+test('list_contracts gives the termination day of a contract terminated from a day still to come', async () => {
+  const row = { id: 'CON-2', number: 'CON-0002', title: 'Packaging 2027', type: 'supply', status: 'terminated', state: 'ending', startDate: '2026-01-01', endDate: '2027-06-30', signedOn: '2025-12-15', keyDate: '2026-12-10', keyDateKind: 'terminates', terminatesOn: '2026-12-10', supplier: { id: 'SUP-001', name: 'Acme Components' } }
+  const scenario = aiSkillScenario()
+  const contracts = { list: async () => ({ today: '2026-11-20', counts: { all: 1 }, access: { prices: true }, contracts: [row, { ...row, id: 'CON-3', number: 'CON-0003', status: 'active', state: 'active', keyDate: '2027-06-30', keyDateKind: 'end', terminatesOn: null }] }) }
+  const context = await loadAiSkillContext({ ...scenario.ctx, env: { FLOWCHAIN_ENABLE_CONTRACTS: 'true' }, aiReadServices: { contracts } })
+  const result = (await runAiReadTool('list_contracts', {}, { facts: await readAiSkillFacts(context), context })).result
+  assert.deepEqual(result.rows.map((entry) => [entry.number, entry.status, entry.state, entry.endDate, entry.terminatesOn]), [['CON-0002', 'terminated', 'ending', '2027-06-30', '2026-12-10'], ['CON-0003', 'active', 'active', '2027-06-30', undefined]])
+  // Only a contract that has one carries the field.
+  assert.equal('terminatesOn' in result.rows[1], false)
+})
+
 // 2026-11-07: "上个月销售额是多少？", top customers and best sellers had no tool.
 test('sales_summary totals customer invoices in a period by customer, item or month, in one currency', async () => {
   const scenario = aiSkillScenario()

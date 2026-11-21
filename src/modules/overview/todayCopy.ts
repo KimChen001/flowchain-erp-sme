@@ -87,6 +87,8 @@ const COPY = {
     noticeToday: "Last day to give notice",
     endsOn: "Ends {date}",
     endsToday: "Ends today",
+    terminatesOn: "Terminates {date}",
+    terminationRecorded: "Termination recorded",
     endedDays: "Ended {n} days ago",
     endedDaysOne: "Ended 1 day ago",
     noDate: "No date",
@@ -243,6 +245,8 @@ const COPY = {
     noticeToday: "今天是通知截止日",
     endsOn: "{date} 到期",
     endsToday: "今天到期",
+    terminatesOn: "{date} 终止",
+    terminationRecorded: "已登记终止",
     endedDays: "已到期 {n} 天",
     endedDaysOne: "已到期 1 天",
     noDate: "无日期",
@@ -354,7 +358,7 @@ export function formatTodayDay(day: string, locale: string) {
 export type TodayDated = {
   kind: string;
   date: string | null;
-  dateKind: "due" | "order_by" | "invoice" | "promised" | "required" | "notice_by" | "ends" | "ended";
+  dateKind: "due" | "order_by" | "invoice" | "promised" | "required" | "notice_by" | "ends" | "terminates" | "ended";
   overdueDays: number;
 };
 export function todayDateText(language: string, locale: string, item: TodayDated, today: string) {
@@ -367,6 +371,7 @@ export function todayDateText(language: string, locale: string, item: TodayDated
   if (item.dateKind === "required") return t("neededBy", { date: day(item.date) });
   if (item.dateKind === "notice_by") return item.date === today ? t("noticeToday") : t("noticeBy", { date: day(item.date) });
   if (item.dateKind === "ends") return item.date === today ? t("endsToday") : t("endsOn", { date: day(item.date) });
+  if (item.dateKind === "terminates") return t("terminatesOn", { date: day(item.date) });
   if (item.dateKind === "ended") return todayCount(language, "endedDays", item.overdueDays);
   return t("invoiceOn", { date: day(item.date) });
 }

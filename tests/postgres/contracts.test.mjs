@@ -331,9 +331,17 @@ test('renew starts one prefilled draft; activating it shows the old contract ren
   const fields = (response) => [response.status, (response.payload.details || []).map((detail) => `${detail.field}:${detail.code}`).sort()]
   assert.deepEqual(fields(await as.buyer('POST', `/api/contracts/${renewal.id}/terminate`, { expectedVersion: 2 })), [422, ['reason:REQUIRED', 'terminatedOn:REQUIRED']])
   assert.deepEqual(fields(await as.buyer('POST', `/api/contracts/${renewal.id}/terminate`, { expectedVersion: 2, terminatedOn: day(-1), reason: 'Supplier closed' })), [422, ['terminatedOn:BEFORE_SIGNED_ON']])
-  const terminated = ok(await as.buyer('POST', `/api/contracts/${renewal.id}/terminate`, { expectedVersion: 2, terminatedOn: today, reason: 'Supplier closed the plant' })).contract
-  assert.deepEqual([terminated.status, terminated.state, terminated.terminatedOn, terminated.terminationReason, terminated.keyDate], ['terminated', 'terminated', today, 'Supplier closed the plant', today])
-  assert.deepEqual(codeOf(await as.buyer('POST', `/api/contracts/${renewal.id}/terminate`, { expectedVersion: 3, terminatedOn: today, reason: 'Again' })), [409, 'INVALID_STATE_TRANSITION'])
+  // Design audit L9-09: the date falls within the contract. The renewal
+  // starts in 21 days, so today is before it.
+  assert.deepEqual(fields(await as.buyer('POST', `/api/contracts/${renewal.id}/terminate`, { expectedVersion: 2, terminatedOn: today, reason: 'Supplier closed' })), [422, ['terminatedOn:BEFORE_START_DATE']])
+  // The renewed contract is no longer in force: it cannot be terminated.
+  const renewed = ok(await as.viewer('GET', `/api/contracts/${main.id}`)).contract
+  assert.deepEqual(codeOf(await as.buyer('POST', `/api/contracts/${main.id}/terminate`, { expectedVersion: renewed.version, terminatedOn: today, reason: 'Too late' })), [409, 'INVALID_STATE_TRANSITION'])
+  // From its start date, still to come: terminated, and in force until then.
+  const terminated = ok(await as.buyer('POST', `/api/contracts/${renewal.id}/terminate`, { expectedVersion: 2, terminatedOn: day(21), reason: 'Supplier closed the plant' })).contract
+  assert.deepEqual([terminated.status, terminated.terminatedOn, terminated.terminationReason, terminated.keyDate, terminated.keyDateKind, terminated.terminatesOn], ['terminated', day(21), 'Supplier closed the plant', day(21), 'terminates', day(21)])
+  assert.ok(['active', 'ending'].includes(terminated.state), terminated.state)
+  assert.deepEqual(codeOf(await as.buyer('POST', `/api/contracts/${renewal.id}/terminate`, { expectedVersion: 3, terminatedOn: day(21), reason: 'Again' })), [409, 'INVALID_STATE_TRANSITION'])
   assert.deepEqual(codeOf(await as.buyer('PATCH', `/api/contracts/${renewal.id}`, { expectedVersion: 3, notes: 'Late note' })), [409, 'CONTRACT_NOT_EDITABLE'])
   assert.deepEqual(codeOf(await as.buyer('DELETE', `/api/contracts/${renewal.id}?expectedVersion=3`)), [409, 'CONTRACT_NOT_DRAFT'])
   const actions = (await prisma.auditLog.findMany({ where: { tenantId: tenant, entityId: renewal.id }, orderBy: { createdAt: 'asc' } })).map((row) => row.action)
@@ -379,6 +387,14 @@ test('Today lists contracts with notice due, ending and past their end, for the 
   const pastEnd = await make({ title: 'Past its end', startDate: day(-400), endDate: day(-3), renewal: 'automatic', ownerId: userId('finance') }, day(-400))
   const later = await make({ title: 'Ends next year', startDate: day(-10), endDate: day(300), ownerId: userId('finance') }, day(-10))
   assert.deepEqual([ending.state, notice.state, notice.keyDate, pastEnd.state, later.state], ['ending', 'notice_due', day(40), 'past_end', 'active'])
+  // Design audit L9-09: past its end date, a contract is not terminated; a
+  // date after the end is refused; terminated from a day still to come, it
+  // stays in force and on Today, ending on that day.
+  assert.deepEqual(codeOf(await as.manager('POST', `/api/contracts/${pastEnd.id}/terminate`, { expectedVersion: pastEnd.version, terminatedOn: day(-5), reason: 'Lapsed' })), [409, 'INVALID_STATE_TRANSITION'])
+  const afterEnd = await as.manager('POST', `/api/contracts/${later.id}/terminate`, { expectedVersion: later.version, terminatedOn: day(301), reason: 'Too late' })
+  assert.deepEqual([afterEnd.status, (afterEnd.payload.details || []).map((detail) => `${detail.field}:${detail.code}`)], [422, ['terminatedOn:AFTER_END_DATE']])
+  const terminating = ok(await as.manager('POST', `/api/contracts/${later.id}/terminate`, { expectedVersion: later.version, terminatedOn: day(20), reason: 'Supplier exit' })).contract
+  assert.deepEqual([terminating.status, terminating.state, terminating.keyDate, terminating.keyDateKind, terminating.terminatesOn], ['terminated', 'ending', day(20), 'terminates', day(20)])
 
   const rowsFor = async (signedIn) => {
     const home = ok(await signedIn('GET', '/api/home/overview'))
@@ -391,6 +407,7 @@ test('Today lists contracts with notice due, ending and past their end, for the 
   assert.deepEqual(ours.map((item) => [item.kind, item.recordId, item.date, item.dateKind, item.overdueDays]), [
     ['contract_past_end', pastEnd.id, day(-3), 'ended', 3],
     ['contract_ending', ending.id, day(10), 'ends', 0],
+    ['contract_ending', later.id, day(20), 'terminates', 0],
     ['contract_notice_due', notice.id, day(40), 'notice_by', 0],
   ])
   const endingRow = ours.find((item) => item.recordId === ending.id)
