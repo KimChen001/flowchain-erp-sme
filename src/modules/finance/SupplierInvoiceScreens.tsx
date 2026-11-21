@@ -25,7 +25,20 @@ import { procurementErrorCode, procurementErrorText } from "../procurement/procu
 import { matchExceptionLabel } from "../../domain/procurement/variance-types";
 import { knownCodeText } from "../../lib/apiErrorText";
 
-const issueText = (issue: { code?: string; message?: string }, language: string) => (language === "en-US" ? issue.message : knownCodeText(issue.code, language) || issue.message) || "";
+const REFUSALS: Record<string, readonly [string, string]> = {
+  FINANCE_VERSION_CONFLICT: ["This record was changed by someone else. Refresh and try again.", "该记录已被他人修改，请刷新后重试。"],
+  SUPPLIER_INVOICE_STATUS_INVALID: ["This supplier invoice's status does not allow this step. Refresh to see where it stands.", "当前状态的采购发票不能执行此操作，请刷新后查看。"],
+  SUPPLIER_INVOICE_HAS_CREDITS: ["A credit memo is recorded against this supplier invoice, so it cannot be cancelled.", "该采购发票已登记贷项通知单，不能取消。"],
+  SUPPLIER_INVOICE_RECEIPT_ALREADY_LINKED: ["This supplier invoice already names its receipt.", "该采购发票已关联收货单。"],
+  SUPPLIER_INVOICE_RECEIPT_NOT_POSTED: ["The receipt is not posted or was reversed.", "该收货单未过账或已冲销。"],
+  SUPPLIER_INVOICE_RECEIPT_OTHER_PO: ["The receipt belongs to another purchase order.", "该收货单属于其他采购订单。"],
+  SUPPLIER_INVOICE_RECEIPT_LINE_MISSING: ["The receipt has no goods for a line on this invoice.", "该收货单没有本发票某一行的货物。"],
+  SUPPLIER_INVOICE_RECEIPT_LINE_REJECTED: ["The receipt accepted none of a line on this invoice.", "该收货单对本发票某一行全部拒收。"],
+  SUPPLIER_INVOICE_RECEIPT_LINE_AMBIGUOUS: ["The receipt splits a line on this invoice, so it cannot be matched line by line.", "该收货单拆分了本发票的某一行，无法逐行对应。"],
+  SUPPLIER_INVOICE_RECEIPT_SHORT: ["A line invoices more than the receipt has left to invoice; the three-way match will show the difference.", "某一行的开票数量超过收货单剩余可开票数量，三单匹配会显示差异。"],
+  RECEIVING_DOCUMENT_NOT_FOUND: ["Choose a posted receipt of this purchase order.", "请选择该采购订单下已过账的收货单。"],
+};
+const issueText = (issue: { code?: string; message?: string }, language: string) => (language === "en-US" ? issue.message : (issue.code && REFUSALS[issue.code]?.[1]) || knownCodeText(issue.code, language) || issue.message) || "";
 
 // A header fact, as OverviewFields draws one (components/document/DocumentShell.tsx).
 const FACT_LABEL = "fc-caption font-medium";
