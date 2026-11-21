@@ -105,10 +105,11 @@ function database(queries) {
     receivableObligation: { findMany: async () => [] },
     item: { count: async () => 1 },
     supplier: { count: async () => 1 },
-    runtimeRecord: { count: async () => 1 },
+    runtimeRecord: { count: async () => 1, findMany: async () => [] },
     inventoryBalance: { count: async () => 1 },
     user: { count: async () => 2 },
     workspaceInvitation: { count: async () => 0 },
+    inventoryAdjustmentDocument: { count: async () => 0 },
   }
 }
 const repositories = {

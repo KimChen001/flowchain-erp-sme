@@ -112,6 +112,8 @@ export function readOnlyPrisma(data, calls = [], tenant = { locale: 'en-US', cur
     inventoryBalance: { findMany: ({ where, take }) => data.balances.filter(() => where.tenantId === AI_SKILL_TENANT).slice(0, take), count: ({ where }) => (where.tenantId === AI_SKILL_TENANT ? data.balances.filter((row) => Number(row.onHandQuantity) > 0).length : 0) },
     user: { count: ({ where }) => (where.tenantId === AI_SKILL_TENANT ? 1 : 0) },
     workspaceInvitation: { count: () => 0 },
+    // Opening stock imported but not posted (first-run-setup.mjs); none.
+    inventoryAdjustmentDocument: { count: () => 0 },
     // The workspace's payment terms, for the setup card.
     paymentTerm: { findMany: ({ where }) => (where.tenantId === AI_SKILL_TENANT ? array(data.paymentTerms) : []) },
     // Customer invoices with their lines (none unless a test adds them).

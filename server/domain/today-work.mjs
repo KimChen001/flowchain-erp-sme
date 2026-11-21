@@ -536,13 +536,20 @@ export function firstRunSetupSteps(setup, { permissions = {}, importEnabled = fa
   const importPage = (type, fallback) => (importEnabled ? `/app/master-data/import?type=${type}` : fallback)
   const steps = [
     { id: 'items', count: count(setup.items), href: importPage('items', '/app/master-data/items'), permitted: permissions.items },
-    { id: 'suppliers', count: count(setup.suppliers), href: importPage('suppliers', '/app/master-data/suppliers'), permitted: permissions.suppliers },
+    // Done with suppliers; the note says when no item is linked to one yet,
+    // since a purchase request names an item's approved supplier.
+    { id: 'suppliers', count: count(setup.suppliers), href: importPage('suppliers', '/app/master-data/suppliers'), permitted: permissions.suppliers,
+      note: count(setup.suppliers) > 0 && setup.itemSupplierSources !== undefined && count(setup.itemSupplierSources) === 0 ? { id: 'no_item_suppliers', href: permissions.items ? importPage('item-suppliers', '/app/master-data/suppliers') : null } : null },
     { id: 'customers', count: count(setup.customers), href: importPage('customers', '/app/master-data/customers'), permitted: permissions.customers },
-    { id: 'opening_stock', count: count(setup.stockedItems), href: importPage('opening-stock', adjustmentsEnabled ? '/app/inventory/adjustments/new' : null), permitted: permissions.openingStock },
+    // Drafted opening stock is not stock until posted: the note says so
+    // instead of "Not started", linking to the adjustments for those who may post.
+    { id: 'opening_stock', count: count(setup.stockedItems), href: importPage('opening-stock', adjustmentsEnabled ? '/app/inventory/adjustments/new' : null), permitted: permissions.openingStock,
+      note: count(setup.stockedItems) === 0 && count(setup.openingStockToPost) > 0 ? { id: 'opening_stock_to_post', count: count(setup.openingStockToPost), href: adjustmentsEnabled && permissions.postOpeningStock ? '/app/inventory/adjustments' : null } : null },
     // Done once someone else has joined or been invited.
     { id: 'teammates', count: Math.max(0, count(setup.activeUsers) - 1) + count(setup.pendingInvitations), href: '/app/settings/roles', permitted: permissions.teammates },
-  ].map(({ permitted, href, ...step }) => ({
+  ].map(({ permitted, href, note = null, ...step }) => ({
     ...step,
+    ...(note ? { note } : {}),
     done: step.count > 0,
     href: permitted && href ? href : null,
     blocked: !permitted ? 'permission' : !href ? 'unavailable' : null,

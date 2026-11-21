@@ -368,6 +368,7 @@ function fakeDatabase({ warehouses = [{ id: 'WH-1' }] } = {}) {
     inventoryBalance: { count: async () => 3 },
     user: { count: async () => 1 },
     workspaceInvitation: { count: async () => 0 },
+    inventoryAdjustmentDocument: { count: async () => 0 },
   }
 }
 

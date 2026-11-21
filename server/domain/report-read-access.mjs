@@ -77,6 +77,8 @@ export function reportReadAccessFor(actor) {
         suppliers: allowed('master_data.supplier.manage'),
         customers: allowed('master_data.customer.manage'),
         openingStock: allowed('inventory.adjustment.create'),
+        // Posting drafted opening stock (the checklist's note links to it).
+        postOpeningStock: allowed('inventory.adjustment.post'),
         teammates: allowed('settings.users.manage'),
       },
     },
