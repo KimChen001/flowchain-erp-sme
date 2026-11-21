@@ -221,6 +221,11 @@ export const supplierReplyCardSchema = z.strictObject({
   // The order's supplier as the order shows it; null when none is recorded.
   supplierName: z.string().max(200).nullable(),
   source: z.enum(SUPPLIER_REPLY_SOURCES),
+  // An emailed reply's sender as received, and whether it is the supplier's
+  // email on record (same address, or same company domain); null for a
+  // pasted reply. Optional only so earlier fixtures parse.
+  sender: z.string().max(320).nullable().optional(),
+  senderOnRecord: z.boolean().nullable().optional(),
   receivedOn: day,
   createdAt: z.string().min(1).max(40),
   state: z.enum(SUPPLIER_REPLY_STATES),

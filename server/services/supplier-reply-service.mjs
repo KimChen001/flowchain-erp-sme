@@ -26,6 +26,7 @@ import { aiCallCostMicros, aiUsagePrices, recordAiProviderCall } from '../domain
 import { withAiWorkspaceAccess } from '../domain/ai-workspace-access.mjs'
 import { addWorkdays } from '../domain/decision-items.mjs'
 import { localDevelopmentEnabled } from '../domain/local-development-contract.mjs'
+import { senderAddress, senderOnRecord } from '../domain/integration-tokens.mjs'
 import { ITEM_SUPPLIER_NAMESPACE, mapItemSupplierRecord } from '../domain/master-data-commands.mjs'
 import { resolveProvisionedActor } from '../domain/pilot-identity.mjs'
 import { procurementReadAccessFor } from '../domain/procurement-read-access.mjs'
@@ -160,7 +161,14 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
 
   // The card for one reader: the stored check joined with the order as this
   // reader reads it now.
-  function cardOf(row, { order, access, actor, today, skus = new Map() }) {
+  // The supplier's email on record, for an emailed reply's sender check.
+  async function supplierEmailOf(client, tenantId, order) {
+    if (!text(order.supplierId)) return null
+    const supplier = await client.supplier.findFirst({ where: { id: text(order.supplierId), tenantId }, select: { metadata: true } })
+    return text(supplier?.metadata?.email) || null
+  }
+
+  function cardOf(row, { order, access, actor, today, skus = new Map(), supplierEmail = null }) {
     const lines = new Map(array(order.lines).map((line) => [line.purchaseOrderLineId || line.id, line]))
     const orderOpen = SUPPLIER_REPLY_ORDER_STATES.includes(text(order.status))
     // A reading's line keeps currentDate as the date it was read against; the
@@ -188,6 +196,12 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
       // role (procurement-read-access.mjs hides invoice suppliers only).
       supplierName: text(order.supplierSnapshot?.supplierName) || null,
       source: row.source,
+      // An emailed reply shows who sent it, and whether that is the
+      // supplier's email on record (docs/supplier-reply-dates-design.md §4.11).
+      // The address itself (display names and comments set aside), or the
+      // From value as received when it names no single address.
+      sender: row.source === 'email' ? senderAddress(row.sender) || text(row.sender).slice(0, 320) || null : null,
+      senderOnRecord: row.source === 'email' ? senderOnRecord(row.sender, supplierEmail) : null,
       receivedOn: row.receivedOn,
       createdAt: new Date(row.createdAt).toISOString(),
       state: row.state,
@@ -243,7 +257,10 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
     })
   }
 
-  async function pasteReply(orderId, body, context, { signal } = {}) {
+  // `origin` is set by the ingestion endpoint only (supplier-reply-ingest.mjs),
+  // never from a request body: where the reply came from, its sender and
+  // message id, and the token that brought it.
+  async function pasteReply(orderId, body, context, { signal, origin = null } = {}) {
     const input = parsed(supplierReplyPasteRequestSchema, body)
     const client = await db()
     const actor = await actorOf(client, context)
@@ -270,7 +287,14 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
     // read and is itself open: an outage, an auto-reply or nothing to record
     // does not push a proposal aside (#394 review). Without an open card, an
     // open reply (an outage's manual form too) becomes the card.
-    const takesOver = open && read.readingStatus === 'read'
+    // An emailed reply never replaces an open card: anyone who can write to
+    // the forwarded mailbox could otherwise push the supplier's own reply aside.
+    const emailed = origin?.source === 'email'
+    const takesOver = open && read.readingStatus === 'read' && !emailed
+    // Nor does one from a sender who is not the supplier's email on record
+    // become the card: it is kept and listed, and a person who knows it is
+    // genuine pastes it.
+    const senderKnown = !emailed || senderOnRecord(origin.sender, await supplierEmailOf(client, actor.tenantId, order))
     let superseded = []
     let active = false
     try {
@@ -278,11 +302,11 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
         const previous = await tx.supplierReply.findMany({ where: { tenantId: actor.tenantId, purchaseOrderId: order.id, activeKey: { not: null } }, select: { id: true } })
         if (takesOver) superseded = previous.map((row) => row.id)
         if (superseded.length) await tx.supplierReply.updateMany({ where: { tenantId: actor.tenantId, id: { in: superseded } }, data: { state: 'superseded', activeKey: null, supersededById: id } })
-        active = open && (takesOver || !previous.length)
+        active = open && senderKnown && (takesOver || !previous.length)
         await tx.supplierReply.create({
           data: {
             id, tenantId: actor.tenantId, purchaseOrderId: order.id, supplierId: text(order.supplierId) || null, activeKey: active ? order.id : null,
-            source: 'paste', receivedOn, text: cleaned.text, quotedTextHidden: cleaned.quotedTextHidden, quotedText: cleaned.quoted, state, readingStatus: read.readingStatus,
+            source: origin?.source === 'email' ? 'email' : 'paste', sender: text(origin?.sender).slice(0, 320) || null, messageId: text(origin?.messageId).slice(0, 998) || null, receivedOn, text: cleaned.text, quotedTextHidden: cleaned.quotedTextHidden, quotedText: cleaned.quoted, state, readingStatus: read.readingStatus,
             provider: read.provider || null, model: read.model || null, promptVersion: read.promptVersion || null, reading: read.reading || null, check: check || null,
             usage: { calls: read.calls, inputTokens: read.usage?.inputTokens || 0, outputTokens: read.usage?.outputTokens || 0, ms: Date.now() - startedAt, invisibleRemoved: cleaned.invisibleRemoved, issues: read.issues || null },
             instructionsIgnored: supplierReplyInstructionsIgnored(input.text), createdById: actor.user.id,
@@ -293,7 +317,7 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
           data: {
             id: idFactory(), tenantId: actor.tenantId, actorId: actor.user.id, source: 'supplier_reply_service', module: 'procurement', action: 'supplier_reply_pasted',
             entityType: 'PurchaseOrder', entityId: order.id, summary: `Supplier reply on purchase order ${snapshot.number}: ${state}.`,
-            metadata: { replyId: id, state, readingStatus: read.readingStatus, calls: read.calls, lines: array(check?.lines).map((line) => line.outcome), superseded, active },
+            metadata: { replyId: id, state, readingStatus: read.readingStatus, calls: read.calls, lines: array(check?.lines).map((line) => line.outcome), superseded, active, ...(origin?.source === 'email' ? { source: 'email', tokenId: text(origin.tokenId) || null } : {}) },
           },
         })
       })
@@ -302,7 +326,8 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
       throw error
     }
     const row = await client.supplierReply.findFirst({ where: { id, tenantId: actor.tenantId } })
-    return { reply: cardOf(row, { order, access, actor, today, skus }) }
+    const supplierEmail = await supplierEmailOf(client, actor.tenantId, order)
+    return { reply: cardOf(row, { order, access, actor, today, skus, supplierEmail }) }
   }
 
   async function listReplies(orderId, context) {
@@ -314,7 +339,8 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
     const today = await todayOf(client, actor.tenantId)
     const rows = await client.supplierReply.findMany({ where: { tenantId: actor.tenantId, purchaseOrderId: order.id }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: SUPPLIER_REPLY_LIMITS.listed })
     const skus = await supplierSkusOf(client, actor.tenantId, order)
-    return { replies: rows.map((row) => cardOf(row, { order, access, actor, today, skus })) }
+    const supplierEmail = rows.some((row) => row.source === 'email') ? await supplierEmailOf(client, actor.tenantId, order) : null
+    return { replies: rows.map((row) => cardOf(row, { order, access, actor, today, skus, supplierEmail })) }
   }
 
   // The open reply on this order, for a decision by someone who may revise it.
@@ -326,7 +352,8 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
     const row = await client.supplierReply.findFirst({ where: { id: text(replyId), tenantId: actor.tenantId, purchaseOrderId: order.id } })
     if (!row) fail('SUPPLIER_REPLY_NOT_FOUND', 'The supplier reply was not found on this order.', 404)
     if (!SUPPLIER_REPLY_OPEN_STATES.includes(row.state) || !row.activeKey) fail('SUPPLIER_REPLY_NOT_OPEN', 'This supplier reply was already decided or replaced.', 409, [{ field: 'state', code: row.activeKey ? row.state : (SUPPLIER_REPLY_OPEN_STATES.includes(row.state) ? 'not_active' : row.state) }])
-    return { actor, access, order, row }
+    const supplierEmail = row.source === 'email' ? await supplierEmailOf(client, actor.tenantId, order) : null
+    return { actor, access, order, row, supplierEmail }
   }
 
   // The revisions an earlier run of this reply's record wrote (their audit
@@ -360,7 +387,7 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
   async function recordReply(orderId, replyId, body, context) {
     const input = parsed(supplierReplyRecordRequestSchema, body)
     const client = await db()
-    const { actor, access, order, row } = await openReply(client, orderId, replyId, context)
+    const { actor, access, order, row, supplierEmail } = await openReply(client, orderId, replyId, context)
     const proposed = array(row.check?.lines).filter((line) => line.outcome === 'proposed' && line.purchaseOrderLineId && line.proposedDate)
     const proposal = new Map(proposed.map((line) => [line.purchaseOrderLineId, line.proposedDate]))
     const lines = input.lines || proposed.map((line) => ({ purchaseOrderLineId: line.purchaseOrderLineId, promisedDate: line.proposedDate }))
@@ -411,7 +438,7 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
     const today = await todayOf(client, actor.tenantId)
     const updated = await client.supplierReply.findFirst({ where: { id: row.id, tenantId: actor.tenantId } })
     const skus = await supplierSkusOf(client, actor.tenantId, fresh)
-    return { reply: cardOf(updated, { order: fresh, access, actor, today, skus }), purchaseOrder: { id: fresh.id, version: Number(fresh.version) || 0 } }
+    return { reply: cardOf(updated, { order: fresh, access, actor, today, skus, supplierEmail }), purchaseOrder: { id: fresh.id, version: Number(fresh.version) || 0 } }
   }
 
   async function dismissReply(orderId, replyId, body, context) {

@@ -27,6 +27,8 @@ export const SUPPLIER_REPLY_COPY = {
   received: ["received {date}", "{date} 收到"],
   pasted: ["Pasted", "粘贴"],
   emailed: ["By email", "邮件"],
+  from: ["from {sender}", "发件人 {sender}"],
+  senderNotOnRecord: ["The sender is not this supplier's email on record, so this reply is not offered for recording. If it is genuine, paste it on the order.", "发件人不是该供应商记录中的邮箱，因此这封回复不能在这里记录。如确认来自供应商，请把它粘贴到订单上。"],
 
   // The proposal (#363 §4.6).
   line: ["Line", "订单行"],

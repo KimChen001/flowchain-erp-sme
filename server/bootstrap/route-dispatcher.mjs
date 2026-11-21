@@ -36,6 +36,7 @@ import { handleReceivingRoute } from "../routes/receiving.routes.mjs";
 import { handleReportViewsRoute } from "../routes/report-views.routes.mjs";
 import { handleDecisionItemsRoute } from "../routes/decision-items.routes.mjs";
 import { handleSupplierRepliesRoute } from "../routes/supplier-replies.routes.mjs";
+import { handleSupplierReplyIngestRoute } from "../routes/supplier-reply-ingest.routes.mjs";
 import { handleSupplierReplyStockRoute } from "../routes/supplier-reply-stock.routes.mjs";
 import { handleSupplierReliabilityRoute } from "../routes/supplier-reliability.routes.mjs";
 import { handleSupplierReplyExportRoute } from "../routes/supplier-reply-export.routes.mjs";
@@ -68,6 +69,7 @@ const orderedRouteHandlers = Object.freeze([
   handleDecisionItemsRoute,
   // Before the procurement read routes, which take /api/procurement/orders/:id.
   handleSupplierRepliesRoute,
+  handleSupplierReplyIngestRoute,
   // A reply card's stock line, before the procurement read routes too.
   handleSupplierReplyStockRoute,
   // Supplier reliability (#363 §4.12): its own path under master data.

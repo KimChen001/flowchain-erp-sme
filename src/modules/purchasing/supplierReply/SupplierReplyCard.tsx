@@ -149,8 +149,10 @@ export function SupplierReplyCard({ card, onChanged, onRefused, notice = null, m
   return (
     <section className="rounded-lg border bg-white p-3 text-xs" data-testid="supplier-reply-card" data-state={card.state} data-reading={card.readingStatus}>
       <div className="text-sm font-semibold" style={{ color: A.label }}>{t("title")}</div>
-      <div className="mt-0.5" style={{ color: A.sub }} data-testid="supplier-reply-meta">{[card.purchaseOrderNumber, card.supplierName, t("received", { date: day(card.receivedOn) }), t(card.source === "email" ? "emailed" : "pasted")].filter(Boolean).join(" · ")}</div>
+      <div className="mt-0.5" style={{ color: A.sub }} data-testid="supplier-reply-meta">{[card.purchaseOrderNumber, card.supplierName, t("received", { date: day(card.receivedOn) }), t(card.source === "email" ? "emailed" : "pasted"), card.source === "email" && card.sender ? t("from", { sender: card.sender }) : null].filter(Boolean).join(" · ")}</div>
 
+      {/* An emailed reply from an address that is not the supplier's on record. */}
+      {card.source === "email" && card.senderOnRecord === false ? <p className="mt-2 rounded-md bg-amber-50 px-2 py-1 text-amber-800" role="note" data-testid="supplier-reply-sender-not-on-record">{t("senderNotOnRecord")}</p> : null}
       {card.instructionsIgnored ? <p className="mt-2 rounded-md bg-amber-50 px-2 py-1 text-amber-800" role="note" data-testid="supplier-reply-instructions-ignored">{t("instructionsIgnored")}</p> : null}
 
       {/* What the card says the reply is. */}

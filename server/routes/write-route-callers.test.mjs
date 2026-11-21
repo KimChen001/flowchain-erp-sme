@@ -48,9 +48,14 @@ const RECEIVABLE_STEP = 'The receivable screens offer only Record payment; dispu
 const EXPORT_HIDDEN = 'FlowChain has no export yet, so the supplier invoice page hides Mark export ready (audit L2-15); the command stays for the export work.'
 const INTAKE_STEP ='The intake page pastes or uploads, maps, normalizes, validates, reviews and excludes records; it has no control for this step yet.'
 const MOBILE_SYNC = 'Offline mobile sync protocol; its client is not in this repository, and the route and Postgres tests drive it.'
+const SUPPLIER_REPLY_INGEST = 'Draft, off by default (docs/supplier-reply-ingest-api.md): forwarders call it with a workspace token, and no Settings screen manages tokens yet.'
 
 // Write routes with no caller in the app, each with the reason.
 const NO_APP_CALLER = {
+  // Supplier replies handed over without pasting: a draft for the owner.
+  'POST /api/integrations/supplier-replies': SUPPLIER_REPLY_INGEST,
+  'POST /api/settings/integrations/supplier-reply-tokens': SUPPLIER_REPLY_INGEST,
+  'POST /api/settings/integrations/supplier-reply-tokens/:id/revoke': SUPPLIER_REPLY_INGEST,
   // Credit memos (supplier) and credit notes (customer): audit L2-02.
   'POST /api/finance/supplier-credit-memos': CREDIT_DOCUMENTS,
   'POST /api/finance/supplier-credit-memos/preview': CREDIT_DOCUMENTS,
