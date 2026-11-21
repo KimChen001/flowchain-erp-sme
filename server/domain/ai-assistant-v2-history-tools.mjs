@@ -99,11 +99,14 @@ const listShipments = defineAiTool({
     // many sales orders did we ship in October?" got "200 rows shown of
     // 3,380+, no total per month"). For a reader of every warehouse, without
     // a SKU; reversed shipments are not counted.
-    // A scope that holds every warehouse of the workspace reads as all of them
-    // (2026-11-21 live run: the walkthrough users have one scope row each, so
-    // byMonth never came, and "can't give a count" was the answer).
+    // A scope that holds every warehouse of the workspace, checked now against
+    // the current warehouses (one added later makes it partial again), counts
+    // too (2026-11-21 live run: the walkthrough users have one scope row each,
+    // so byMonth never came, and "can't give a count" was the answer). A scoped
+    // reader counts only shipments with a line from a warehouse in its scope,
+    // as the rows above show them; one with no warehouse is left out, as before.
     const everyWarehouse = !scope || await scopeHoldsEveryWarehouse(prisma, tenantId, scope)
-    const byMonth = !salesOrderId && !args.sku && everyWarehouse ? await shipmentsByMonth(prisma, tenantId, { from, today: text(facts.today), timeZone: facts.timezone }) : null
+    const byMonth = !salesOrderId && !args.sku && everyWarehouse ? await shipmentsByMonth(prisma, tenantId, { from, today: text(facts.today), timeZone: facts.timezone, scope }) : null
     return {
       ...(salesOrderId ? { order: text(args.order) } : { days, from: addCalendarDays(from, 1), to: text(facts.today) }),
       ...(args.sku ? { sku: args.sku } : {}),
@@ -127,13 +130,13 @@ async function scopeHoldsEveryWarehouse(prisma, tenantId, scope) {
 // with 30 days, "2026-10" held only 22–31 Oct and said nothing of it). null
 // past SHIPMENT_MONTHS_READ rows or when the read fails.
 const SHIPMENT_MONTHS_READ = 50000
-async function shipmentsByMonth(prisma, tenantId, { from, today, timeZone }) {
+async function shipmentsByMonth(prisma, tenantId, { from, today, timeZone, scope = null }) {
   const start = addCalendarDays(from, 1)
   const rows = await prisma.shipmentDocument.findMany({
     // A day early, so a shipment posted late on the first day in a zone
     // ahead of UTC is read; the day check below keeps the window.
     where: { tenantId, postingStatus: 'posted', postedAt: { gte: new Date(`${addCalendarDays(start, -1)}T00:00:00Z`) } },
-    select: { postedAt: true, salesOrderId: true },
+    select: { postedAt: true, salesOrderId: true, ...(scope ? { lines: { select: { allocations: { select: { warehouseId: true } } } } } : {}) },
     take: SHIPMENT_MONTHS_READ + 1,
   }).catch(() => null)
   if (!Array.isArray(rows) || rows.length > SHIPMENT_MONTHS_READ) return null
@@ -146,6 +149,7 @@ async function shipmentsByMonth(prisma, tenantId, { from, today, timeZone }) {
   }
   const months = new Map()
   for (const row of rows) {
+    if (scope && !array(row.lines).some((line) => array(line.allocations).some((entry) => scope.has(text(entry.warehouseId))))) continue
     const shipped = localDay(row.postedAt)
     if (!shipped || shipped < start || (today && shipped > today)) continue
     const month = shipped.slice(0, 7)

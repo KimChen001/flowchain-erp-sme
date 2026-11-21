@@ -324,6 +324,12 @@ test('list_shipments counts shipments and orders shipped per month over the whol
   assert.equal((await tool('list_shipments').run({ days: 60 }, { facts, context: context(['WH-1']) })).byMonth, undefined)
   prisma.warehouse = { findMany: async () => [{ id: 'WH-1' }] }
   assert.equal((await tool('list_shipments').run({ days: 60 }, { facts, context: context(['WH-1']) })).byMonth.length, 2)
+  // A shipment with no warehouse: left out for a scoped reader, as its rows
+  // are; counted for a reader of every warehouse without a list.
+  shipments.push({ ...posted('SO-6', '2026-11-05T09:00:00Z'), lines: [{ sku: 'X', postedQuantity: '1', unit: 'pcs', allocations: [] }] })
+  const november = async (warehouseIds) => (await tool('list_shipments').run({ days: 60 }, { facts, context: context(warehouseIds) })).byMonth.find((row) => row.month === '2026-11').shipments
+  assert.deepEqual([await november(['WH-1']), await november(null)], [1, 2])
+  shipments.pop()
   delete prisma.warehouse
   assert.equal((await tool('list_shipments').run({ days: 60, sku: 'X' }, { facts, context: context(null) })).byMonth, undefined)
 })
