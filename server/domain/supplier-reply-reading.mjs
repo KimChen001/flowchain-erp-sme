@@ -750,22 +750,38 @@ export function linesNamedInQuote(order, quote) {
 // The clause, and the line or sentence, of the quote around the first place
 // it writes the date given; the whole quote for both when it writes none.
 // Read with its line breaks kept (quoteForm folds them), so the items of a
-// list stay apart.
-function around(source, from, to, breaks) {
+// list stay apart. A break inside brackets, or a comma between two items of a
+// list ("82494L, 82583 and 82600 on 30 Nov"), does not end a clause.
+function around(source, from, to, breaks, keep = () => false) {
   let start = 0
   let end = source.length
   for (const mark of source.matchAll(breaks)) {
+    if (keep(mark)) continue
     if (mark.index + mark[0].length <= from) start = mark.index + mark[0].length
     else if (mark.index >= to) { end = mark.index; break }
   }
   return source.slice(start, end)
 }
-function dateParts(quote, date, receivedOn) {
+function dateParts(quote, date, receivedOn, order) {
   const source = String(quote ?? '').normalize('NFKC').replace(INVISIBLE, '').replace(/\r\n?/g, '\n').replace(/[ \t]+/g, ' ').toLowerCase()
   const place = date ? datesWithPlaces(source, receivedOn).find((row) => row.date === date && Number.isInteger(row.index)) : null
   if (!place) return { clause: source, sentence: source }
   const to = place.index + place.phrase.length
-  return { clause: around(source, place.index, to, CLAUSE_BREAK), sentence: around(source, place.index, to, SENTENCE_BREAK) }
+  // How deep in brackets each place is.
+  const depth = []
+  let level = 0
+  for (const char of source) {
+    if ('(（[【'.includes(char)) level += 1
+    depth.push(level)
+    if (')）]】'.includes(char)) level = Math.max(0, level - 1)
+  }
+  const lines = array(order?.lines)
+  const mentions = lines.flatMap((line) => [...lineCodes(line).flatMap((code) => codeMentions(source, code)), ...nameMentions(source, line)])
+  const listComma = (mark) => /^[,，、]$/.test(mark[0])
+    && mentions.some((one) => one.end <= mark.index && /^[\s)）\]】]*$/.test(source.slice(one.end, mark.index)))
+    && mentions.some((one) => one.start > mark.index && /^[\s(（[【]*(?:(?:and|or|&|和|及|与)\s*)?$/.test(source.slice(mark.index + 1, one.start)))
+  const keep = (mark) => depth[mark.index] > 0 || listComma(mark)
+  return { clause: around(source, place.index, to, CLAUSE_BREAK, keep), sentence: around(source, place.index, to, SENTENCE_BREAK, (mark) => depth[mark.index] > 0) }
 }
 // One item's code and name side by side that point to different lines.
 function codeNameConflict(form, { codes, names }) {
@@ -782,7 +798,7 @@ const refsOf = ({ codes, names }) => new Set([...codes, ...names].map((mention) 
 // Whether the date given to line `ref` belongs, by the quote's own words, to
 // another line (see above).
 export function lineNamedElsewhere(order, quote, ref, { date = null, receivedOn = null } = {}) {
-  const parts = dateParts(quote, date, receivedOn)
+  const parts = dateParts(quote, date, receivedOn, order)
   const clause = quoteForm(parts.clause)
   const inClause = linesNamedInQuote(order, clause)
   const named = refsOf(inClause)

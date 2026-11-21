@@ -643,6 +643,13 @@ test('the line check reads the clause that holds the date: items left out, the r
   // A Chinese unit starts no word: 套装 after a code leaves it a code; 300套 is a count.
   assert.deepEqual(at(zh, '20727套装12月4日发货。', 'L2', '2026-12-04'), held('L2'))
   assert.deepEqual(at(zh, '20727盒装12月4日发货。', 'L2', '2026-12-04'), held('L2'))
+  // A list of items, in brackets or with commas, is one clause.
+  const three = [lineOf('L1', { sku: '82494L' }), lineOf('L2', { sku: '82583' }), lineOf('L3', { sku: '82600' })]
+  for (const reply of ['We confirm delivery of all three lines (82494L, 82583, 82600) on 30 November.', '82494L, 82583 and 82600 ship on 30 November.']) {
+    for (const ref of ['L1', 'L2', 'L3']) assert.deepEqual(at(three, reply, ref, '2026-11-30'), proposed(ref, '2026-11-30'), `${reply} ${ref}`)
+  }
+  // A comma that ends a clause still does.
+  assert.deepEqual(at(three, '82494L ships on 26 November, 82583 on 30 November.', 'L1', '2026-11-30'), held('L1'))
   const sets = [lineOf('L1', { supplierSku: '300' }), lineOf('L2', { itemName: '铰链' })]
   assert.deepEqual(at(sets, '300套12月4日发货。', 'L2', '2026-12-04'), proposed('L2', '2026-12-04'))
 })
