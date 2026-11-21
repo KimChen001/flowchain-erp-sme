@@ -3,7 +3,7 @@ import { ArrowLeft, CheckCircle2, CircleAlert, Scale, ShieldCheck, TriangleAlert
 import { Link } from "react-router";
 import { A, Card, useConfirm } from "../../components/ui";
 import { StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf, RetryButton } from "../../components/ui/listLayout";
-import { listTableCardsRef, tableBodyTextClass, tableScrollClass, tdClass, thClass } from "../../components/ui/workbenchTable";
+import { listTableCardsRef, tableBodyTextClass, tableScrollClass, tdClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { typography } from "../../components/ui/typography";
 import { ApiError } from "../../lib/api-client";
 import { procurementApi } from "./procurementApi";
@@ -128,7 +128,7 @@ const LIMITATION_LABELS: Record<string, readonly [string, string] | null> = {
 
 function eligibilityChip(eligibility: RfqComparisonEligibility, language: string) {
   const eligible = eligibility === "eligible";
-  return <StatusChip label={localLabel(ELIGIBILITY_LABELS, eligibility, language, eligibility)} tone={eligible ? "info" : "neutral"} />;
+  return <StatusChip label={localLabel(ELIGIBILITY_LABELS, eligibility, language, eligibility)} tone={eligible ? "info" : eligibility === "authority_missing" ? "warning" : "neutral"} />;
 }
 
 function Availability({ comparison }: { comparison: RfqSupplierComparison }) {
@@ -163,7 +163,7 @@ function ResponseSummary({ responses }: { responses: RfqComparisonResponse[] }) 
       {responses.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前询价单尚无报价记录。", "This RFQ has no quotation records.")}</div> : (
         <div className={tableScrollClass} ref={listTableCardsRef}>
           <table className={`w-full min-w-[1100px] text-left ${tableBodyTextClass}`}>
-            <thead><tr style={listHeadRowStyle}>{[tr("供应商", "Supplier"), tr("报价 / 报价修订", "Quotation / quote revision"), tr("状态", "Status"), tr("比较资格", "Eligibility"), tr("原币总额", "Original-currency total"), tr("提交时间", "Submitted"), tr("行项目覆盖", "Line coverage")].map((label) => <th className={thClass} style={{ color: A.gray1 }} key={label}>{label}</th>)}</tr></thead>
+            <thead><tr style={listHeadRowStyle}>{[tr("供应商", "Supplier"), tr("报价 / 报价修订", "Quotation / quote revision"), tr("状态", "Status"), tr("比较资格", "Eligibility"), tr("原币总额", "Original-currency total"), tr("提交时间", "Submitted"), tr("行项目覆盖", "Line coverage")].map((label) => <th className={label === tr("原币总额", "Original-currency total") || label === tr("原币报价", "Original-currency quote") ? thRightClass : thClass} style={{ color: A.gray1 }} key={label}>{label}</th>)}</tr></thead>
             <tbody>{responses.map((response, index) => {
               const revision = response.latestRevision;
               return <tr className={`${listRowClass} align-top`} style={listRowStyle(index, responses.length)} data-testid={`rfq-comparison-response-${response.supplierId}`} key={`${response.supplierId}:${response.quotationId}`}>
@@ -171,7 +171,7 @@ function ResponseSummary({ responses }: { responses: RfqComparisonResponse[] }) 
                 <td className={tdClass}><div>{response.quotationId}</div><div className="mt-1" style={{ color: A.sub }}>{revision ? tr(`报价修订 ${revision.revisionNumber}`, `Quote revision ${revision.revisionNumber}`) : tr("缺少报价修订", "Quote revision missing")}</div></td>
                 <td className={tdClass}>{revision?.status ? <StatusChip label={localLabel(REVISION_STATUS_LABELS, revision.status, language, revision.statusRaw || tr("未知", "Unknown"))} tone={statusToneOf(revision.status)} /> : tr("不可用", "Unavailable")}</td>
                 <td className={`px-4 py-3 ${response.comparisonEligibility === "eligible" ? "" : "bg-slate-50/70 text-slate-500"}`}>{eligibilityChip(response.comparisonEligibility, language)}{response.eligibilityReasons.length > 0 && <div className="mt-2 text-[11px]" style={{ color: A.sub }}>{response.eligibilityReasons.map((reason) => localLabel(ELIGIBILITY_REASON_LABELS, reason, language, reason)).join(" · ")}</div>}</td>
-                <td className="px-4 py-3 font-medium tabular-nums">{exactAmount(revision?.quotedAmount, revision?.currency)}</td>
+                <td className="px-4 py-3 text-right font-medium tabular-nums">{exactAmount(revision?.quotedAmount, revision?.currency)}</td>
                 <td className={tdClass}>{date(revision?.submittedAt)}</td>
                 <td className={tdClass}><div>{response.coverage.matchedLineCount} / {response.coverage.requiredLineCount}</div><div className="mt-1" style={{ color: A.sub }}>{response.coverage.state === "complete" ? tr("完整覆盖", "Complete") : response.coverage.state === "not_applicable" ? tr("无目标行项目", "No target lines") : tr("覆盖不完整", "Incomplete")}</div></td>
               </tr>;
@@ -364,7 +364,7 @@ function LoadedComparison({ comparison, award, canAward, onAward }: { comparison
 
       <Card className="overflow-hidden" data-testid="rfq-comparison-commercial-terms">
         <div className="border-b p-4"><h2 className="fc-section-title" style={{ color: A.label }}>{tr("商业条款", "Commercial terms")}</h2></div>
-        {comparison.responses.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前没有可展示的供应商商业条款。", "No supplier commercial terms are available.")}</div> : <div className={tableScrollClass} ref={listTableCardsRef}><table className={`w-full min-w-[900px] text-left ${tableBodyTextClass}`}><thead><tr style={listHeadRowStyle}>{[tr("供应商", "Supplier"), tr("付款条款", "Payment terms"), tr("有效期", "Valid until"), tr("交付日期", "Delivery date"), tr("原币报价", "Original-currency quote"), tr("资格", "Eligibility")].map((label) => <th className={thClass} style={{ color: A.gray1 }} key={label}>{label}</th>)}</tr></thead><tbody>{comparison.responses.map((response, index) => <tr className={listRowClass} style={listRowStyle(index, comparison.responses.length)} key={response.supplierId}><td className="px-4 py-3 font-medium">{response.supplierName || response.supplierId}</td><td className={tdClass}>{response.latestRevision?.paymentTerms || "—"}</td><td className={tdClass}>{dateOnly(response.latestRevision?.validUntil)}</td><td className={tdClass}>{dateOnly(response.latestRevision?.deliveryDate)}</td><td className="px-4 py-3 tabular-nums">{exactAmount(response.latestRevision?.quotedAmount, response.latestRevision?.currency)}</td><td className={tdClass}>{eligibilityChip(response.comparisonEligibility, language)}</td></tr>)}</tbody></table></div>}
+        {comparison.responses.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前没有可展示的供应商商业条款。", "No supplier commercial terms are available.")}</div> : <div className={tableScrollClass} ref={listTableCardsRef}><table className={`w-full min-w-[900px] text-left ${tableBodyTextClass}`}><thead><tr style={listHeadRowStyle}>{[tr("供应商", "Supplier"), tr("付款条款", "Payment terms"), tr("有效期", "Valid until"), tr("交付日期", "Delivery date"), tr("原币报价", "Original-currency quote"), tr("资格", "Eligibility")].map((label) => <th className={label === tr("原币总额", "Original-currency total") || label === tr("原币报价", "Original-currency quote") ? thRightClass : thClass} style={{ color: A.gray1 }} key={label}>{label}</th>)}</tr></thead><tbody>{comparison.responses.map((response, index) => <tr className={listRowClass} style={listRowStyle(index, comparison.responses.length)} key={response.supplierId}><td className="px-4 py-3 font-medium">{response.supplierName || response.supplierId}</td><td className={tdClass}>{response.latestRevision?.paymentTerms || "—"}</td><td className={tdClass}>{dateOnly(response.latestRevision?.validUntil)}</td><td className={tdClass}>{dateOnly(response.latestRevision?.deliveryDate)}</td><td className="px-4 py-3 text-right tabular-nums">{exactAmount(response.latestRevision?.quotedAmount, response.latestRevision?.currency)}</td><td className={tdClass}>{eligibilityChip(response.comparisonEligibility, language)}</td></tr>)}</tbody></table></div>}
       </Card>
 
       <Card className="p-4" data-testid="rfq-comparison-non-response">

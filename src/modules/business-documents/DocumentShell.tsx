@@ -109,7 +109,7 @@ export function DocumentShell({
               data-testid="business-document-print"
               disabled={!printable}
               onClick={() => window.print()}
-              className={`${listButtonClass.primary} disabled:cursor-not-allowed disabled:opacity-50`}
+              className={`${listButtonClass.primary} disabled:cursor-not-allowed`}
             >
               <Printer size={13} />{t("documents.print")}
             </button>

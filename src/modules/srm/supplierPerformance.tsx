@@ -297,15 +297,15 @@ function Drilldown({ row, metric, onClose }: { row: SupplierScorecardRow; metric
         <div className="flex items-center justify-between"><h3 className="text-[13px] font-semibold leading-5" style={{ color: A.label }}>{heading}</h3><button type="button" onClick={onClose} className="text-xs" style={{ color: A.blue }}>{tr("close")}</button></div>
         <p className="mt-1 text-[11px]" style={{ color: A.sub }}>{tr("notSentNote")}</p>
         {orders.length ? (
-          <div className="mt-2 overflow-x-auto"><table className={`w-full min-w-[620px] ${tableBodyTextClass}`}><thead><tr style={{ ...listHeadRowStyle, color: A.gray1 }}>{[tr("po"), tr("sku"), tr("original"), tr("current"), tr("ordered"), tr("amount")].map((header) => <th key={header} className={`px-3 py-2 text-left ${typography.tableHeader}`} style={{ color: A.gray1 }}>{header}</th>)}</tr></thead>
+          <div className="mt-2 overflow-x-auto" ref={listTableCardsRef}><table className={`w-full min-w-[620px] ${tableBodyTextClass}`}><thead><tr style={{ ...listHeadRowStyle, color: A.gray1 }}>{[tr("po"), tr("sku"), tr("original"), tr("current"), tr("ordered"), tr("amount")].map((header) => <th key={header} className={`px-3 py-2 ${[tr("ordered"), tr("amount"), tr("variance"), tr("lateBy"), tr("received"), tr("rejected")].includes(header) ? "text-right" : "text-left"} ${typography.tableHeader}`} style={{ color: A.gray1 }}>{header}</th>)}</tr></thead>
             <tbody>{orders.map((order) => order.lines.map((line, index) => (
               <tr key={line.purchaseOrderLineId} style={{ borderTop: "0.5px solid rgba(0,0,0,0.04)" }} data-testid={`supplier-performance-not-sent-${line.purchaseOrderLineId}`}>
                 <td className="px-3 py-2">{index === 0 ? <EntityLink kind="purchase_order" id={order.purchaseOrderId} number={order.orderNumber} /> : null}</td>
                 <td className="px-3 py-2">{line.sku}{line.itemName ? ` · ${line.itemName}` : ""}</td>
                 <td className="px-3 py-2">{format.day(line.originalPromisedDate)}</td>
                 <td className="px-3 py-2">{format.day(line.currentPromisedDate)}</td>
-                <td className="px-3 py-2 tabular-nums">{format.number(line.orderedQuantity)} {line.unit}</td>
-                <td className="px-3 py-2 tabular-nums">{format.money(line.amount, line.currency)}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{format.number(line.orderedQuantity)} {line.unit}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{format.money(line.amount, line.currency)}</td>
               </tr>
             )))}</tbody></table></div>
         ) : <p className="mt-2 text-xs" style={{ color: A.sub }}>{tr("noDrilldown")}</p>}
@@ -317,13 +317,13 @@ function Drilldown({ row, metric, onClose }: { row: SupplierScorecardRow; metric
       <div className="mt-3 rounded-lg border p-3" style={{ borderColor: A.border }} data-testid="supplier-performance-drilldown">
         <div className="flex items-center justify-between"><h3 className="text-[13px] font-semibold leading-5" style={{ color: A.label }}>{heading}</h3><button type="button" onClick={onClose} className="text-xs" style={{ color: A.blue }}>{tr("close")}</button></div>
         {row.invoices.length ? (
-          <div className="mt-2 overflow-x-auto"><table className={`w-full min-w-[520px] ${tableBodyTextClass}`}><thead><tr style={{ ...listHeadRowStyle, color: A.gray1 }}>{[tr("invoice"), tr("invoiceDate"), tr("po"), tr("variance")].map((header) => <th key={header} className={`px-3 py-2 text-left ${typography.tableHeader}`} style={{ color: A.gray1 }}>{header}</th>)}</tr></thead>
+          <div className="mt-2 overflow-x-auto" ref={listTableCardsRef}><table className={`w-full min-w-[520px] ${tableBodyTextClass}`}><thead><tr style={{ ...listHeadRowStyle, color: A.gray1 }}>{[tr("invoice"), tr("invoiceDate"), tr("po"), tr("variance")].map((header) => <th key={header} className={`px-3 py-2 ${[tr("ordered"), tr("amount"), tr("variance"), tr("lateBy"), tr("received"), tr("rejected")].includes(header) ? "text-right" : "text-left"} ${typography.tableHeader}`} style={{ color: A.gray1 }}>{header}</th>)}</tr></thead>
             <tbody>{row.invoices.map((invoice) => (
               <tr key={invoice.supplierInvoiceId} style={{ borderTop: "0.5px solid rgba(0,0,0,0.04)" }}>
                 <td className="px-3 py-2"><EntityLink kind="supplier_invoice" id={invoice.supplierInvoiceId}>{invoice.invoiceNumber}</EntityLink></td>
                 <td className="px-3 py-2">{format.day(invoice.invoiceDate)}</td>
                 <td className="px-3 py-2">{invoice.purchaseOrderId ? <EntityLink kind="purchase_order" id={invoice.purchaseOrderId} /> : "—"}</td>
-                <td className="px-3 py-2 tabular-nums">{format.money(invoice.varianceAmount, invoice.currency)}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{format.money(invoice.varianceAmount, invoice.currency)}</td>
               </tr>
             ))}</tbody></table></div>
         ) : <p className="mt-2 text-xs" style={{ color: A.sub }}>{tr("noDrilldown")}</p>}
@@ -338,7 +338,7 @@ function Drilldown({ row, metric, onClose }: { row: SupplierScorecardRow; metric
     <div className="mt-3 rounded-lg border p-3" style={{ borderColor: A.border }} data-testid="supplier-performance-drilldown">
       <div className="flex items-center justify-between"><h3 className="text-[13px] font-semibold leading-5" style={{ color: A.label }}>{heading}</h3><button type="button" onClick={onClose} className="text-xs" style={{ color: A.blue }}>{tr("close")}</button></div>
       {deliveries.length ? (
-        <div className="mt-2 overflow-x-auto"><table className={`w-full min-w-[860px] ${tableBodyTextClass}`}><thead><tr style={{ ...listHeadRowStyle, color: A.gray1 }}>{[tr("po"), tr("sku"), tr("original"), tr("current"), tr("arrived"), tr("lateBy"), tr("result"), tr("received"), tr("rejected"), tr("fullOn"), tr("inFull"), tr("otifShort"), tr("amount")].map((header) => <th key={header} className={`px-3 py-2 text-left ${typography.tableHeader}`} style={{ color: A.gray1 }}>{header}</th>)}</tr></thead>
+        <div className="mt-2 overflow-x-auto"><table className={`w-full min-w-[860px] ${tableBodyTextClass}`}><thead><tr style={{ ...listHeadRowStyle, color: A.gray1 }}>{[tr("po"), tr("sku"), tr("original"), tr("current"), tr("arrived"), tr("lateBy"), tr("result"), tr("received"), tr("rejected"), tr("fullOn"), tr("inFull"), tr("otifShort"), tr("amount")].map((header) => <th key={header} className={`px-3 py-2 ${[tr("ordered"), tr("amount"), tr("variance"), tr("lateBy"), tr("received"), tr("rejected")].includes(header) ? "text-right" : "text-left"} ${typography.tableHeader}`} style={{ color: A.gray1 }}>{header}</th>)}</tr></thead>
           <tbody>{deliveries.map((delivery) => (
             <Fragment key={delivery.obligationId}>
               <tr className="font-medium" style={{ background: A.gray6, borderTop: "0.5px solid rgba(0,0,0,0.04)" }} data-testid={`supplier-performance-delivery-${delivery.obligationId}`}>
@@ -347,7 +347,7 @@ function Drilldown({ row, metric, onClose }: { row: SupplierScorecardRow; metric
                 <td className="px-3 py-2">{format.day(delivery.originalPromisedDate)}</td>
                 <td className="px-3 py-2">{delivery.revised && <StatusChip label={tr("revised")} tone="warning" />}</td>
                 <td className="px-3 py-2">{format.day(delivery.lastFirstReceiptDay)}</td>
-                <td className="px-3 py-2 tabular-nums">{delivery.daysLate ? format.number(delivery.daysLate) : "—"}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{delivery.daysLate ? format.number(delivery.daysLate) : "—"}</td>
                 <td className="px-3 py-2">{result(delivery)}</td>
                 <td className="px-3 py-2" />
                 <td className="px-3 py-2" />
@@ -363,14 +363,14 @@ function Drilldown({ row, metric, onClose }: { row: SupplierScorecardRow; metric
                   <td className="px-3 py-2">{format.day(line.originalPromisedDate)}</td>
                   <td className="px-3 py-2">{format.day(line.currentPromisedDate)}{line.revised && <span className="ml-1 inline-flex"><StatusChip label={tr("revised")} tone="warning" /></span>}</td>
                   <td className="px-3 py-2">{format.day(line.firstReceiptDay)}</td>
-                  <td className="px-3 py-2 tabular-nums">{line.daysLate ? format.number(line.daysLate) : "—"}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{line.daysLate ? format.number(line.daysLate) : "—"}</td>
                   <td className="px-3 py-2">{result(line)}</td>
-                  <td className="px-3 py-2 tabular-nums">{format.number(line.acceptedQuantity)} / {format.number(line.orderedQuantity)} {line.unit}</td>
-                  <td className="px-3 py-2 tabular-nums">{format.number(line.rejectedQuantity)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{format.number(line.acceptedQuantity)} / {format.number(line.orderedQuantity)} {line.unit}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{format.number(line.rejectedQuantity)}</td>
                   <td className="px-3 py-2">{format.day(line.fullDay)}</td>
                   <td className="px-3 py-2">{inFullText(line)}</td>
                   <td className="px-3 py-2">{otifText(line.otif)}</td>
-                  <td className="px-3 py-2 tabular-nums">{format.money(line.amount, line.currency)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{format.money(line.amount, line.currency)}</td>
                 </tr>
               ))}
             </Fragment>
@@ -517,8 +517,8 @@ export function SupplierPerformanceTable({ datesFromPage = false }: { datesFromP
         : !data?.suppliers.length ? <p className="py-6 text-center text-xs" style={{ color: A.sub }}>{tr("noSuppliers")}</p>
         : (
           <div className="mt-3 overflow-x-auto" ref={listTableCardsRef}>
-            <table className="w-full min-w-[980px] text-xs">
-              <thead><tr>{[tr("supplier"), tr("lines"), tr("onTimeOriginal"), tr("onTimeCurrentFull"), tr("inFull"), tr("otifOriginal"), tr("otifCurrentFull"), tr("early"), tr("rejection"), tr("averageDelay"), tr("priceVariances"), ""].map((header, index) => <th key={`${header}-${index}`} className="p-2 text-left" style={{ color: A.gray1 }}>{header}</th>)}</tr></thead>
+            <table className={`w-full min-w-[980px] ${tableBodyTextClass}`}>
+              <thead><tr style={listHeadRowStyle}>{[tr("supplier"), tr("lines"), tr("onTimeOriginal"), tr("onTimeCurrentFull"), tr("inFull"), tr("otifOriginal"), tr("otifCurrentFull"), tr("early"), tr("rejection"), tr("averageDelay"), tr("priceVariances"), ""].map((header, index) => <th key={`${header}-${index}`} className={`p-2 text-left ${typography.tableHeader}`} style={{ color: A.gray1 }}>{header}</th>)}</tr></thead>
               <tbody>
                 {data.suppliers.map((row) => (
                   <Fragment key={row.supplierId}>
