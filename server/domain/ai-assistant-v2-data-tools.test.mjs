@@ -1014,3 +1014,14 @@ test('the reorder list and suggest_purchase_lines order up to the same level', a
     assert.equal(suggested.lotSize, own ? 25 : null)
   }
 })
+
+// 2026-11-20 question set: "the average daily demand for 22423 over the last
+// 90 days" got "the stock records don't hold one" from stock_position. One
+// item asked for carries its recorded daily demand.
+test('stock_position gives one item its recorded daily demand, and none for the whole list', async () => {
+  const { run } = await v2({ change: shipping, actor: everyWarehouse })
+  const one = (await run('stock_position', { sku: 'LDM-001' })).result
+  assert.deepEqual(one.recordedDemand, { averageDailyDemand: 10, windowDays: 90, shipmentDays: 18 })
+  const all = (await run('stock_position', {})).result
+  assert.equal(all.recordedDemand, undefined)
+})

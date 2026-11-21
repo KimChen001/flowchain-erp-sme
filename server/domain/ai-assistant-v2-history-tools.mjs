@@ -94,14 +94,44 @@ const listShipments = defineAiTool({
         lines: lines.map((line) => ({ sku: text(line.sku), quantity: number(line.postedQuantity), unit: text(line.unit) || null })),
         ref: aiToolRef('sales_order', row.salesOrder?.id || '', text(row.salesOrder?.orderNumber) || ''),
       }))
+    // How many shipments and sales orders shipped each month of the window,
+    // over every shipment, not the rows read (2026-11-20 question set: "how
+    // many sales orders did we ship in October?" got "200 rows shown of
+    // 3,380+, no total per month"). For a reader of every warehouse, without
+    // a SKU; reversed shipments are not counted.
+    const byMonth = !salesOrderId && !args.sku && !scope ? await shipmentsByMonth(prisma, tenantId, from) : null
     return {
       ...(salesOrderId ? { order: text(args.order) } : { days, from: addCalendarDays(from, 1), to: text(facts.today) }),
       ...(args.sku ? { sku: args.sku } : {}),
+      ...(byMonth ? { byMonth } : {}),
       ...(found.length > SHIPMENTS_READ ? { partial: { limit: SHIPMENTS_READ } } : {}),
       ...aiToolList(rows, args.limit),
     }
   },
 })
+
+// Posted shipments per calendar month from the day after `from`: { month,
+// shipments, salesOrders } oldest first, or null past SHIPMENT_MONTHS_READ
+// rows or when the read fails.
+const SHIPMENT_MONTHS_READ = 50000
+async function shipmentsByMonth(prisma, tenantId, from) {
+  const rows = await prisma.shipmentDocument.findMany({
+    where: { tenantId, postingStatus: 'posted', postedAt: { gte: new Date(`${addCalendarDays(from, 1)}T00:00:00Z`) } },
+    select: { postedAt: true, salesOrderId: true },
+    take: SHIPMENT_MONTHS_READ + 1,
+  }).catch(() => null)
+  if (!Array.isArray(rows) || rows.length > SHIPMENT_MONTHS_READ) return null
+  const months = new Map()
+  for (const row of rows) {
+    const month = text(day(row.postedAt)).slice(0, 7)
+    if (!/^\d{4}-\d{2}$/.test(month)) continue
+    if (!months.has(month)) months.set(month, { shipments: 0, orders: new Set() })
+    const entry = months.get(month)
+    entry.shipments += 1
+    if (text(row.salesOrderId)) entry.orders.add(text(row.salesOrderId))
+  }
+  return [...months].sort(([a], [b]) => a.localeCompare(b)).map(([month, entry]) => ({ month, shipments: entry.shipments, salesOrders: entry.orders.size }))
+}
 
 // The audit log's names for each kind of record, as its writers spell them,
 // and the permission that reads the record itself.

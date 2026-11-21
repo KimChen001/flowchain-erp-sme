@@ -289,3 +289,26 @@ test('record_history keeps reply details on shown rows, within the size limit, f
   assert.equal(JSON.stringify(apart).includes('R-other'), false)
   assert.deepEqual(apart.replyDetails, { detailed: 1, of: 3 })
 })
+
+// 2026-11-20 question set: "how many sales orders did we ship in October?"
+// got "200 rows shown of 3,380+". The window's months are counted over every
+// posted shipment.
+test('list_shipments counts shipments and orders shipped per month over the whole window', async () => {
+  const posted = (salesOrderId, at, status = 'posted') => ({ id: `${salesOrderId}-${at}`, shipmentNumber: `DN-${at}`, postedAt: new Date(at), reversedAt: null, postingStatus: status, salesOrderId, salesOrder: { id: salesOrderId, orderNumber: salesOrderId, customerName: 'C' }, lines: [{ sku: 'X', postedQuantity: '1', unit: 'pcs', allocations: [{ warehouseId: 'WH-1' }] }] })
+  const shipments = [
+    posted('SO-1', '2026-10-02T09:00:00Z'), posted('SO-1', '2026-10-09T09:00:00Z'), posted('SO-2', '2026-10-20T09:00:00Z'),
+    posted('SO-3', '2026-10-21T09:00:00Z', 'reversed'), posted('SO-4', '2026-11-03T09:00:00Z'),
+  ]
+  const reads = []
+  const prisma = {
+    salesOrder: { findFirst: async () => null },
+    shipmentDocument: { findMany: async ({ where, select }) => { reads.push({ where, select }); return shipments.filter((row) => (!where.postingStatus?.in || where.postingStatus.in.includes(row.postingStatus)) && (typeof where.postingStatus !== 'string' || row.postingStatus === where.postingStatus) && (!where.postedAt || row.postedAt >= where.postedAt.gte)) } },
+  }
+  const context = (warehouseIds) => ({ actor: { permissionCodes: new Set(['shipment.read']), tenantId: 't1' }, tenantId: 't1', prisma, routeContext: { reportReadAccess: { warehouseIds } } })
+  const facts = { today: '2026-11-20' }
+  const result = await tool('list_shipments').run({ days: 60 }, { facts, context: context(null) })
+  assert.deepEqual(result.byMonth, [{ month: '2026-10', shipments: 3, salesOrders: 2 }, { month: '2026-11', shipments: 1, salesOrders: 1 }])
+  // A reader of some warehouses, or one SKU: no monthly count.
+  assert.equal((await tool('list_shipments').run({ days: 60 }, { facts, context: context(['WH-1']) })).byMonth, undefined)
+  assert.equal((await tool('list_shipments').run({ days: 60, sku: 'X' }, { facts, context: context(null) })).byMonth, undefined)
+})
