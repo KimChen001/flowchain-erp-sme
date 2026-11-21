@@ -694,7 +694,7 @@ export default function SupplierMasterPage({
               {copy("暂无可供应物料")}</div>
           ) : (
             <div className="mt-3">
-            <div className={tableScrollClass}>
+            <div className={tableScrollClass} ref={listTableCardsRef}>
             <table className={`w-full ${tableBodyTextClass}`}>
               <thead>
                 <tr style={listHeadRowStyle}>
@@ -709,7 +709,7 @@ export default function SupplierMasterPage({
                     ["状态", false],
                     ...(writes.items ? [["操作", false]] : []),
                   ] as Array<[string, boolean]>).map(([h, numeric]) => (
-                    <th key={h} className={numeric ? thRightClass : thClass} style={{ color: A.sub }}>
+                    <th key={h} className={numeric ? thRightClass : thClass} style={{ color: A.gray1 }}>
                       {copy(h)}
                     </th>
                   ))}
