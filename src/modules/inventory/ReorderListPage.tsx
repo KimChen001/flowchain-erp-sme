@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { ChevronDown, ClipboardList, RefreshCw } from "lucide-react";
 import { A, Card, Chip, Modal, inputStyle } from "../../components/ui";
-import { rowActionClass } from "../../components/ui/listLayout";
+import { ExportButton, rowActionClass } from "../../components/ui/listLayout";
+import { exportRowsToCsv } from "../../lib/data-export";
 import { apiJson } from "../../lib/api-client";
 import { apiErrorText } from "../../lib/apiErrorText";
 import { PREFILL_LINES_MAX, prefillLineValue } from "../../lib/prefill";
@@ -486,6 +487,27 @@ export default function ReorderListPage() {
     const bySupplier = !supplierFilter ? all : supplierFilter === NO_SUPPLIER ? all.filter((row) => !row.supplier) : all.filter((row) => row.supplier?.id === supplierFilter);
     return needle ? bySupplier.filter((row) => row.sku.toLowerCase().includes(needle) || (row.itemName || "").toLowerCase().includes(needle)) : bySupplier;
   }, [list, supplierFilter, query]);
+  // Every row the search and supplier filter show, ranked as on the page,
+  // with the figures the columns show; numbers stay numbers, dates days.
+  const exportRows = () => void exportRowsToCsv("reorder-list-export.csv", rows.map((row) => ({
+    [t("colOrderBy")]: row.orderByDate,
+    [t("exportDaysLeft")]: row.daysUntilOrderBy,
+    [t("orderNow")]: t(row.orderNow ? "exportYes" : "exportNo"),
+    [t("exportSku")]: row.sku,
+    [t("colItem")]: row.itemName,
+    [t("exportUnit")]: row.unit,
+    [t("colOnHand")]: row.onHand,
+    [t("colReserved")]: row.reserved,
+    [t("colIncoming")]: row.incoming,
+    [t("colRequested")]: row.requested ?? 0,
+    [t("colBackorders")]: row.backorders ?? 0,
+    [t("colPosition")]: row.position,
+    [t("colReorderPoint")]: row.reorderPoint,
+    [t("colDemand")]: row.demand.averageDailyDemand ?? "",
+    [t("colShortfall")]: row.shortfall,
+    [t("exportSuggested")]: row.purchaseRequest.quantity ?? "",
+    [t("colSupplier")]: row.supplier ? `${row.supplier.name}${row.supplier.code ? ` (${row.supplier.code})` : ""}` : "",
+  })), list?.timeZone);
   // One page of the ranked rows; a new supplier filter or search starts at page 1.
   const { page, pageRows, setPage } = usePagedRows(rows, PAGE_SIZE, `${supplierFilter}|${query}`);
 
@@ -657,6 +679,8 @@ export default function ReorderListPage() {
                 <option value={NO_SUPPLIER}>{t("noSupplier")}</option>
               </select>
             </label>
+            {/* The rows shown, in a spreadsheet, as on the other lists. */}
+            <span data-testid="reorder-list-export"><ExportButton onClick={exportRows} /></span>
             </div>
           )}
 
