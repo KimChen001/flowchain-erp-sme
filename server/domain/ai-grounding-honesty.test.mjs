@@ -168,3 +168,46 @@ test('the answer check takes no figure or date from words or earlier answers', (
   assert.ok(problems('It is 12 days late.', 'Which of the twelve open orders are late?').length)
   assert.ok(problems('Order by 27 Nov 2026.', 'What should I reorder this week?').length)
 })
+
+// #404 recheck: a multiple only of something, compound Chinese numerals,
+// "move it up" is earlier, word-derived chains stay exact, and the reorder
+// window's last days ground only a claim about what falls due.
+test('#404 recheck: multiples of something, 二十倍, move up, exact chains, window ends', () => {
+  const results = [{ promisedDate: '2026-11-15', minimumOrderQuantity: 50, unitPrice: 6.38 }]
+  const grounded = (input, question, extra = {}) => aiCalculationGrounded(input, { results, question, today: '2026-11-20', ...extra })
+  const product = (factor, base = 6.38) => ({ operation: 'product', values: [base, factor] })
+  // Twice / double only of something.
+  for (const question of ['Please double check the price', 'I asked twice: what is the price?', 'Double-check the order']) assert.equal(grounded(product(2), question), false, question)
+  for (const question of ['What is twice the price?', 'Double it', 'What would double the minimum cost?']) assert.equal(grounded(product(2), question), true, question)
+  // Compound Chinese numerals.
+  assert.equal(grounded(product(20), '单价的二十倍是多少？'), true)
+  assert.equal(grounded(product(10), '单价的二十倍是多少？'), false)
+  assert.equal(grounded(product(15), '十五倍呢？'), true)
+  // "move it up a week" is a week earlier.
+  const addDays = (days) => ({ operation: 'add_days', dates: ['2026-11-15'], values: [days] })
+  assert.equal(grounded(addDays(-7), 'Can we move it up a week?'), true)
+  assert.equal(grounded(addDays(7), 'Can we move it up a week?'), false)
+  assert.equal(grounded(addDays(7), 'Move it back a week'), true)
+  // A result from the user's words is known exactly: 150 does not let 15000 through.
+  const chain = { calculations: [{ operation: 'product', values: [50, 3] }, { operation: 'sum', values: [15000, 1] }] }
+  assert.equal(grounded(chain, 'What would three times the minimum order be?', { output: { results: [{ result: 150 }, { result: 15001 }] } }), false)
+  const exactChain = { calculations: [{ operation: 'product', values: [50, 3] }, { operation: 'product', values: [150, 6.38] }] }
+  assert.equal(grounded(exactChain, 'What would three times the minimum order cost?', { output: { results: [{ result: 150 }, { result: 957 }] } }), true)
+  // Window ends: only "due / order by", never an arrival.
+  const window = [{ dueWindowEnds: { within7Days: '2026-11-27', within30Days: '2026-12-20' }, rows: [] }]
+  const flagged = (answer) => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results: window, question: 'What should I reorder this week?', today: '2026-11-20' }).problems.filter((row) => row.kind === 'date').map((row) => row.value)
+  assert.deepEqual(flagged('78 more items fall due by 27 Nov 2026.'), [])
+  assert.deepEqual(flagged('Order them by 27 Nov 2026 at the latest.'), [])
+  assert.deepEqual(flagged('PO-202611-0009 arrives 27 Nov 2026.'), ['27 Nov 2026'])
+  assert.deepEqual(flagged('The stock lasts until 20 Dec 2026.'), ['20 Dec 2026'])
+})
+
+test('#404 recheck: 延期一周, 晚到一周 and "another week late" are a week later', () => {
+  const results = [{ promisedDate: '2026-11-15' }]
+  const grounded = (days, question) => aiCalculationGrounded({ operation: 'add_days', dates: ['2026-11-15'], values: [days] }, { results, question, today: '2026-11-20' })
+  for (const question of ['如果再延期一周呢？', '要是晚到一周会怎样？', 'What if it arrives another week late?']) {
+    assert.equal(grounded(7, question), true, question)
+    assert.equal(grounded(-7, question), false, question)
+  }
+  assert.equal(grounded(7, 'It came a week later than the last one'), false)
+})
