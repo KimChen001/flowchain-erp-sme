@@ -24,9 +24,11 @@ const array = (value) => (Array.isArray(value) ? value : [])
 const partialOf = aiToolPartial
 const fold = (value) => text(value).toLowerCase()
 const round1 = (value) => (value === null || value === undefined ? null : Math.round(value * 1000) / 10)
-const limitParam = { type: 'integer', minimum: 1, maximum: AI_TOOL_LIMITS.maxRows, description: `How many rows to return, ${AI_TOOL_LIMITS.rows} by default.` }
+// How many rows a result holds, said as the other limits say it: every
+// request carries it (2026-11-18: room for trace_document_chain).
+const limitParam = { type: 'integer', minimum: 1, maximum: AI_TOOL_LIMITS.maxRows, description: `${AI_TOOL_LIMITS.rows} by default.` }
 const PERIODS = ['all', 'this_month', 'last_month', 'this_quarter', 'last_quarter', 'this_year', 'last_year']
-const periodParam = { type: 'string', enum: PERIODS, description: 'The period, counted from the workspace day. all by default.' }
+const periodParam = { type: 'string', enum: PERIODS, description: 'Counted from the workspace day; all by default.' }
 const periodOf = (value) => (value && value !== 'all' ? { kind: value } : null)
 // The scorecard's periods: its own last 90 days (the default, read as no
 // period), or a calendar one.
@@ -137,7 +139,7 @@ const listPurchaseOrders = defineAiTool({
 const getPurchaseOrder = defineAiTool({
   name: 'get_purchase_order',
   description: 'One purchase order by its number: status, supplier, its lines to receive (openLines) and done (closedLines) with quantities, unit price when your role sees prices and promised dates, its receipts and invoice differences.',
-  parameters: { order: { type: 'string', description: 'The order number, for example PO-202611-0014.' } },
+  parameters: { order: { type: 'string', description: 'The order number, e.g. PO-202611-0014.' } },
   required: ['order'],
   available: (facts) => Boolean(facts.purchaseOrders),
   run(args, { facts }) {
@@ -397,7 +399,7 @@ const supplierPerformance = defineAiTool({
     // The scorecard's own window is the last 90 days (2026-11-09 on Flash: told
     // the period was "all", the model said the scorecard had no 90-day view
     // and gave a quarter instead).
-    period: { type: 'string', enum: SCORECARD_PERIODS, description: 'The period, counted from the workspace day. last_90_days by default, the scorecard\'s own window.' },
+    period: { type: 'string', enum: SCORECARD_PERIODS, description: 'Counted from the workspace day; last_90_days (the scorecard\'s own window) by default.' },
   },
   available: (facts) => typeof facts.supplierScorecard === 'function',
   async run(args, { facts }) {

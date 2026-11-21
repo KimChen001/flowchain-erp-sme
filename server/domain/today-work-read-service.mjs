@@ -58,6 +58,52 @@ const FINANCE_LIMIT = 100
 const decimal = (value) => (value === null || value === undefined ? null : String(value))
 const iso = (value) => (value instanceof Date ? value.toISOString() : value ? String(value) : null)
 
+// The blocking differences of supplier invoices the three-way match held
+// (invoiceIds, at most FINANCE_LIMIT by the caller), as invoiceExceptionDraft
+// reads them: the invoices with the order each bills, their open or rejected
+// match exceptions, the match lines, and this supplier's order prices for the
+// same SKUs. Prices and money values only when amountsVisible. Today's
+// prepared step and the assistant's document chain read it the same way.
+export async function readHeldInvoiceDifferences(prisma, { tenantId, invoiceIds, amountsVisible }) {
+  const [invoices, exceptions] = await Promise.all([
+    prisma.supplierInvoice.findMany({ where: { tenantId, id: { in: invoiceIds } }, select: { id: true, invoiceNumber: true, supplierId: true, supplierName: true, relatedPoId: true, currency: true } }),
+    prisma.financeMatchException.findMany({
+      where: { tenantId, supplierInvoiceId: { in: invoiceIds }, status: { in: ['open', 'rejected'] } },
+      select: { id: true, matchLineId: true, supplierInvoiceId: true, exceptionType: true, status: true, expectedValue: true, actualValue: true, varianceValue: true },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    }),
+  ])
+  const lineIds = [...new Set(exceptions.map((row) => row.matchLineId).filter(Boolean))]
+  const orderIds = [...new Set(invoices.map((row) => row.relatedPoId).filter(Boolean))]
+  const supplierIds = [...new Set(invoices.map((row) => row.supplierId).filter(Boolean))]
+  const [lines, orders] = await Promise.all([
+    lineIds.length ? prisma.threeWayMatchLine.findMany({ where: { id: { in: lineIds } }, select: { id: true, sku: true, unit: true, orderedQuantity: true, receivedQuantity: true, previouslyInvoicedQuantity: true, invoiceQuantity: true, poUnitPrice: true, invoiceUnitPrice: true } }) : [],
+    orderIds.length ? prisma.purchaseOrder.findMany({ where: { tenantId, id: { in: orderIds } }, select: { id: true, number: true, metadata: true, status: true, createdAt: true } }) : [],
+  ])
+  const skus = [...new Set(lines.map((row) => row.sku).filter(Boolean))]
+  // Evidence that the supplier's price moved: lines of orders the business
+  // committed to (approved, issued or received), the newest first; the draft
+  // takes only those dated after the invoice's order (design audit L11-08).
+  const orderLines = amountsVisible && skus.length && supplierIds.length
+    ? await prisma.purchaseOrderLine.findMany({
+      where: { sku: { in: skus }, purchaseOrder: { is: { tenantId, supplierId: { in: supplierIds }, status: { in: PRICE_EVIDENCE_ORDER_STATUSES } } } },
+      select: { sku: true, unitPrice: true, purchaseOrder: { select: { id: true, number: true, metadata: true, supplierId: true, createdAt: true } } },
+      orderBy: [{ purchaseOrder: { createdAt: 'desc' } }, { id: 'asc' }],
+      take: 2000,
+    })
+    : []
+  const numberOf = (order) => (order ? procurementDocumentNumber(order) : null)
+  const ordersById = new Map(orders.map((order) => [order.id, order]))
+  const hidden = (value) => (amountsVisible ? decimal(value) : null)
+  return {
+    amountsVisible: Boolean(amountsVisible),
+    invoices: invoices.map((row) => ({ id: row.id, invoiceNumber: row.invoiceNumber || row.id, supplierId: row.supplierId, supplierName: row.supplierName, orderId: row.relatedPoId, orderNumber: numberOf(ordersById.get(row.relatedPoId)) || row.relatedPoId || null, orderStatus: ordersById.get(row.relatedPoId)?.status || null, orderDate: iso(ordersById.get(row.relatedPoId)?.createdAt), currency: row.currency })),
+    exceptions: exceptions.map((row) => ({ ...row, expectedValue: row.exceptionType === 'quantity' ? decimal(row.expectedValue) : hidden(row.expectedValue), actualValue: row.exceptionType === 'quantity' ? decimal(row.actualValue) : hidden(row.actualValue), varianceValue: row.exceptionType === 'quantity' ? decimal(row.varianceValue) : hidden(row.varianceValue) })),
+    lines: Object.fromEntries(lines.map((row) => [row.id, { sku: row.sku, unit: row.unit, orderedQuantity: decimal(row.orderedQuantity), receivedQuantity: decimal(row.receivedQuantity), previouslyInvoicedQuantity: decimal(row.previouslyInvoicedQuantity), invoiceQuantity: decimal(row.invoiceQuantity), poUnitPrice: hidden(row.poUnitPrice), invoiceUnitPrice: hidden(row.invoiceUnitPrice) }])),
+    orderPrices: orderLines.map((row) => ({ sku: row.sku, unitPrice: decimal(row.unitPrice), orderId: row.purchaseOrder?.id || null, orderNumber: numberOf(row.purchaseOrder), supplierId: row.purchaseOrder?.supplierId || null, orderDate: iso(row.purchaseOrder?.createdAt) })),
+  }
+}
+
 export async function databaseClient(ctx) {
   if (ctx.homeOverviewPrisma) return ctx.homeOverviewPrisma
   if (ctx.inventoryPrisma) return ctx.inventoryPrisma
@@ -231,44 +277,7 @@ export async function readTodayWorkSources(ctx, { access, rawContext, now, today
   const heldBills = heldRows.slice(0, FINANCE_LIMIT).map((row) => String(row.id))
   if (heldBills.length) {
     reads.push(attempt('invoice_exceptions', async () => {
-      const [invoices, exceptions] = await Promise.all([
-        prisma.supplierInvoice.findMany({ where: { tenantId, id: { in: heldBills } }, select: { id: true, invoiceNumber: true, supplierId: true, supplierName: true, relatedPoId: true, currency: true } }),
-        prisma.financeMatchException.findMany({
-          where: { tenantId, supplierInvoiceId: { in: heldBills }, status: { in: ['open', 'rejected'] } },
-          select: { id: true, matchLineId: true, supplierInvoiceId: true, exceptionType: true, status: true, expectedValue: true, actualValue: true, varianceValue: true },
-          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-        }),
-      ])
-      const lineIds = [...new Set(exceptions.map((row) => row.matchLineId).filter(Boolean))]
-      const orderIds = [...new Set(invoices.map((row) => row.relatedPoId).filter(Boolean))]
-      const supplierIds = [...new Set(invoices.map((row) => row.supplierId).filter(Boolean))]
-      const [lines, orders] = await Promise.all([
-        lineIds.length ? prisma.threeWayMatchLine.findMany({ where: { id: { in: lineIds } }, select: { id: true, sku: true, unit: true, orderedQuantity: true, receivedQuantity: true, previouslyInvoicedQuantity: true, invoiceQuantity: true, poUnitPrice: true, invoiceUnitPrice: true } }) : [],
-        orderIds.length ? prisma.purchaseOrder.findMany({ where: { tenantId, id: { in: orderIds } }, select: { id: true, number: true, metadata: true, status: true, createdAt: true } }) : [],
-      ])
-      const skus = [...new Set(lines.map((row) => row.sku).filter(Boolean))]
-      // Evidence that the supplier's price moved: lines of orders the
-      // business committed to (approved, issued or received), the newest
-      // first; the draft takes only those dated after the invoice's order
-      // (design audit L11-08).
-      const orderLines = access.amounts && skus.length && supplierIds.length
-        ? await prisma.purchaseOrderLine.findMany({
-          where: { sku: { in: skus }, purchaseOrder: { is: { tenantId, supplierId: { in: supplierIds }, status: { in: PRICE_EVIDENCE_ORDER_STATUSES } } } },
-          select: { sku: true, unitPrice: true, purchaseOrder: { select: { id: true, number: true, metadata: true, supplierId: true, createdAt: true } } },
-          orderBy: [{ purchaseOrder: { createdAt: 'desc' } }, { id: 'asc' }],
-          take: 2000,
-        })
-        : []
-      const numberOf = (order) => (order ? procurementDocumentNumber(order) : null)
-      const ordersById = new Map(orders.map((order) => [order.id, order]))
-      const hidden = (value) => (access.amounts ? decimal(value) : null)
-      sources.invoiceExceptions = {
-        amountsVisible: Boolean(access.amounts),
-        invoices: invoices.map((row) => ({ id: row.id, invoiceNumber: row.invoiceNumber || row.id, supplierId: row.supplierId, supplierName: row.supplierName, orderId: row.relatedPoId, orderNumber: numberOf(ordersById.get(row.relatedPoId)) || row.relatedPoId || null, orderStatus: ordersById.get(row.relatedPoId)?.status || null, orderDate: iso(ordersById.get(row.relatedPoId)?.createdAt), currency: row.currency })),
-        exceptions: exceptions.map((row) => ({ ...row, expectedValue: row.exceptionType === 'quantity' ? decimal(row.expectedValue) : hidden(row.expectedValue), actualValue: row.exceptionType === 'quantity' ? decimal(row.actualValue) : hidden(row.actualValue), varianceValue: row.exceptionType === 'quantity' ? decimal(row.varianceValue) : hidden(row.varianceValue) })),
-        lines: Object.fromEntries(lines.map((row) => [row.id, { sku: row.sku, unit: row.unit, orderedQuantity: decimal(row.orderedQuantity), receivedQuantity: decimal(row.receivedQuantity), previouslyInvoicedQuantity: decimal(row.previouslyInvoicedQuantity), invoiceQuantity: decimal(row.invoiceQuantity), poUnitPrice: hidden(row.poUnitPrice), invoiceUnitPrice: hidden(row.invoiceUnitPrice) }])),
-        orderPrices: orderLines.map((row) => ({ sku: row.sku, unitPrice: decimal(row.unitPrice), orderId: row.purchaseOrder?.id || null, orderNumber: numberOf(row.purchaseOrder), supplierId: row.purchaseOrder?.supplierId || null, orderDate: iso(row.purchaseOrder?.createdAt) })),
-      }
+      sources.invoiceExceptions = await readHeldInvoiceDifferences(prisma, { tenantId, invoiceIds: heldBills, amountsVisible: access.amounts })
     }))
   }
   // The same counts and options the assistant's setup_status reads (first-run-setup.mjs).

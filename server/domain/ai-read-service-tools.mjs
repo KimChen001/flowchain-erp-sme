@@ -31,7 +31,9 @@ const text = (value) => String(value ?? '').trim()
 const array = (value) => (Array.isArray(value) ? value : [])
 const fold = (value) => text(value).toLowerCase()
 const stockRowOf = (facts, sku) => array(facts?.inventory?.rows).find((row) => fold(row.sku) === fold(sku)) || null
-const limitParam = { type: 'integer', minimum: 1, maximum: AI_TOOL_LIMITS.maxRows, description: `How many rows to return, ${AI_TOOL_LIMITS.rows} by default.` }
+// How many rows a result holds, said as the other limits say it: every
+// request carries it (2026-11-18: room for trace_document_chain).
+const limitParam = { type: 'integer', minimum: 1, maximum: AI_TOOL_LIMITS.maxRows, description: `${AI_TOOL_LIMITS.rows} by default.` }
 const can = (context, permission) => Boolean(context?.actor?.permissionCodes?.has?.(permission))
 const serviceOf = (context, name, create) => context?.routeContext?.aiReadServices?.[name] || create({ prisma: context.prisma, env: context.routeContext?.env || process.env, now: () => context.now })
 const identityOf = (context) => ({ identity: context.routeContext?.identity })
@@ -579,7 +581,7 @@ const databaseMode = (context) => context?.routeContext?.repositories?.mode === 
 const searchDocuments = defineAiTool({
   name: 'search_documents',
   description: 'Searches the workspace\'s own documents that the user may read (policies, product guides, procedures) and returns the matching passages with their document and section. Write the search words in the documents\' language; the result names it, and a search in another language finds nothing. State only what the passages say, citing the document and section; if they do not answer the question, say the documents do not cover it.',
-  parameters: { query: { type: 'string', maxLength: 200, description: 'Search words in the documents\' language, for example "urgent purchase approval".' } },
+  parameters: { query: { type: 'string', maxLength: 200, description: 'Search words in the documents\' language, e.g. "urgent purchase approval".' } },
   required: ['query'],
   available: (_facts, context) => Boolean(context?.actor && (context.prisma || context.routeContext?.aiReadServices?.knowledge)) && (databaseMode(context) || Boolean(context.routeContext?.aiReadServices?.knowledge)),
   async run(args, { context }) {
