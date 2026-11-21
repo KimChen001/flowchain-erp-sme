@@ -565,10 +565,10 @@ export default function SupplierMasterPage({
           )}
           </div>
         </Card>
-        <div role="tablist" aria-label={selected.supplierName} className="flex flex-wrap gap-1 border-b" style={{ borderColor: A.border }}>
+        <div role="tablist" aria-label={selected.supplierName} className="flex gap-1 overflow-x-auto border-b" style={{ borderColor: A.border }}>
           {(canReadContracts ? (["details", "performance", "contracts"] as const) : (["details", "performance"] as const)).map((tab) => (
             <button key={tab} type="button" role="tab" aria-selected={detailTab === tab} data-testid={`supplier-tab-${tab}`} onClick={() => setDetailTab(tab)}
-              className="px-3 py-2 text-xs font-semibold max-sm:min-h-9" style={{ color: detailTab === tab ? A.blue : A.gray1, borderBottom: detailTab === tab ? `2px solid ${A.blue}` : "2px solid transparent" }}>
+              className="shrink-0 whitespace-nowrap px-3 py-2 text-xs font-semibold max-sm:min-h-9" style={{ color: detailTab === tab ? A.blue : A.gray1, borderBottom: detailTab === tab ? `2px solid ${A.blue}` : "2px solid transparent" }}>
               {tab === "contracts" ? contractCopy("Contracts", language) : supplierPerformanceTabLabel(language, tab)}
             </button>
           ))}

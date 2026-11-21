@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { RetryButton } from "../../components/ui/listLayout";
-import { backLinkClass } from "../procurement/BackToListLink";
+import { backLinkClass } from "../../components/ui/listLayout";
 import { ArrowLeft } from "lucide-react";
 import { Link } from "react-router";
 import type { DocumentLanguage, PurchaseOrderDocument } from "../../../shared/business-documents.mjs";
