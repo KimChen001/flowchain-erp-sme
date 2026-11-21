@@ -63,6 +63,13 @@ function PurchaseOrderSheet({ doc, language }: { doc: PurchaseOrderDocument; lan
           <p><strong>{dash(doc.shipTo.name)}</strong></p>
           <p>{dash(doc.shipTo.code)}</p>
         </div>
+        {/* The terms recorded on the supplier, never a default; left off when none were recorded. */}
+        {doc.paymentTerms && (
+          <div data-testid="po-document-payment-terms">
+            <h2>{c("paymentTerms")}</h2>
+            <p>{doc.paymentTerms}</p>
+          </div>
+        )}
       </section>
       <table className="business-document-lines" data-testid="po-document-lines">
         <thead>

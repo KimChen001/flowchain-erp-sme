@@ -18,6 +18,7 @@ import { formatDateTimeInTimeZone, formatQuantity } from "../../lib/format";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { useI18n } from "../../i18n/I18n";
 import { NOT_PROVIDED, useMasterDataCopy } from "./masterDataCopy";
+import { useRouteAvailability } from "../../app/routeAvailability";
 
 // Bins are not kept as records of their own: a bin is the location on a
 // posted stock balance (GET /api/inventory/balances, scoped to the warehouses
@@ -69,6 +70,8 @@ const add = (totals: Map<string, bigint>, unit: string, value: string | number |
 
 export default function BinListPage() {
   const { copy } = useMasterDataCopy();
+  // The Settings link only for those who may open that page.
+  const canOpenRoute = useRouteAvailability();
   const { locale, timezone } = useI18n();
   const warehouseName = useWarehouseNames();
   const [balances, setBalances] = useState<Balance[]>([]);
@@ -140,6 +143,10 @@ export default function BinListPage() {
           <div>
             <h2 className="fc-section-title" style={{ color: A.label }}>{copy("Bin search")}</h2>
             <div className="mt-1 text-xs" style={{ color: A.sub }}>{copy("Bins come from posted stock: every bin that holds a stock record is listed, with its warehouse.")}</div>
+            <div className="mt-1 text-xs" style={{ color: A.sub }} data-testid="bin-list-settings-signpost">
+              {copy("Bins listed here hold stock. To add a location before stock arrives, use Settings › Warehouses & access.")}
+              {canOpenRoute("settings:warehouse-access") && <>{" "}<Link to="/app/settings/warehouse-access" className="font-medium text-blue-600 hover:underline max-sm:inline-flex max-sm:min-h-9 max-sm:items-center">{copy("Open Warehouses & access")}</Link></>}
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={() => { setSearch(""); setWarehouse(""); }} className="h-8 rounded-lg px-3 text-xs font-medium" style={{ background: A.gray6, color: A.label }}>

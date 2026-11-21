@@ -115,7 +115,7 @@ export default function WorkspaceMembers() {
   return <Card className="p-5" data-testid="workspace-members">
     {confirmDialog.element}
     <h2 className="text-lg font-semibold">{tr("Members", "成员")}</h2>
-    <p className="mt-1 text-sm text-slate-500">{tr("Invite teammates and enable or disable members. Choose each member's roles and warehouse access below.", "邀请同事加入，启用或停用成员。成员的角色和仓库权限在下方设置。")}</p>
+    <p className="mt-1 text-sm text-slate-500">{tr("Invite teammates and enable or disable members. Choose each member's roles below. A new member sees no warehouse until you give them access on Warehouses & access.", "邀请同事加入，启用或停用成员。成员的角色在下方设置。新成员在“仓库与权限”中获得授权之前看不到任何仓库。")}</p>
     {notice && <div role="alert" className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{notice}</div>}
 
     {canInvite && <form onSubmit={(event) => void invite(event)} className="mt-4 flex flex-wrap items-end gap-2" data-testid="invite-member-form">

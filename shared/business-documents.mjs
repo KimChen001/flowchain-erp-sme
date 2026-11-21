@@ -492,7 +492,7 @@ function approvedInstant(order) {
 // ({ itemId, supplierSku, active }; an inactive link is not used); `letterhead`, `template` and `documentLanguage`
 // the workspace's document settings; `workspace` its { legalName, name };
 // `access.prices` whether the reader may see prices.
-export function buildPurchaseOrderDocument({ order, supplier = null, warehouse = null, supplierSkus = [], letterhead = documentSettingsSeed.letterhead, template = documentSettingsSeed.purchaseOrder, documentLanguage = documentSettingsSeed.documentLanguage, workspace = {}, access = {} }) {
+export function buildPurchaseOrderDocument({ order, supplier = null, warehouse = null, supplierSkus = [], paymentTerms = [], letterhead = documentSettingsSeed.letterhead, template = documentSettingsSeed.purchaseOrder, documentLanguage = documentSettingsSeed.documentLanguage, workspace = {}, access = {} }) {
   const meta = isObject(order?.metadata) ? order.metadata : {}
   const status = recorded(order?.status)
   // A role that cannot see prices gets no document to send rather than one
@@ -527,6 +527,9 @@ export function buildPurchaseOrderDocument({ order, supplier = null, warehouse =
       taxId: recorded(letterhead?.taxId),
     },
     supplier: supplierParty(supplier, order),
+    // The payment terms recorded on the supplier, by their recorded name;
+    // null when none were recorded (never a default), as on a customer invoice.
+    paymentTerms: supplierPaymentTerms(supplier, paymentTerms),
     // A warehouse has no address in FlowChain; the code and name are printed,
     // and nothing when the warehouse is not found.
     shipTo: { code: recorded(warehouse?.code), name: recorded(warehouse?.name) },
@@ -555,6 +558,13 @@ export function buildPurchaseOrderDocument({ order, supplier = null, warehouse =
   }
 }
 
+// A supplier's payment terms as recorded (metadata.paymentTermsId, or the
+// older metadata.paymentTerms), by the workspace's name for them.
+export function supplierPaymentTerms(supplier, terms = []) {
+  const meta = isObject(supplier?.metadata) ? supplier.metadata : {}
+  return recordedPaymentTerms(recorded(meta.paymentTermsId) || recorded(meta.paymentTerms), terms)
+}
+
 // Payment terms as recorded on a supplier or customer: the stored value is a
 // payment term's id or code, or free text. Where the workspace's payment terms
 // (PaymentTerm rows { id, code, name }) name it, the recorded name is printed;
@@ -571,9 +581,10 @@ export function recordedPaymentTerms(value, terms = []) {
 // record (RuntimeRecord payload): the code, contact, phone, email, address and
 // payment terms someone entered, each null when nobody did. A customer's
 // payment terms are stored only when someone enters them (no form, import,
-// view or seed fills them in), unlike a supplier's paymentTermsId, which
-// defaults to NET30 and so is never printed. The customer's currency and
-// credit standing are not read.
+// view or seed fills them in). A supplier's are stored the same way since
+// #181 (no NET30 default) and print on the purchase order
+// (supplierPaymentTerms). The customer's currency and credit standing are
+// not read.
 function customerParty(customer) {
   const payload = isObject(customer?.payload) ? customer.payload : {}
   return {

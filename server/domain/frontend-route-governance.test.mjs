@@ -761,3 +761,15 @@ test("the assistant's no-answer links offer only pages each default role may ope
   }
   assert.deepEqual(offered([]).filter((routeId) => byId(routeId).requiredPermission), []);
 });
+
+test("My profile is every member's own page; the rest of Settings keeps its permission", () => {
+  // Product review 2026-11-20: Procurement, Operations and Finance specialists
+  // lack settings.workspace.read, so a gated profile locked them out of their
+  // own language, default warehouse and approval emails.
+  const byId = (id) => routes.find((route) => route.id === id);
+  assert.equal(byId("settings:profile").requiredPermission, undefined);
+  assert.equal(byId("settings:profile").directAccessBehavior, "RENDER");
+  for (const id of ["settings", "settings:company", "settings:warehouse-access", "settings:ai"]) {
+    assert.equal(byId(id).requiredPermission, "settings.workspace.read", id);
+  }
+});

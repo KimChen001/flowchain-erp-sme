@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router";
+import { useRouteAvailability } from "../../app/routeAvailability";
 import { FileSpreadsheet } from "lucide-react";
 import { A, Card, Field, inputStyle } from "../../components/ui";
 import { ListCard, ListSearchCard, ResetButton, listButtonClass } from "../../components/ui/listLayout";
@@ -37,10 +39,20 @@ const LOAD_ERRORS: Record<string, string> = {
 };
 
 type ListTab = ReferenceTableTab | "customers" | "print-templates";
+// Lists kept elsewhere: warehouses and their locations are added in Settings ›
+// Warehouses & access, and what a document prints in Settings › Company &
+// workspace › Documents. The list says so, with a link (product review
+// 2026-11-20).
+// The link only for those who may open that page (useRouteAvailability); the
+// sentence says where for everyone.
+const SETTINGS_SIGNPOSTS: Partial<Record<ListTab, { text: string; link: string; to: string; routeId: string }>> = {
+  warehouses: { text: "Warehouses and their locations are added and edited in Settings › Warehouses & access.", link: "Open Warehouses & access", to: "/app/settings/warehouse-access", routeId: "settings:warehouse-access" },
+  "print-templates": { text: "These are the built-in print layouts. To change what prints (the letterhead, document titles, columns and the notes on each document), use Settings › Company & workspace › Documents.", link: "Open document settings", to: "/app/settings/company", routeId: "settings:company" },
+};
 // The search and list card copy of each reference list.
 const VIEWS: Record<ListTab, { search: string; hint: string; placeholder: string; list: string; statusLabel: string; allStatuses: string; empty: string }> = {
   customers: { search: "Customer search", hint: "Search customers by code, name, contact, phone, address or payment terms.", placeholder: "Code, name, contact or phone", list: "Customer list", statusLabel: "Status", allStatuses: "All statuses", empty: "No customers yet. Create or import customers to continue." },
-  warehouses: { search: "Warehouse search", hint: "Search warehouses by code, name, zone, bin or owner.", placeholder: "Code, name, zone or owner", list: "Warehouse list", statusLabel: "QA status", allStatuses: "All QA statuses", empty: "No warehouses yet." },
+  warehouses: { search: "Warehouse search", hint: "Search warehouses by code, name, zone, bin or owner.", placeholder: "Code, name, zone or owner", list: "Warehouse list", statusLabel: "QA status", allStatuses: "All QA statuses", empty: "No warehouses yet. Add them in Settings › Warehouses & access." },
   "tax-codes": { search: "Tax code search", hint: "Search tax codes by code, name, type, region or description.", placeholder: "Code, name, type or region", list: "Tax code list", statusLabel: "Status", allStatuses: "All statuses", empty: "No tax codes yet." },
   "payment-terms": { search: "Payment term search", hint: "Search payment terms by code, name or description.", placeholder: "Code, name or description", list: "Payment term list", statusLabel: "Status", allStatuses: "All statuses", empty: "No payment terms yet." },
   "print-templates": { search: "Print template search", hint: "Search templates by name or document type.", placeholder: "Template name or document type", list: "Print template list", statusLabel: "Document type", allStatuses: "All document types", empty: "No print templates yet." },
@@ -67,7 +79,8 @@ export default function MasterDataPage({
   const [creatingCustomer, setCreatingCustomer] = useState(false);
   const [masterData, setMasterData] = useState<MasterDataSnapshot>(emptyMasterData);
   const [loadStatus, setLoadStatus] = useState<AsyncDataStatus>("loading");
-  const [templateCatalog, setTemplateCatalog] = useState<PrintTemplateCatalogItem[]>(PRINT_TEMPLATE_CATALOG);
+  const templateCatalog: PrintTemplateCatalogItem[] = PRINT_TEMPLATE_CATALOG;
+  const canOpenRoute = useRouteAvailability();
   // Bumped after a customer is created or changed, to read the data again.
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -175,6 +188,12 @@ export default function MasterDataPage({
         </Field>
       </ListSearchCard>
 
+      {SETTINGS_SIGNPOSTS[tab] && (
+        <p className="text-sm" style={{ color: A.sub }} data-testid={`master-data-${tab}-settings-signpost`}>
+          {copy(SETTINGS_SIGNPOSTS[tab].text)}
+          {canOpenRoute(SETTINGS_SIGNPOSTS[tab].routeId) && <>{" "}<Link to={SETTINGS_SIGNPOSTS[tab].to} className="font-medium text-blue-600 hover:underline max-sm:inline-flex max-sm:min-h-9 max-sm:items-center">{copy(SETTINGS_SIGNPOSTS[tab].link)}</Link></>}
+        </p>
+      )}
       <ListCard title={copy(view.list)} total={shown} all={all} shown={tab === "customers" ? customerPage.pageRows.length : shown} testId={`master-data-${tab}-list`}>
         {shown === 0 && !creatingCustomer ? (
           <div className="px-6 py-12 text-center text-sm" style={{ color: A.sub }}>
@@ -186,7 +205,7 @@ export default function MasterDataPage({
             <ListPager page={customerPage.page} pageSize={CUSTOMER_PAGE_SIZE} total={filteredCustomers.length} onPage={customerPage.setPage} testId="customer-pager" />
           </>
         ) : tab === "print-templates" ? (
-          <PrintTemplateTable templates={filteredTemplates} onCopy={(item) => setTemplateCatalog((current) => [...current, { ...item, id: `${item.id}-copy-${Date.now()}`, copyOf: item.copyOf || item.name, isDefault: false, updatedAt: new Date().toISOString() }])} />
+          <PrintTemplateTable templates={filteredTemplates} />
         ) : (
           <MasterDataTables
             tab={tab as ReferenceTableTab}

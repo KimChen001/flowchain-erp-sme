@@ -3,7 +3,8 @@ import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
 import { useI18n } from "../../i18n/I18n";
 import { unitLabel } from "../../i18n/unitLabels";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useNavigate, useSearchParams } from "react-router";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
+import { isOverdueOpen, todayChasesOrder } from "./lateOrders";
 import { toast } from "sonner";
 import {
   AlertCircle,
@@ -1163,15 +1164,23 @@ export default function PurchasingOrdersPage({
 
   // "open" is the report definition: committed and still to receive.
   const openOrderIds = useMemo(() => (summary ? new Set(summary.openPurchaseOrderIds || []) : undefined), [summary]);
-  const filtered = filterPurchaseOrdersForWorkbench(orders, filters, openOrderIds).filter((order) => {
-    const supplier = searchParams.get("supplier");
-    const overdue = searchParams.get("overdue") === "true";
-    if (supplier && order.supplier !== supplier) return false;
-    // Overdue: open, with an expected arrival before today in the workspace timezone.
-    // The same day and due day as "N days late" below (design audit B3, V-B-02).
-    if (overdue && (!(summary?.openPurchaseOrderIds || []).includes(order.po) || !workspaceToday || !dueOf(order) || String(dueOf(order)) >= workspaceToday)) return false;
-    return true;
-  });
+  // Overdue: open, with an expected arrival before today in the workspace timezone.
+  // The same day and due day as "N days late" below (design audit B3, V-B-02).
+  const overdueOnly = searchParams.get("overdue") === "true";
+  const overdueOpen = (order: PurchaseOrder) => isOverdueOpen(Boolean(openOrderIds?.has(order.po)), dueOf(order) ? String(dueOf(order)) : null, workspaceToday);
+  const setOverdueOnly = (on: boolean) => {
+    const params = new URLSearchParams(searchParams);
+    if (on) params.set("overdue", "true"); else params.delete("overdue");
+    setSearchParams(params, { replace: true });
+  };
+  // Every filter but Overdue; the overdue line counts within these, so its
+  // number is what "Show only these" shows.
+  const supplierInAddress = searchParams.get("supplier");
+  const matchingOtherFilters = filterPurchaseOrdersForWorkbench(orders, filters, openOrderIds).filter((order) => !supplierInAddress || order.supplier === supplierInAddress);
+  const filtered = overdueOnly ? matchingOtherFilters.filter(overdueOpen) : matchingOtherFilters;
+  // The open orders past their expected arrival among those the other filters
+  // match; the line above the list offers them (product review 2026-11-20).
+  const overdueCount = matchingOtherFilters.filter(overdueOpen).length;
   // One page of the list is drawn, as on the other long lists; search and
   // filters run over every order, and a new search starts at page 1.
   const paged = usePagedRows(filtered, PO_LIST_PAGE_SIZE, searchParams.toString());
@@ -1390,6 +1399,9 @@ export default function PurchasingOrdersPage({
     );
     // A closed, cancelled or fully received order has nothing left to arrive.
     const delayed = delayRisk.delayed && !["cancelled", "closed", "fully_received", "已取消", "已关闭", "已完成"].includes(String(selectedPO.status));
+    // Today chases an issued or partly received order that is open and due
+    // before the workspace day; only then does the page point there.
+    const chasedOnToday = todayChasesOrder(purchaseOrderStatusCode(selectedPO.status), Boolean(openOrderIds?.has(selectedPO.po)), dueOf(selectedPO) ? String(dueOf(selectedPO)) : null, workspaceToday);
     const delayNote = delayed
       ? say(`Was due ${day(selectedPO.eta)}; ${formatNumber(delayRisk.openQty)} still to receive.`, `应于 ${day(selectedPO.eta)} 到货，仍有 ${formatNumber(delayRisk.openQty)} 未收。`)
       : !selectedPO.eta ? say("No expected arrival date recorded.", "未记录预计到货日期。") : say("Nothing overdue to receive.", "没有逾期未收的数量。");
@@ -1441,7 +1453,9 @@ export default function PurchasingOrdersPage({
       { label: say("Payment", "付款"), value: <StatusChip label={paymentStateLabel(payment.state, language)} tone={PAYMENT_TONES[payment.state]} testId="po-payment-status" />, helper: paymentAmountsText(payment, orderWords) || undefined },
       { label: copy("当前下一步"), value: <span data-testid="po-next-action">{nextAction}</span> },
       // Plain words: is anything late to arrive? The note says what.
-      { label: say("Late deliveries", "逾期未到"), value: <StatusChip label={delayed ? say("Some lines are late", "有逾期行") : say("None", "无")} tone={delayed ? "warning" : "success"} />, helper: delayNote },
+      // The follow-up to the supplier is drafted on Today (decision cards); a
+      // late order's page says where, with a link (product review 2026-11-20).
+      { label: say("Late deliveries", "逾期未到"), value: <StatusChip label={delayed ? say("Some lines are late", "有逾期行") : say("None", "无")} tone={delayed ? "warning" : "success"} />, helper: chasedOnToday ? <>{delayNote}{" "}<Link to="/app/overview/risks#today-decisions" className="font-medium text-blue-600 hover:underline max-sm:inline-flex max-sm:min-h-9 max-sm:items-center" data-testid="po-late-follow-up">{say("Follow up with the supplier on Today", "在今日页催办供应商")}</Link></> : delayNote },
     ];
     const lineLabel = poLineLabel;
     const qty = (value: number, unit: string) => `${formatNumber(value)} ${unitLabel(unit, language, value)}`;
@@ -1819,6 +1833,22 @@ export default function PurchasingOrdersPage({
             style={inputStyle} />
         </Field>
       </ListSearchCard>
+
+      {/* The overdue filter was reachable only from report links and showed no
+          chip; this line says when it is on and offers it when it is not. */}
+      {overdueOnly ? (
+        <p className="text-sm" style={{ color: A.sub }} data-testid="po-list-overdue-only">
+          {say("Showing only open orders past their expected arrival.", "只显示已过预计到货日期的未结采购订单。")}{" "}
+          <button type="button" className="font-medium text-blue-600 hover:underline" onClick={() => setOverdueOnly(false)}>{say("Show all orders", "显示全部订单")}</button>
+        </p>
+      ) : overdueCount > 0 ? (
+        <p className="text-sm" style={{ color: A.sub }} data-testid="po-list-overdue-offer">
+          {overdueCount === 1
+            ? say("1 open order is past its expected arrival.", "有 1 张未结采购订单已过预计到货日期。")
+            : say(`${formatNumber(overdueCount)} open orders are past their expected arrival.`, `有 ${formatNumber(overdueCount)} 张未结采购订单已过预计到货日期。`)}{" "}
+          <button type="button" className="font-medium text-blue-600 hover:underline" onClick={() => setOverdueOnly(true)}>{say("Show only these", "只看这些")}</button>
+        </p>
+      ) : null}
 
       <ListCard title={copy("采购订单列表")} total={filtered.length} shown={paged.pageRows.length}>
         <div className={tableScrollClass}>

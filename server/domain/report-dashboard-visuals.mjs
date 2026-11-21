@@ -102,12 +102,16 @@ export function closedShortReceivedValue(row) {
 }
 
 // The three-way match engine records matched or exception on the invoice;
-// older records call an exception a variance. An invoice the engine has not
-// decided yet is awaiting match.
+// older records call an exception a variance. An invoice whose differences a
+// person approved (variance_approved) has a match result and counts as
+// matched, not as awaiting match, so a paid invoice never reads "awaiting
+// match" (product review 2026-11-20). An invoice the engine has not decided
+// yet is awaiting match. Which bucket Bills, Today and the assistant use for
+// it is a separate decision (D7).
 export function invoiceMatchOutcome(invoice) {
   const match = text(invoice?.matchStatus).toLowerCase()
   const status = text(invoice?.status).toLowerCase()
-  if (match === 'matched' || (!match && ['matched', 'approved'].includes(status))) return 'matched'
+  if (['matched', 'variance_approved'].includes(match) || (!match && ['matched', 'approved'].includes(status))) return 'matched'
   if (['exception', 'variance'].includes(match) || (!match && status === 'exception')) return 'exception'
   return 'pending'
 }

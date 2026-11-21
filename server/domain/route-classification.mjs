@@ -69,6 +69,8 @@ const routeDefinitions = [
   { method: 'GET', pattern: /^\/api\/procurement\/receiving\/[^/]+(?:\/(?:impact-preview|evidence|links|reconciliation))?$/, group: 'receiving-workbench', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed-db-read' },
   { method: 'GET', pattern: /^\/api\/procurement\/receiving$/, group: 'receiving-workbench', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed-db-read' },
   { method: 'GET', pattern: /^\/api\/procurement\/purchase-orders\/[^/]+\/(?:receiving-summary|receivable-lines)$/, group: 'receiving-workbench', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed-db-read' },
+  // The orders a receiver may receive now (New receipt), read with receiving.prepare.
+  { method: 'GET', pattern: /^\/api\/procurement\/receivable-orders$/, group: 'receiving-workbench', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed-db-read' },
   { method: 'GET', pattern: /^\/api\/(?:me\/profile|workspace(?:\/(?:users|warehouses|invitations))?)$/, group: 'pilot-workspace', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed-db-read' },
   { method: 'PATCH', pattern: /^\/api\/(?:me\/profile|workspace|workspace\/users\/[^/]+)$/, group: 'pilot-workspace', classification: ROUTE_CLASSES.controlledPersistence, writesJson: false, databaseMode: 'allowed-db-persistence' },
   { method: 'PUT', pattern: /^\/api\/workspace\/users\/[^/]+\/warehouse-scopes$/, group: 'pilot-workspace', classification: ROUTE_CLASSES.controlledPersistence, writesJson: false, databaseMode: 'allowed-db-persistence' },

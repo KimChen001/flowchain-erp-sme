@@ -169,6 +169,7 @@ const SEARCH_TYPE_LABELS: Record<string, LabelPair> = {
   receiving_doc: { en: "GRN", zh: "GRN" },
   supplier_invoice: { en: "Supplier invoice", zh: "采购发票" },
   supplier: { en: "Supplier", zh: "供应商" },
+  customer: { en: "Customer", zh: "客户" },
   item: { en: "Item", zh: "物料" },
   inventory_item: { en: "Stock", zh: "库存" },
   warehouse: { en: "Warehouse", zh: "仓库" },
@@ -183,6 +184,7 @@ const SEARCH_GROUP_LABELS: Record<string, LabelPair> = {
   receiving_doc: { en: "Receipts", zh: "采购收货单" },
   supplier_invoice: { en: "Supplier invoices", zh: "采购发票" },
   supplier: { en: "Suppliers", zh: "供应商资料" },
+  customer: { en: "Customers", zh: "客户" },
   item: { en: "Items", zh: "物料" },
   inventory_item: { en: "Inventory", zh: "库存" },
   warehouse: { en: "Warehouses / locations", zh: "仓库 / 库位" },
@@ -196,6 +198,7 @@ const SEARCH_GROUP_ORDER = [
   "supplier_invoice",
   "receiving_doc",
   "supplier",
+  "customer",
   "item",
   "inventory_item",
   "warehouse",
@@ -376,6 +379,9 @@ const LOCAL_BADGE_COPY = {
   "en-US": { user: "User", data: "Public data", none: "none", intakeOn: "Universal Intake enabled", intakeOff: "Universal Intake disabled" },
   "zh-CN": { user: "用户", data: "公开数据", none: "无", intakeOn: "通用录入已开启", intakeOff: "通用录入已关闭" },
 } as const;
+
+// The Settings tabs, in the order the user menu tries them.
+const SETTINGS_MENU_TABS = ["settings:company", "settings:warehouse-access", "settings:roles", "settings:numbering", "settings:review", "settings:ai", "settings:custom-fields", "settings:audit", "settings:readiness"];
 
 export default function FlowChainApp() {
   const { t, routeLabel, workspaceName, language } = useI18n();
@@ -766,6 +772,12 @@ export default function FlowChainApp() {
       experimentalModuleIds,
     ],
   );
+  // The Settings tab the user menu opens: the first this person may open; the
+  // company tab while access is loading or could not be read; none when no
+  // tab opens.
+  const settingsMenuTarget = authorizationLoadState !== "ready"
+    ? "settings:company"
+    : SETTINGS_MENU_TABS.find((routeId) => canOpenRoute(routeId)) || null;
   // The way on from a page that is not available here: the module's own
   // first page when it can be opened, else Today. Never a dead end. (Menus &
   // modules cannot turn a feature on yet, so it is not offered.)
@@ -1700,11 +1712,16 @@ export default function FlowChainApp() {
                         label: t("top.profile"),
                         onClick: () => navigateTo("settings:profile"),
                       },
-                      {
-                        icon: Settings,
-                        label: t("top.settings"),
-                        onClick: () => navigateTo("settings:company"),
-                      },
+                      // Settings for anyone who may open one of its tabs
+                      // (and while access is loading or could not be read);
+                      // My profile is every member's own.
+                      ...(settingsMenuTarget
+                        ? [{
+                            icon: Settings,
+                            label: t("top.settings"),
+                            onClick: () => navigateTo(settingsMenuTarget),
+                          }]
+                        : []),
                       { icon: LogOut, label: t("top.logout"), onClick: logout },
                     ].map(({ icon: Icon, label, onClick }) => (
                       <button

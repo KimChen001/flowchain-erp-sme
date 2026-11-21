@@ -13,7 +13,6 @@ export type PrintTemplateCatalogItem = {
   updatedAt: string;
   // Name of the template this one was copied from, so the copy's label
   // follows the interface language.
-  copyOf?: string;
 };
 
 export const PRINT_TEMPLATE_CATALOG: PrintTemplateCatalogItem[] = [
