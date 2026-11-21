@@ -70,3 +70,12 @@ test('the RFQ page has Open and Cancel, and the RFQ pages say an RFQ cannot beco
   const list = await read('src/modules/procurement/RfqListPage.tsx')
   assert.match(list, /row\.status === "open" \|\| row\.status === "collecting_quotes"/)
 })
+
+test('the RFQ header has one primary step: Open for a draft, Compare while quotes are collected', async () => {
+  const detail = await read('src/modules/procurement/CanonicalRfqDetailPage.tsx')
+  assert.match(detail, /const compareIsNext = !canOpen && \(record\.status === "open" \|\| record\.status === "collecting_quotes"\)/)
+  assert.match(detail, /className=\{compareIsNext \? listButtonClass\.primary : listButtonClass\.secondary\}\n\s+data-testid="rfq-comparison-link"/)
+  assert.match(detail, /className=\{listButtonClass\.primary\} data-testid="rfq-open-button"/)
+  // Cancel stays the red tint, never the solid blue of the next step.
+  assert.match(detail, /className=\{listButtonClass\.danger\} data-testid="rfq-cancel-button"/)
+})
