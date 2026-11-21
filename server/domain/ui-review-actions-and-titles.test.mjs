@@ -83,7 +83,7 @@ test("detail page titles are one H1 in the shared page-title style", () => {
     "src/modules/receiving/ReceivingPostingWorkbench.tsx": /<h1 className="fc-page-title">\{grn\.documentNumber\}<\/h1>/,
     // The status beside the title since design audit U-17.
     "src/modules/procurement/CanonicalRfqDetailPage.tsx": /<h1 className="fc-page-title">\{record\.title \|\| rfqNumber\}<\/h1>/,
-    "src/modules/procurement/CanonicalRfqComparisonPage.tsx": /<h1 className="fc-page-title mt-1">/,
+    "src/modules/procurement/CanonicalRfqComparisonPage.tsx": /<h1 className="fc-page-title">\{comparison\.rfqTitle \|\| rfqNumber\}<\/h1>/,
     "src/components/business/BusinessEntityDetailPage.tsx": /<h1 className="fc-page-title mt-1 tabular-nums"/,
   };
   for (const [path, pattern] of Object.entries(titled)) assert.match(read(path), pattern, path);

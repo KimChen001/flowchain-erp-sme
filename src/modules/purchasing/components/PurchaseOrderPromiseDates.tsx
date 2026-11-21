@@ -6,6 +6,7 @@ import { useI18n } from "../../../i18n/I18n";
 import { procurementErrorCode, procurementErrorText } from "../../procurement/procurementErrors";
 import { listTableCardsRef } from "../../../components/ui/workbenchTable";
 import { listButtonClass } from "../../../components/ui/listLayout";
+import { A, Card, SectionHeader } from "../../../components/ui";
 
 // Promised dates of an approved or issued PO: each line's original promise,
 // its current date and the revisions between them. Before issue a date (such
@@ -76,15 +77,15 @@ export function PurchaseOrderPromiseDates({ poId, onChanged }: { poId: string; o
     }
   };
   return (
-    <section data-testid="po-promise-dates" className="rounded-xl border bg-white p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div><h3 className="text-sm font-semibold">{tr("title")}</h3><p className="text-[11px] text-slate-500">{tr("note")}</p>{po.status === "approved" && <p className="text-[11px] text-slate-500" data-testid="po-promise-not-issued">{tr("notIssuedNote")}</p>}</div>
-        {unchanged && !form && (
-          <button type="button" aria-expanded={!folded} data-testid="po-promise-toggle" className="h-8 rounded-lg px-2 text-xs font-medium text-blue-600 hover:bg-blue-50" onClick={() => setExpanded(!expanded)}>
-            {tr(folded ? "showLines" : "hideLines")}
-          </button>
-        )}
-      </div>
+    // A section of the order page like its others: the title above, the card below.
+    <section data-testid="po-promise-dates">
+      <SectionHeader title={tr("title")} right={unchanged && !form ? (
+        <button type="button" aria-expanded={!folded} data-testid="po-promise-toggle" className="h-8 rounded-lg px-2 text-xs font-medium text-blue-600 hover:bg-blue-50" onClick={() => setExpanded(!expanded)}>
+          {tr(folded ? "showLines" : "hideLines")}
+        </button>
+      ) : undefined} />
+      <Card className="p-4">
+      <p className="text-xs" style={{ color: A.sub }}>{tr("note")}</p>{po.status === "approved" && <p className="text-xs" style={{ color: A.sub }} data-testid="po-promise-not-issued">{tr("notIssuedNote")}</p>}
       {unchanged && <p className="mt-2 text-xs text-slate-700" data-testid="po-promise-summary">{tr("allSame").replace("{n}", String(po.lines.length)).replace("{date}", day(firstDate))}</p>}
       {/* Below 640 px each line is a card (listTableCardsRef): the line on top,
           the original and current dates under it with their names, and the
@@ -121,6 +122,7 @@ export function PurchaseOrderPromiseDates({ poId, onChanged }: { poId: string; o
           </ul>
         ) : <p className="mt-1 text-[11px] text-slate-500">{tr("noHistory")}</p>}
       </div>
+      </Card>
     </section>
   );
 }

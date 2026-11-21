@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Ban, ExternalLink, FilePlus2, Play, RefreshCw, Scale, TriangleAlert } from "lucide-react";
 import { Link } from "react-router";
 import { A, Card, useConfirm } from "../../components/ui";
@@ -17,6 +17,7 @@ import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import { DocumentNumber } from "../../lib/documentNumbers";
 import { BackToListLink } from "./BackToListLink";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
+import { OverviewFieldGrid } from "../../components/document/DocumentShell";
 import { rfqMoney, rfqQuantity } from "./rfqFormat";
 import { RfqNoOrderNote } from "./RfqNoOrderNote";
 import type { ProcurementQuotationRevision, ProcurementRfqDocument, ProcurementRfqQuotation } from "./procurementTypes";
@@ -147,7 +148,7 @@ function RelatedEvidence({ record }: { record: ProcurementRfqDocument }) {
     <Card className="p-4" data-testid="rfq-related-evidence">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h2 className="text-sm font-semibold">{tr("相关记录", "Related records")}</h2>
+          <h2 className="fc-section-title" style={{ color: A.label }}>{tr("相关记录", "Related records")}</h2>
           <p className="mt-1 text-xs" style={{ color: A.sub }}>{tr("与此询价单直接关联的采购申请、采购订单和报价。", "Purchase requests, purchase orders and quotations linked to this RFQ.")}</p>
         </div>
         <ExternalLink size={16} style={{ color: A.sub }} />
@@ -280,12 +281,13 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, canTransition, no
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
-            <div className="text-xs font-semibold uppercase tracking-wide" style={{ color: A.sub }}>RFQ · {rfqNumber}</div>
             {/* The status beside the title, as on every detail page (design audit U-17). */}
-            <div className="mt-1 flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <h1 className="fc-page-title">{record.title || rfqNumber}</h1>
               <StatusChip label={statusLabel(record.status, RFQ_STATUS_LABELS, language)} tone={statusToneOf(record.status)} testId="rfq-status" />
             </div>
+            {/* What the record is, under its title, as DocumentShell writes it. */}
+            <div className="mt-1 text-xs" style={{ color: A.sub }}>{tr("询价单", "RFQ")} · <span className="font-semibold tabular-nums" style={{ color: A.blue }}>{rfqNumber}</span></div>
             {record.description && <p className="mt-2 text-sm" style={{ color: A.sub }}>{record.description}</p>}
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -301,8 +303,7 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, canTransition, no
           </div>
           {!responseWorkflowOpen && <span className="text-xs" style={{ color: A.sub }}>{tr("当前询价单状态不允许录入新的供应商响应。", "The current RFQ status does not allow new supplier responses.")}</span>}
         </div>
-        <dl className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {[
+        <OverviewFieldGrid className="mt-5" fields={([
             [tr("询价单编号", "RFQ number"), rfqNumber],
             [tr("截止日期", "Due date"), day(record.dueDate)],
             [tr("币种", "Currency"), record.currency || "—"],
@@ -312,17 +313,11 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, canTransition, no
             [tr("更新时间", "Updated at"), when(record.updatedAt)],
             [tr("已记录响应", "Responses recorded"), `${record.suppliers.responseRecordedCount} / ${record.suppliers.participantCount}`],
             [tr("关联 PO", "Linked purchase order"), record.linkedPo ? <BusinessEntityLink entityType="purchase_order" entityId={record.linkedPo} number={orderNumber || undefined} /> : "—"],
-          ].map(([label, value]) => (
-            <div key={String(label)} className="rounded-lg bg-slate-50 p-3">
-              <dt className="text-xs" style={{ color: A.sub }}>{label}</dt>
-              <dd className="mt-1 text-sm font-medium break-words">{value}</dd>
-            </div>
-          ))}
-        </dl>
+          ] as Array<[string, ReactNode]>).map(([label, value]) => ({ label, value }))} />
       </Card>
 
       <Card className="overflow-hidden" data-testid="rfq-lines">
-        <div className="border-b p-4"><h2 className="text-sm font-semibold">{tr("询价单行项目", "RFQ line items")}</h2></div>
+        <div className="border-b p-4"><h2 className="fc-section-title" style={{ color: A.label }}>{tr("询价单行项目", "RFQ line items")}</h2></div>
         {record.lines.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前询价单没有行项目。", "This RFQ has no line items.")}</div> : (
           <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-xs">
             <thead><tr style={listHeadRowStyle}>{([[tr("行", "Line")], [tr("物料 / SKU", "Item / SKU")], [tr("数量", "Quantity"), "right"], [tr("单位", "Unit")], [tr("目标 / 参考单价", "Target / reference unit price"), "right"], [tr("需求日期", "Need by")], [tr("交付地点", "Delivery location")]] as const).map(([label, align]) => <th key={label} className={align === "right" ? thRightClass : thClass} style={{ color: A.gray1 }}>{label}</th>)}</tr></thead>
@@ -340,7 +335,7 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, canTransition, no
       </Card>
 
       <Card className="p-4" data-testid="rfq-suppliers">
-        <div className="flex items-center justify-between gap-3"><h2 className="text-sm font-semibold">{tr("内部参与记录", "Internal participation records")}</h2><span className="text-xs" style={{ color: A.sub }}>{tr(`${record.suppliers.invitedInternalCount} 家有内部邀请记录 · ${record.suppliers.responseRecordedCount} 家已记录响应 · ${record.suppliers.noResponseCount} 家尚无响应`, `${record.suppliers.invitedInternalCount} internally invited · ${record.suppliers.responseRecordedCount} responses recorded · ${record.suppliers.noResponseCount} awaiting response`)}</span></div>
+        <div className="flex items-center justify-between gap-3"><h2 className="fc-section-title" style={{ color: A.label }}>{tr("内部参与记录", "Internal participation records")}</h2><span className="text-xs" style={{ color: A.sub }}>{tr(`${record.suppliers.invitedInternalCount} 家有内部邀请记录 · ${record.suppliers.responseRecordedCount} 家已记录响应 · ${record.suppliers.noResponseCount} 家尚无响应`, `${record.suppliers.invitedInternalCount} internally invited · ${record.suppliers.responseRecordedCount} responses recorded · ${record.suppliers.noResponseCount} awaiting response`)}</span></div>
         <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {record.suppliers.knownParticipants.map((supplier) => {
             const quotation = quotationFor(supplier.supplierId);
@@ -355,12 +350,12 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, canTransition, no
       </Card>
 
       <Card className="overflow-hidden" data-testid="rfq-quotations">
-        <div className="flex items-center justify-between gap-3 border-b p-4"><h2 className="text-sm font-semibold">{tr("供应商报价", "Supplier quotations")}</h2><span className="text-xs" style={{ color: A.sub }}>{tr(`${record.quotations.length} 条报价 · 以最新的报价修订为当前版本`, `${record.quotations.length} quotations · the latest quote revision is current`)}</span></div>
+        <div className="flex items-center justify-between gap-3 border-b p-4"><h2 className="fc-section-title" style={{ color: A.label }}>{tr("供应商报价", "Supplier quotations")}</h2><span className="text-xs" style={{ color: A.sub }}>{tr(`${record.quotations.length} 条报价 · 以最新的报价修订为当前版本`, `${record.quotations.length} quotations · the latest quote revision is current`)}</span></div>
         {record.quotations.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前询价单没有报价记录。", "This RFQ has no quotation records.")}</div> : <div className="overflow-x-auto"><table className="w-full min-w-[960px] text-left text-xs"><thead><tr style={listHeadRowStyle}>{([[tr("报价 ID", "Quotation ID")], [tr("供应商", "Supplier")], [tr("状态", "Status")], [tr("报价总额", "Quoted total"), "right"], [tr("提交时间", "Submitted at")], [tr("修订记录", "Revisions")]] as const).map(([label, align]) => <th key={label} className={align === "right" ? thRightClass : thClass} style={{ color: A.gray1 }}>{label}</th>)}</tr></thead><tbody>{record.quotations.map((quotation) => <QuotationRow key={quotation.id} quotation={quotation} currency={record.currency || ""} />)}</tbody></table></div>}
       </Card>
 
       <Card className="p-4" data-testid="rfq-data-limitations">
-        <div className="flex items-center gap-2"><TriangleAlert size={16} className="text-amber-600" /><h2 className="text-sm font-semibold">{tr("记录说明", "About these records")}</h2></div>
+        <div className="flex items-center gap-2"><TriangleAlert size={16} className="text-amber-600" /><h2 className="fc-section-title" style={{ color: A.label }}>{tr("记录说明", "About these records")}</h2></div>
         <ul className="mt-3 space-y-2 text-xs" style={{ color: A.sub }}>{record.limitations.map((limitation) => <li key={limitation}>· {LIMITATION_LABELS[limitation]?.[language === "en-US" ? 1 : 0] || limitation}</li>)}</ul>
       </Card>
 
