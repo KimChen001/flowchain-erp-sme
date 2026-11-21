@@ -67,6 +67,9 @@ await phase("supplier replies", ["tests/browser/supplier-replies.spec.ts", "test
   FLOWCHAIN_SUPPLIER_REPLY_SCRIPTED: join(tmpdir(), `flowchain-supplier-reply-${process.pid}.json`),
   FLOWCHAIN_AI_WORKSPACE_OPT_IN: "required",
 });
+// The supplier reply card's stock line (#363 §4.6), over stubbed reply and
+// stock reads: its own phase, beside the supplier replies one.
+await phase("supplier reply stock", "tests/browser/supplier-reply-stock.spec.ts");
 // The PO document: printed alone, labels in the document language, figures unchanged.
 await phase("po document", "tests/browser/purchase-order-document.spec.ts");
 // The reorder list page: ranking, inputs, suggested reorder points and the

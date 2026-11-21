@@ -10,6 +10,7 @@ import { apiJson } from "../../../lib/api-client";
 import { formatCalendarDay, formatQuantity, instantDayInTimeZone } from "../../../lib/format";
 import { procurementErrorCode, procurementErrorText } from "../../procurement/procurementErrors";
 import { SUPPLIER_REPLY_ERROR_TEXT, supplierReplyText, type SupplierReplyCopyKey } from "./supplierReplyCopy";
+import { SupplierReplyStockLine } from "./SupplierReplyStockLine";
 import { SUPPLIER_REPLY_NOTE_LIMIT, dismissReady, formStart, isOpenReply, isOutage, lineNow, markQuotes, needsManualForm, openQuestions, pickableReadings, proposalRecord, recordKey, recordLines, replyErrorKind } from "./supplierReplyLogic";
 import type { SupplierReplyCardData, SupplierReplyDismissReason, SupplierReplyLine } from "./supplierReplyTypes";
 
@@ -65,6 +66,9 @@ export function SupplierReplyCard({ card, onChanged, onRefused, notice = null, m
   // Lines of a proposed card that still need the person (#363 §4.8).
   const questions = openQuestions(card);
   const proposal = proposalRecord(card, values, skipped);
+  // The dates Record would write: the proposal's, with the open questions'
+  // answers once each is answered or left (proposal.lines).
+  const proposedDates = useMemo(() => card.lines.filter((line) => line.outcome === "proposed" && line.purchaseOrderLineId && line.proposedDate).map((line) => ({ purchaseOrderLineId: line.purchaseOrderLineId!, promisedDate: line.proposedDate! })), [card.lines]);
   // A day the server stamped (an instant) as the workspace's calendar day.
   const decidedDay = card.decision ? instantDayInTimeZone(card.decision.decidedAt, timezone) : "";
   // The sentences the card points at, marked on the reply.
@@ -208,6 +212,8 @@ export function SupplierReplyCard({ card, onChanged, onRefused, notice = null, m
               })}
             </div>
           ) : null}
+          {/* What the dates being recorded do to stock before they come (#363 §4.6). */}
+          {open ? <SupplierReplyStockLine reply={reply} lines={proposal.lines ?? proposedDates} /> : null}
           {card.reason ? <p className="mt-1" data-testid="supplier-reply-reason"><span style={{ color: A.sub }}>{t("reasonGiven")}</span><span className="italic">“{card.reason}”</span></p> : null}
           <p className="mt-1 text-[11px]" style={{ color: A.sub }}>{t("reasonNote")}</p>
         </div>
