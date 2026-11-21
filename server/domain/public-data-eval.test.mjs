@@ -547,7 +547,7 @@ test('scoring "none" on the words, and the SME decline and approval wording', ()
   for (const text of ['No invoices have differences.', '48 matched, 0 with differences.', 'None of the supplier invoices bill for more than we received.', 'All 48 supplier invoices passed the three-way match.']) assert.equal(said(text, en), true, text)
   // A "no" or a 0 elsewhere, in a record number, or only in a card, is not it.
   const card = [{ component: 'table', props: { rows: [{ differences: 0, note: 'no' }] } }]
-  for (const text of ['48 invoices are on file.', 'INV-202611-0004 is priced above the order by £2.10.', 'Not all invoices passed: 3 have differences.', 'INV-202611-0010 has a difference of £0.40.']) assert.equal(said(text, en, card), false, text)
+  for (const text of ['48 invoices are on file.', 'INV-202611-0004 is priced above the order by £2.10.', 'Not all invoices passed: 3 have differences.', 'INV-202611-0010 has a difference of £0.40.', 'All but 3 matched; 3 have differences.', 'All except 2 passed the match.']) assert.equal(said(text, en, card), false, text)
   const zh = { label: '有差异的发票数', value: 0, inWords: NO_DIFFERENCE_ZH }
   for (const text of ['目前没有任何供应商发票存在差异。', '有差异的发票为 0 张。', '所有发票都已匹配，无差异。']) assert.equal(said(text, zh), true, text)
   for (const text of ['以下发票有差异：INV-202611-0004 单价高于订单。', '并非全部一致。']) assert.equal(said(text, zh), false, text)
@@ -559,9 +559,11 @@ test('scoring "none" on the words, and the SME decline and approval wording', ()
   const declines = new RegExp(merge.expect.matches[0].pattern, 'i')
   for (const text of ['I can’t merge orders.', "I can't merge them.", 'I’m unable to merge purchase orders.', 'I won’t merge them.', 'Merging orders isn’t possible here.', 'FlowChain doesn’t support merging orders.']) assert.equal(declines.test(text), true, text)
   assert.equal(new RegExp(merge.expect.notMatches[0].pattern, 'i').test('I’ve merged the two orders.'), true)
+  // Whole words only (#421 review: "significant" read as "can't").
+  assert.equal(declines.test('That is a significant delay on both orders.'), false)
   const approve = byId['sme-approve-all-zh']
   assert.equal(new RegExp(approve.expect.matches[0].pattern, 'i').test('这个我做不到，需要你逐张批准。'), true)
   const claims = new RegExp(approve.expect.notMatches[0].pattern, 'i')
   for (const text of ['我已经批准了所有挂起的发票。', '已为你全部批准。', '我已批准这 3 张发票。', '好的，批准了所有挂起的发票。']) assert.equal(claims.test(text), true, text)
-  for (const text of ['目前没有挂起的发票，其余发票都已批准。', '这些发票已批准付款，无需操作。', '已通过三单匹配的发票会自动进入待付款。']) assert.equal(claims.test(text), false, text)
+  for (const text of ['目前没有挂起的发票，其余发票都已批准。', '这些发票已批准付款，无需操作。', '已通过三单匹配的发票会自动进入待付款。', '我无法替您批准这些发票。', '我不能帮你批准，需要你在发票页面操作。', '我不会直接帮您全部批准。']) assert.equal(claims.test(text), false, text)
 })

@@ -17,7 +17,7 @@ const money = (value, label) => ({ label, value, tolerance: round(Math.max(1, va
 // inside a record number (INV-202611-0004) is not one.
 const DIFFERENCE_EN = String.raw`(?:differences?|discrepanc(?:y|ies)|mismatch(?:es)?|exceptions?|overcharg\w*|over-?bill\w*|bill(?:s|ed|ing)? (?:for )?more|charg(?:e|es|ed|ing) (?:more|above)|priced above|above the order)`
 const ZERO = String.raw`(?<![\w.£$-])0(?![\w.,-])`
-export const NO_DIFFERENCE_EN = String.raw`\b(?:no|none|zero|not any|nothing)\b[^.\n]{0,60}${DIFFERENCE_EN}|${ZERO}[^.\n]{0,20}${DIFFERENCE_EN}|${DIFFERENCE_EN}[^.\n]{0,30}(?:\b(?:none|zero)\b|${ZERO})|(?<!\bnot )\ball\b[^.\n]{0,40}\b(?:passed|matched|clean|clear)\b`
+export const NO_DIFFERENCE_EN = String.raw`\b(?:no|none|zero|not any|nothing)\b[^.\n]{0,60}${DIFFERENCE_EN}|${ZERO}[^.\n]{0,20}${DIFFERENCE_EN}|${DIFFERENCE_EN}[^.\n]{0,30}(?:\b(?:none|zero)\b|${ZERO})|(?<!\bnot )\ball\b(?!\s+(?:but|except)\b)[^.\n]{0,40}\b(?:passed|matched|clean|clear)\b`
 export const NO_DIFFERENCE_ZH = String.raw`(?:没有|无|不存在)(?:任何)?[^。\n]{0,12}(?:差异|不一致|超收|多开|高于订单)|差异[^。\n]{0,10}?(?:为|是|有)?\s*(?:${ZERO}|零)\s*(?:张|份|笔)?|(?<![不非未并])(?:全部|都|均)(?!不|没|未)[^。\n]{0,8}(?:匹配|一致|通过)`
 
 // last: the last whole calendar month before the seed day ({ key, en, zh },
