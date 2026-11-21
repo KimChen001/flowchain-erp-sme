@@ -3,6 +3,7 @@ import { useNavigate } from "react-router";
 import { useRouteAvailability } from "../../app/routeAvailability";
 import { useI18n } from "../../i18n/I18n";
 import { usePermissionSet } from "../../lib/usePermissionSet";
+import { listButtonClass } from "../ui/listLayout";
 
 // A bill is recorded against a purchase order, before or after its goods are
 // received, and an invoice against goods that were shipped
@@ -19,15 +20,15 @@ const COPY = {
   createInvoiceNote: ["For goods already shipped", "按已发出的货物开票"],
 } as const;
 
-const buttonClass =
-  "inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50";
+// The secondary button of the detail page it sits on (listLayout.tsx).
+const buttonClass = listButtonClass.secondary;
 
 function EntryButton({ testId, label, note, to, showNote }: { testId: string; label: string; note: string; to: string; showNote: boolean }) {
   const navigate = useNavigate();
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
       <button type="button" data-testid={testId} className={buttonClass} onClick={() => navigate(to)}>
-        <FilePlus2 size={14} />
+        <FilePlus2 size={13} />
         {label}
       </button>
       {showNote && <span className="text-[11px] text-slate-500">{note}</span>}

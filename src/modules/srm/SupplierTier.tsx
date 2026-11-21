@@ -2,6 +2,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { A, Card } from "../../components/ui";
+import { listButtonClass } from "../../components/ui/listLayout";
 import { useI18n } from "../../i18n/I18n";
 import { SUPPLIER_TIER_DEFINITIONS } from "../../../shared/supplier-tiers.mjs";
 import { supplierCopy } from "./supplierCopy";
@@ -131,8 +132,8 @@ export function TierForm({ supplier, onSaved, onCancel, className = "" }: { supp
     </div>
     {generalErrors.map((error, index) => <p key={index} role="alert" className="text-xs text-red-600">{t(error.message || "Could not save. Please try again.")}</p>)}
     <div className="flex gap-2">
-      <button type="submit" disabled={saving} data-testid="supplier-tier-save" className="rounded bg-blue-600 px-3 py-1.5 text-xs text-white">{t(saving ? "Saving…" : reviewing ? "Record review" : "Save tier")}</button>
-      <button type="button" onClick={onCancel} className="rounded border px-3 py-1.5 text-xs">{t("Cancel")}</button>
+      <button type="button" onClick={onCancel} className={listButtonClass.secondary}>{t("Cancel")}</button>
+      <button type="submit" disabled={saving} data-testid="supplier-tier-save" className={`${listButtonClass.primary} disabled:opacity-60`}>{t(saving ? "Saving…" : reviewing ? "Record review" : "Save tier")}</button>
     </div>
   </form>;
 }
@@ -176,7 +177,7 @@ export function SupplierTierPanel({ supplier, canEdit, onChanged }: { supplier: 
       <section className="min-w-0">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-sm font-semibold">{t("Tier")}</h2>
-          {canEdit && editing !== "tier" && <button type="button" data-testid="supplier-change-tier" onClick={() => setEditing("tier")} className="rounded border px-3 py-1 text-xs">{t("Change tier")}</button>}
+          {canEdit && editing !== "tier" && <button type="button" data-testid="supplier-change-tier" onClick={() => setEditing("tier")} className={listButtonClass.secondary}>{t("Change tier")}</button>}
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-2"><TierChip tier={supplier.tier} /></div>
         <p className="mt-2 text-xs leading-5" style={{ color: A.sub }}>{t(TIER_OPTIONS.find((option) => option.tier === supplier.tier)?.meaning || "")}</p>
@@ -188,7 +189,7 @@ export function SupplierTierPanel({ supplier, canEdit, onChanged }: { supplier: 
       <section className="min-w-0">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-sm font-semibold">{t("Business owner")}</h2>
-          {canEdit && editing !== "owner" && <button type="button" data-testid="supplier-change-owner" onClick={openOwner} className="rounded border px-3 py-1 text-xs">{t("Change owner")}</button>}
+          {canEdit && editing !== "owner" && <button type="button" data-testid="supplier-change-owner" onClick={openOwner} className={listButtonClass.secondary}>{t("Change owner")}</button>}
         </div>
         <p className="mt-2 text-sm" data-testid="supplier-owner">{supplier.businessOwner?.name || t("No owner")}</p>
         <p className="mt-1 text-xs" style={{ color: A.sub }}>{t("The person who manages this supplier relationship.")}</p>
@@ -206,8 +207,8 @@ export function SupplierTierPanel({ supplier, canEdit, onChanged }: { supplier: 
       {fieldError("businessOwnerId") && <p className="text-xs text-red-600">{t(fieldError("businessOwnerId") || "")}</p>}
       {generalErrors.map((error, index) => <p key={index} role="alert" className="text-xs text-red-600">{t(error.message || "Could not save. Please try again.")}</p>)}
       <div className="flex gap-2">
-        <button type="submit" disabled={saving || owners === null} className="rounded bg-blue-600 px-3 py-1.5 text-xs text-white">{t(saving ? "Saving…" : "Save owner")}</button>
-        <button type="button" onClick={() => setEditing(null)} className="rounded border px-3 py-1.5 text-xs">{t("Cancel")}</button>
+        <button type="button" onClick={() => setEditing(null)} className={listButtonClass.secondary}>{t("Cancel")}</button>
+        <button type="submit" disabled={saving || owners === null} className={`${listButtonClass.primary} disabled:opacity-60`}>{t(saving ? "Saving…" : "Save owner")}</button>
       </div>
     </form>}
 

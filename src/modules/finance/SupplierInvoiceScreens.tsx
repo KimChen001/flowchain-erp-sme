@@ -14,7 +14,7 @@ import { unitLabel } from "../../i18n/unitLabels";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { formatCalendarDay, formatDateTimeInTimeZone } from "../../lib/format";
-import { Notice, StatusChip, TwoStepAction, button, field, message, shownBillStatus } from "./FinanceControls";
+import { Notice, StatusChip, TwoStepAction, field, message, shownBillStatus } from "./FinanceControls";
 import { PaymentRecords } from "./PaymentRecords";
 import { addCalendarDays } from "../../lib/prefill";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
@@ -568,7 +568,7 @@ function LinkReceipt({ invoice, onDone }: { invoice: { id: string; version: numb
   const base = `/api/finance/supplier-invoices/${encodeURIComponent(invoice.id)}`;
   const body = () => ({ expectedVersion: invoice.version, receivingDocumentId: receiptId });
   if (!candidates.length) return <p className="text-xs text-slate-500" data-testid="link-receipt-none">{t("finance.noReceiptToLink", { po: poNumber })}</p>;
-  if (!open) return <button type="button" data-testid="link-receipt" className={`${button} text-white`} style={{ background: A.blue }} onClick={() => setOpen(true)}>{t("finance.action.link_receipt")}</button>;
+  if (!open) return <button type="button" data-testid="link-receipt" className={listButtonClass.primary} onClick={() => setOpen(true)}>{t("finance.action.link_receipt")}</button>;
   const preview = async () => {
     setError("");
     try { setPlan(await apiJson<LinkPlan>(`${base}/link-receipt-preview`, { method: "POST", body: JSON.stringify(body()) })); } catch (reason) { setError(message(reason, t("finance.loadFailed"))); }
@@ -595,9 +595,9 @@ function LinkReceipt({ invoice, onDone }: { invoice: { id: string; version: numb
         </select>
       </label>
       <div className="flex flex-wrap gap-2">
-        <button type="button" data-testid="link-receipt-preview" className={`${button} border border-slate-200`} onClick={() => void preview()}><RefreshCw size={14} />{t("finance.preview")}</button>
-        <button type="button" data-testid="link-receipt-confirm" className={`${button} text-white`} style={{ background: A.blue }} disabled={!plan?.allowed || busy} onClick={() => void confirm()}>{t("finance.confirm")}</button>
-        <button type="button" className={`${button} text-slate-600`} onClick={() => { setOpen(false); setPlan(null); setError(""); }}>{t("finance.close")}</button>
+        <button type="button" className={listButtonClass.secondary} onClick={() => { setOpen(false); setPlan(null); setError(""); }}>{t("finance.close")}</button>
+        <button type="button" data-testid="link-receipt-preview" className={listButtonClass.secondary} onClick={() => void preview()}><RefreshCw size={13} />{t("finance.preview")}</button>
+        <button type="button" data-testid="link-receipt-confirm" className={`${listButtonClass.primary} disabled:cursor-not-allowed disabled:opacity-50`} disabled={!plan?.allowed || busy} onClick={() => void confirm()}>{t("finance.confirm")}</button>
       </div>
       {plan && (plan.allowed
         ? <Notice tone="success">{t("finance.previewAllowed")}</Notice>
@@ -1005,7 +1005,7 @@ function MatchCard({ invoice, onDone }: { invoice: any; onDone: () => void }) {
                 <TwoStepAction
                   label={say("Reject difference", "驳回差异")}
                   testId={`exception-reject-${entry.id}`}
-                  tone="secondary"
+                  tone="danger"
                   previewUrl={reviewUrl(entry, "review-preview")}
                   runUrl={reviewUrl(entry, "review")}
                   payload={() => ({ expectedVersion: entry.version, decision: "rejected" })}
@@ -1034,7 +1034,7 @@ function MatchCard({ invoice, onDone }: { invoice: any; onDone: () => void }) {
                 <TwoStepAction
                   label={say("Reject difference", "驳回差异")}
                   testId={`exception-reject-${entry.id}`}
-                  tone="secondary"
+                  tone="danger"
                   previewUrl={reviewUrl(entry, "review-preview")}
                   runUrl={reviewUrl(entry, "review")}
                   payload={() => ({ expectedVersion: entry.version, decision: "rejected" })}

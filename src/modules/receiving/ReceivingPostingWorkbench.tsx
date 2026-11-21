@@ -7,7 +7,7 @@ import { ApiError, apiJson } from "../../lib/api-client";
 import { usePermissionSet } from "../../lib/usePermissionSet";
 import { useRouteAvailability } from "../../app/routeAvailability";
 import { A, useConfirm } from "../../components/ui";
-import { StatusChip, listHeadRowStyle, statusToneOf } from "../../components/ui/listLayout";
+import { StatusChip, listButtonClass, listHeadRowStyle, statusToneOf } from "../../components/ui/listLayout";
 import { listTableCardsRef, tableMinSmClass, tableScrollClass, tdClass, tdIdClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
@@ -134,6 +134,15 @@ const AUDIT_COPY: Record<string, Pair> = {
   receiving_reversed: ["Receipt {doc} reversed", "收货单 {doc} 已冲销"],
 };
 
+// The receipt header's buttons: the one look of every detail page's actions
+// (listLayout.tsx; Cancel and Reverse as danger, design audit U-17).
+const HEADER_BUTTON = {
+  primary: `${listButtonClass.primary} disabled:opacity-50`,
+  secondary: `${listButtonClass.secondary} disabled:opacity-50`,
+  danger: listButtonClass.danger,
+};
+
+// The post / reverse preview dialog's footer, sized like ConfirmDialog's.
 const BUTTON = {
   primary: "inline-flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50",
   secondary: "inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50",
@@ -447,7 +456,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
     ["SKU", false], [say("Warehouse", "仓库"), false], [say("Location", "库位"), false], [say("Calculated from movements", "按库存移动计算"), true],
     [say("Recorded balance", "账面余额"), true], [say("Difference", "差异"), true], [say("Status", "状态"), false],
   ];
-  const actionButton = canOfferAction && <button data-testid="receiving-primary-action" onClick={() => void openPreview(operation)} className={operation === "post" ? BUTTON.primary : BUTTON.danger}>{operation === "post" ? say("Post receipt", "过账入库") : say("Reverse receipt", "冲销收货")}</button>;
+  const actionButton = canOfferAction && <button data-testid="receiving-primary-action" onClick={() => void openPreview(operation)} className={operation === "post" ? HEADER_BUTTON.primary : HEADER_BUTTON.danger}>{operation === "post" ? say("Post receipt", "过账入库") : say("Reverse receipt", "冲销收货")}</button>;
   return <div className="space-y-4" data-testid="receiving-workbench">
     <BackToListLink list="receiving" />
     {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert" title={errorCode}>{error}</div>}
@@ -458,14 +467,14 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
             the other non-destructive actions; cancelling or reversing the
             receipt comes last, tinted red. */}
         <div className="flex flex-wrap items-center gap-2">
-          {detail.availableActions.canSubmit && <button data-testid="receiving-submit-draft" disabled={saving} onClick={() => void submitDraft()} className={BUTTON.primary}>{saving ? draftCopy("submitting") : draftCopy("submitDraft")}</button>}
+          {detail.availableActions.canSubmit && <button data-testid="receiving-submit-draft" disabled={saving} onClick={() => void submitDraft()} className={HEADER_BUTTON.primary}>{saving ? draftCopy("submitting") : draftCopy("submitDraft")}</button>}
           {operation === "post" && actionButton}
-          <button data-testid="receiving-print-sheet" aria-label={say(`Print receive sheet ${grn.documentNumber}`, `打印入库单 ${grn.documentNumber}`)} onClick={() => setPrinting(true)} className={BUTTON.secondary}><Printer size={14} />{say("Print receive sheet", "打印入库单")}</button>
-          {detail.availableActions.canEditDraft && <a data-testid="receiving-edit-draft" href={`/app/procurement/receiving/${encodeURIComponent(docId)}/edit`} className={BUTTON.secondary}>{draftCopy("editDraft")}</a>}
-          {detail.availableActions.canViewReversal && <button onClick={() => { const link = links.find((item) => item.label === 'Reversal'); if (link?.enabled) onNavigate?.(link.targetRouteId, { entityType: link.targetType, entityId: link.targetId || receivingDocumentId }, { source: 'receiving-smart-link' }); }} className={BUTTON.secondary}>{say("View reversal", "查看冲销")}</button>}
-          {restToReceive(detail) && <button type="button" data-testid="receiving-receive-rest" onClick={() => navigate(receiveRestPath(detail))} className={BUTTON.secondary}>{draftCopy("receiveRest")}</button>}
+          <button data-testid="receiving-print-sheet" aria-label={say(`Print receive sheet ${grn.documentNumber}`, `打印入库单 ${grn.documentNumber}`)} onClick={() => setPrinting(true)} className={HEADER_BUTTON.secondary}><Printer size={13} />{say("Print receive sheet", "打印入库单")}</button>
+          {detail.availableActions.canEditDraft && <a data-testid="receiving-edit-draft" href={`/app/procurement/receiving/${encodeURIComponent(docId)}/edit`} className={HEADER_BUTTON.secondary}>{draftCopy("editDraft")}</a>}
+          {detail.availableActions.canViewReversal && <button onClick={() => { const link = links.find((item) => item.label === 'Reversal'); if (link?.enabled) onNavigate?.(link.targetRouteId, { entityType: link.targetType, entityId: link.targetId || receivingDocumentId }, { source: 'receiving-smart-link' }); }} className={HEADER_BUTTON.secondary}>{say("View reversal", "查看冲销")}</button>}
+          {restToReceive(detail) && <button type="button" data-testid="receiving-receive-rest" onClick={() => navigate(receiveRestPath(detail))} className={HEADER_BUTTON.secondary}>{draftCopy("receiveRest")}</button>}
           {grn.postingStatus === 'posted' && <RecordBillAction receiptId={grn.id} />}
-          {detail.availableActions.canCancel && <button data-testid="receiving-cancel" disabled={saving} onClick={() => void cancelReceipt()} className={BUTTON.danger}>{draftCopy("cancelReceipt")}</button>}
+          {detail.availableActions.canCancel && <button data-testid="receiving-cancel" disabled={saving} onClick={() => void cancelReceipt()} className={HEADER_BUTTON.danger}>{draftCopy("cancelReceipt")}</button>}
           {operation === "reverse" && actionButton}
         </div>
       </div>
@@ -504,7 +513,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
       </table></div>
     </section>
 
-    <section className="rounded-2xl border bg-white p-4"><div className="mb-3 flex items-center gap-2 text-sm font-semibold"><Link2 size={16} />{say("Related records", "关联记录")}</div><div className="flex flex-wrap gap-2">{links.map((link) => <button key={link.label} disabled={!link.enabled} title={link.enabled ? undefined : linkUnavailableText(link)} onClick={() => onNavigate?.(link.targetRouteId, { entityType: link.targetType, entityId: link.targetId || receivingDocumentId }, { source: 'receiving-smart-link', entityLabel: link.label })} className={`rounded-lg border px-3 py-1.5 text-sm ${link.enabled ? 'text-blue-700 hover:bg-blue-50' : 'text-gray-400'}`}>{LINK_COPY[link.label] ? sayPair(LINK_COPY[link.label]) : link.label} · {link.count}</button>)}</div></section>
+    <section className="rounded-2xl border bg-white p-4"><div className="mb-3 flex items-center gap-2 text-sm font-semibold"><Link2 size={16} />{say("Related records", "关联记录")}</div><div className="flex flex-wrap gap-2">{links.map((link) => <button key={link.label} disabled={!link.enabled} title={link.enabled ? undefined : linkUnavailableText(link)} onClick={() => onNavigate?.(link.targetRouteId, { entityType: link.targetType, entityId: link.targetId || receivingDocumentId }, { source: 'receiving-smart-link', entityLabel: link.label })} className={`${listButtonClass.secondary} disabled:cursor-not-allowed disabled:text-slate-400 disabled:hover:bg-slate-50`}>{LINK_COPY[link.label] ? sayPair(LINK_COPY[link.label]) : link.label} · {link.count}</button>)}</div></section>
 
     <section className="overflow-hidden rounded-2xl border bg-white" data-testid="receiving-reconciliation">
       <div className="flex items-center gap-2 border-b px-4 py-3 text-sm font-semibold">{say("Inventory reconciliation", "库存核对")}{reconciliation && chip(reconciliation.status)}</div>

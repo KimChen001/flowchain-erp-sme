@@ -130,8 +130,8 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
         </label>
         <span style={{ color: length > SUPPLIER_REPLY_PASTE_LIMIT ? A.red : A.sub }} data-testid="supplier-reply-count">{t("characters", { n: length.toLocaleString(), limit: SUPPLIER_REPLY_PASTE_LIMIT.toLocaleString() })}</span>
         <div className="ml-auto flex gap-2">
-          <button type="button" disabled={busy || !text.trim() || length > SUPPLIER_REPLY_PASTE_LIMIT} className={BUTTON.primary} data-testid="supplier-reply-read" onClick={() => void paste()}>{busy ? t("reading") : t("read")}</button>
           <button type="button" className={BUTTON.secondary} onClick={() => (entry === "today" && current ? setPasteAgain(false) : setOpen(false))}>{t("cancel")}</button>
+          <button type="button" disabled={busy || !text.trim() || length > SUPPLIER_REPLY_PASTE_LIMIT} className={BUTTON.primary} data-testid="supplier-reply-read" onClick={() => void paste()}>{busy ? t("reading") : t("read")}</button>
         </div>
       </div>
       {length > SUPPLIER_REPLY_PASTE_LIMIT ? <p style={{ color: A.red }} role="alert">{t("tooLong", { limit: SUPPLIER_REPLY_PASTE_LIMIT.toLocaleString() })}</p> : null}

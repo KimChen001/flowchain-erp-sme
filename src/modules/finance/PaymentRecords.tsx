@@ -8,7 +8,8 @@ import { useI18n } from "../../i18n/I18n";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { apiErrorText } from "../../lib/apiErrorText";
 import { createSecureClientMutationId } from "../../lib/client-id";
-import { StatusChip, TwoStepAction, button, field } from "./FinanceControls";
+import { StatusChip, TwoStepAction, field } from "./FinanceControls";
+import { listButtonClass } from "../../components/ui/listLayout";
 
 // Payments made or received outside FlowChain, recorded on a bill to pay or a
 // receivable (docs/bills-invoices-and-accounting-handoff.md, step 2). Each
@@ -364,7 +365,7 @@ export function PaymentRecords({ kind, obligation, onDone }: {
         <p className="text-xs text-slate-500" data-testid="payment-records-empty">{t(kind === "payable" ? "finance.noPaymentsMade" : "finance.noPaymentsReceived")}</p>
       )}
       {canRecord && !open && (
-        <button type="button" data-testid="payment-record" className={`${button} text-white`} style={{ background: A.blue }} onClick={() => setOpen(true)}>
+        <button type="button" data-testid="payment-record" className={listButtonClass.primary} onClick={() => setOpen(true)}>
           {t(kind === "payable" ? "finance.action.record_payment" : "finance.action.record_receivable_payment")}
         </button>
       )}

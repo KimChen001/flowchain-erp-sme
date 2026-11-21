@@ -295,8 +295,8 @@ export function SupplierReplyCard({ card, onChanged, onRefused, notice = null, m
             </select>
           </label>
           <input className="min-w-48 flex-1 rounded border px-2 py-0.5" maxLength={SUPPLIER_REPLY_NOTE_LIMIT} aria-label={t("notePlaceholder")} placeholder={t("notePlaceholder")} value={note} onChange={(event) => setNote(event.target.value)} />
-          <button type="button" disabled={busy || !dismissReady(reason, note)} className={BUTTON.primary} data-testid="supplier-reply-dismiss-save" onClick={() => void dismiss()}>{t("save")}</button>
           <button type="button" className={BUTTON.secondary} onClick={() => setDismissing(false)}>{t("cancel")}</button>
+          <button type="button" disabled={busy || !dismissReady(reason, note)} className={BUTTON.primary} data-testid="supplier-reply-dismiss-save" onClick={() => void dismiss()}>{t("save")}</button>
         </div>
       ) : null}
       {notice ? <p className="mt-2 rounded-md bg-amber-50 px-2 py-1 text-amber-800" role="status" data-testid="supplier-reply-notice">{notice}</p> : null}
