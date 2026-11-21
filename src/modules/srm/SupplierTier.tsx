@@ -116,7 +116,7 @@ export function TierForm({ supplier, onSaved, onCancel, className = "" }: { supp
       </div>
       {fieldError("tier") && <p className="mt-1 text-xs text-red-600">{t(fieldError("tier") || "")}</p>}
       {reviewing && <p className="mt-2 text-xs" style={{ color: A.sub }} data-testid="supplier-tier-review-note">{t("Keeping this tier records a review, with your reason and the next review date.")}</p>}
-      {tierChoice === 1 && supplier.businessOwner === null && <p className="mt-2 text-xs" style={{ color: A.orange }} data-testid="supplier-tier-owner-note">{t("Tier 1 needs a named owner. Set one under Business owner.")}</p>}
+      {tierChoice === 1 && supplier.businessOwner === null && <p className="mt-2 text-xs text-amber-700" data-testid="supplier-tier-owner-note">{t("Tier 1 needs a named owner. Set one under Business owner.")}</p>}
     </fieldset>
     <div>
       <label htmlFor={reasonId} className="text-xs font-semibold">{t("Reason")}<span className="ml-1 text-blue-600">*</span></label>

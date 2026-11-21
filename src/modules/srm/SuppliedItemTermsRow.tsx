@@ -96,7 +96,7 @@ export function SuppliedItemTermsRow({ colSpan, itemLabel, currency, terms, pric
             ? <Field label={priceLabel}><p className="py-2 text-xs" style={{ color: A.sub }} data-testid="supplied-item-terms-price-hidden">{say("priceHidden")}</p></Field>
             : input("referencePrice", priceLabel)}
         </div>
-        <p className="mt-1 text-xs" style={{ color: problems.length ? A.red : A.sub }} role={problems.length ? "alert" : undefined}>
+        <p className="mt-1 text-xs" style={{ color: problems.length ? A.danger : A.sub }} role={problems.length ? "alert" : undefined}>
           {problems.length ? problems.map((problem) => say(problem)).join(" ") : say(nothing ? "nothingChanged" : "blank")}
         </p>
         <div className="mt-2 flex gap-2">

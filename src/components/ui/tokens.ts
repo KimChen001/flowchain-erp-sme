@@ -5,6 +5,11 @@ export const A = {
   red:    "#ef4444",
   purple: "#8b5cf6",
   teal:   "#0ea5e9",
+  // Done and success: the status chips' teal (STATUS_TONE_COLORS.success).
+  success: "#0f766e",
+  // Error and overdue text: the status chips' red (STATUS_TONE_COLORS.danger);
+  // `red` (#ef4444) is for icons and fills, too light for small text.
+  danger: "#b91c1c",
   indigo: "#4f46e5",
   gray1:  "#64748b",
   gray2:  "#606d80",

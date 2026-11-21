@@ -277,7 +277,7 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, canTransition, no
     <div className="space-y-4" data-testid="canonical-rfq-detail">
       {confirmDialog.element}
       <BackToListLink list="rfq" />
-      {notice && <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800" data-testid="rfq-response-notice">{notice}{record.status === "cancelled" && record.linkedPr ? <> <Link to={`/app/procurement/requests/${encodeURIComponent(record.linkedPr)}`} className="font-semibold underline" data-testid="rfq-request-link">{tr("打开采购申请", "Open the purchase request")}</Link></> : null}</div>}
+      {notice && <div className="rounded-lg border border-teal-200 bg-teal-50 p-3 text-xs text-teal-800" data-testid="rfq-response-notice">{notice}{record.status === "cancelled" && record.linkedPr ? <> <Link to={`/app/procurement/requests/${encodeURIComponent(record.linkedPr)}`} className="font-semibold underline" data-testid="rfq-request-link">{tr("打开采购申请", "Open the purchase request")}</Link></> : null}</div>}
       {transitionError && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700" role="alert" data-testid="rfq-transition-error">{transitionError}</div>}
       <RfqNoOrderNote />
       <Card className="p-5">

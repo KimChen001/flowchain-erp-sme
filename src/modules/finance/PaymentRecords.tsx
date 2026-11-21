@@ -278,7 +278,7 @@ function RecordPaymentForm({ kind, obligation, onDone, onClose }: {
       </div>
       {after && (
         <div role="status" data-testid="payment-preview-result" className="flex gap-2 text-sm" style={{ color: A.sub }}>
-          <CheckCircle2 className="mt-0.5 shrink-0 text-emerald-600" size={16} />
+          <CheckCircle2 className="mt-0.5 shrink-0 text-teal-700" size={16} />
           {/* "Status: Paid"; in Chinese "状态：" takes no space before the chip. */}
           <span>{t("finance.paymentAfter", { outstanding: money(after.outstandingAmount, obligation.currency, locale) })}{language === "en-US" ? " " : ""}<StatusChip status={after.status} /></span>
         </div>

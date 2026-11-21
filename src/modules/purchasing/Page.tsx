@@ -958,7 +958,7 @@ function SectionTitle({ title, right }: { title: string; right?: React.ReactNode
 }
 
 
-const STEP_COLORS: Record<TimelineStep["status"], string> = { done: A.green, current: A.blue, warning: A.orange, blocked: A.red, pending: A.gray3 };
+const STEP_COLORS: Record<TimelineStep["status"], string> = { done: A.success, current: A.blue, warning: A.orange, blocked: A.red, pending: A.gray3 };
 
 // The order's progress as equal-width steps: a dot on a line, its label and
 // note below, so long labels and dates wrap within their own step.
@@ -1780,7 +1780,7 @@ export default function PurchasingOrdersPage({
         <ActionableMetricCard label={copy("已承诺采购订单金额")} value={!summary ? "—" : committedHidden ? copy("受限") : committedValue.length === 0 ? formatCurrencyAmount(0, "") : committedValue.map((row) => formatCurrencyAmount(row.amount, row.currency)).join(" · ")} description={loading ? copy("加载中") : `${summary?.committedOrderCount ?? 0} ${copy("张已承诺订单（已批准、已下达或已收货）")}`} to="/app/procurement/orders" icon={FileText} color={A.blue} />
         <ActionableMetricCard label={copy("未结采购订单")} value={summary ? String(summary.openOrderCount) : "—"} description={copy("已承诺且仍有待收数量")} to="/app/procurement/orders?status=open" icon={Truck} color={A.orange} />
         <ActionableMetricCard label={copy("发票差异")} value={String(invoiceExceptions)} description={copy("采购与财务共同复核")} to="/app/procurement/bills?matchStatus=variance" icon={AlertCircle} color={A.red} />
-        <ActionableMetricCard label={copy("匹配复核")} value={String(matchExceptions)} description={copy("查看三单匹配异常")} to="/app/procurement/three-way-match?result=variance" icon={ShieldCheck} color={A.purple} />
+        <ActionableMetricCard label={copy("匹配复核")} value={String(matchExceptions)} description={copy("查看三单匹配异常")} to="/app/procurement/three-way-match?result=variance" icon={ShieldCheck} color={A.orange} />
       </div>
 
       <ListSearchCard
