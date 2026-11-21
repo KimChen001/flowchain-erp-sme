@@ -7,6 +7,7 @@ import { ApiError, apiJson } from "../../lib/api-client";
 import { usePermissionSet } from "../../lib/usePermissionSet";
 import { useRouteAvailability } from "../../app/routeAvailability";
 import { A, useConfirm } from "../../components/ui";
+import { OverviewFieldGrid } from "../../components/document/DocumentShell";
 import { StatusChip, listButtonClass, listHeadRowStyle, statusToneOf } from "../../components/ui/listLayout";
 import { listTableCardsRef, tableMinSmClass, tableScrollClass, tdClass, tdIdClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { createSecureClientMutationId } from "../../lib/client-id";
@@ -133,6 +134,12 @@ const AUDIT_COPY: Record<string, Pair> = {
   receiving_posted: ["Receipt {doc} posted to inventory", "收货单 {doc} 已过账入库"],
   receiving_reversed: ["Receipt {doc} reversed", "收货单 {doc} 已冲销"],
 };
+
+// The receipt page's cards, drawn as Card draws them (rounded-xl, the light
+// border and shadow of every other detail page).
+const CARD = "rounded-xl border bg-white";
+const cardStyle = { borderColor: A.border, boxShadow: "0 1px 2px rgba(15,23,42,0.04)" };
+const sectionTitleStyle = { color: A.label };
 
 // The receipt header's buttons: the one look of every detail page's actions
 // (listLayout.tsx; Cancel and Reverse as danger, design audit U-17).
@@ -460,9 +467,9 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
   return <div className="space-y-4" data-testid="receiving-workbench">
     <BackToListLink list="receiving" />
     {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert" title={errorCode}>{error}</div>}
-    <section className="rounded-2xl border bg-white p-5 shadow-sm">
+    <section className={`${CARD} p-5`} style={cardStyle}>
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div><div className="flex flex-wrap items-center gap-2"><h1 className="fc-page-title">{grn.documentNumber}</h1><StatusChip label={statusText(headerStatus)} tone={statusToneOf(headerStatus)} testId="receipt-status" /></div><p className="mt-1 text-sm text-gray-500">{grn.supplier?.name || say("Unknown supplier", "未知供应商")} · {say("Purchase order", "采购订单")} <a className="text-blue-600 underline" href={`/app/procurement/orders/${encodeURIComponent(detail.purchaseOrder.id)}`}><DocumentNumber type="purchase_order" id={detail.purchaseOrder.id} number={detail.purchaseOrder.number} /></a></p></div>
+        <div><div className="flex flex-wrap items-center gap-2"><h1 className="fc-page-title">{grn.documentNumber}</h1><StatusChip label={statusText(headerStatus)} tone={statusToneOf(headerStatus)} testId="receipt-status" /></div><p className="mt-1 text-xs" style={{ color: A.sub }}>{grn.supplier?.name || say("Unknown supplier", "未知供应商")} · {say("Purchase order", "采购订单")} <a className="font-semibold text-blue-600 hover:underline" href={`/app/procurement/orders/${encodeURIComponent(detail.purchaseOrder.id)}`}><DocumentNumber type="purchase_order" id={detail.purchaseOrder.id} number={detail.purchaseOrder.number} /></a></p></div>
         {/* The next step first (Submit for a draft, Post once submitted), then
             the other non-destructive actions; cancelling or reversing the
             receipt comes last, tinted red. */}
@@ -481,16 +488,14 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
       {detail.availableActions.canSubmit && <div className="mt-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">{draftCopy("draftNote")}</div>}
       {operation === "post" && canOfferAction && capability?.enabled && !detail.availableActions.canSubmit && <div className="mt-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-800" data-testid="receiving-ready-note">{draftCopy("readyNote")}</div>}
       {!capability?.enabled && <div className="mt-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{say("Read-only. Receipt posting is turned off for this workspace; an administrator can turn it on.", "只读。当前工作区未开启收货过账，可由管理员开启。")}</div>}
-      <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
-        {facts.map(([name, value]) => <div key={name} className="rounded-xl bg-gray-50 p-3"><div className="text-xs" style={{ color: A.sub }}>{name}</div><div className="mt-1 text-sm font-semibold">{value}</div></div>)}
-      </div>
+      <OverviewFieldGrid className="mt-5" fields={facts.map(([label, value]) => ({ label, value }))} />
       <dl className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 border-t pt-3" data-testid="receiving-summary">
         {summary.map(([name, value]) => <div key={name} className="flex items-center gap-2"><dt className="text-xs" style={{ color: A.sub }}>{name}</dt><dd className="text-sm font-semibold tabular-nums">{value}</dd></div>)}
       </dl>
     </section>
 
-    <section className="overflow-hidden rounded-2xl border bg-white">
-      <div className="border-b px-4 py-3 text-sm font-semibold">{say("Receiving lines", "收货明细")}</div>
+    <section className={`overflow-hidden ${CARD}`} style={cardStyle}>
+      <div className="border-b px-4 py-3"><h2 className="fc-section-title" style={sectionTitleStyle}>{say("Receiving lines", "收货明细")}</h2></div>
       <div className={tableScrollClass} ref={listTableCardsRef} data-testid="receiving-lines"><table className={tableMinSmClass}>
         <thead><tr style={listHeadRowStyle}>{lineColumns.map(([label, numeric]) => <th key={label} className={numeric ? thRightClass : thClass} style={{ color: A.gray1 }} data-card-title={label === itemColumn ? "" : undefined}>{label}</th>)}</tr></thead>
         <tbody>{detail.lines.map((line) => <tr key={line.id} className="border-t">
@@ -513,10 +518,10 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
       </table></div>
     </section>
 
-    <section className="rounded-2xl border bg-white p-4"><div className="mb-3 flex items-center gap-2 text-sm font-semibold"><Link2 size={16} />{say("Related records", "关联记录")}</div><div className="flex flex-wrap gap-2">{links.map((link) => <button key={link.label} disabled={!link.enabled} title={link.enabled ? undefined : linkUnavailableText(link)} onClick={() => onNavigate?.(link.targetRouteId, { entityType: link.targetType, entityId: link.targetId || receivingDocumentId }, { source: 'receiving-smart-link', entityLabel: link.label })} className={`${listButtonClass.secondary} disabled:cursor-not-allowed disabled:text-slate-400 disabled:hover:bg-slate-50`}>{LINK_COPY[link.label] ? sayPair(LINK_COPY[link.label]) : link.label} · {link.count}</button>)}</div></section>
+    <section className={`${CARD} p-4`} style={cardStyle}><h2 className="fc-section-title mb-3 flex items-center gap-2" style={sectionTitleStyle}><Link2 size={16} />{say("Related records", "关联记录")}</h2><div className="flex flex-wrap gap-2">{links.map((link) => <button key={link.label} disabled={!link.enabled} title={link.enabled ? undefined : linkUnavailableText(link)} onClick={() => onNavigate?.(link.targetRouteId, { entityType: link.targetType, entityId: link.targetId || receivingDocumentId }, { source: 'receiving-smart-link', entityLabel: link.label })} className={`${listButtonClass.secondary} disabled:cursor-not-allowed disabled:text-slate-400 disabled:hover:bg-slate-50`}>{LINK_COPY[link.label] ? sayPair(LINK_COPY[link.label]) : link.label} · {link.count}</button>)}</div></section>
 
-    <section className="overflow-hidden rounded-2xl border bg-white" data-testid="receiving-reconciliation">
-      <div className="flex items-center gap-2 border-b px-4 py-3 text-sm font-semibold">{say("Inventory reconciliation", "库存核对")}{reconciliation && chip(reconciliation.status)}</div>
+    <section className={`overflow-hidden ${CARD}`} style={cardStyle} data-testid="receiving-reconciliation">
+      <div className="flex items-center gap-2 border-b px-4 py-3"><h2 className="fc-section-title" style={sectionTitleStyle}>{say("Inventory reconciliation", "库存核对")}</h2>{reconciliation && chip(reconciliation.status)}</div>
       {allBalancesMatch && <div className={`flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm${showReconciliation ? " border-b" : ""}`}>
         <span data-testid="receiving-reconciliation-summary">{matchedSummary}</span>
         <button type="button" data-testid="receiving-reconciliation-toggle" aria-expanded={showReconciliation} aria-controls={showReconciliation ? "receiving-reconciliation-table" : undefined} onClick={() => setShowReconciliation((open) => !open)} className="text-sm font-medium text-blue-600 hover:underline">{showReconciliation ? say("Hide details", "收起明细") : say("Show details", "显示明细")}</button>
@@ -535,7 +540,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
       </table></div> : !reconciliationEntries.length && <div className="p-4 text-sm text-gray-500">{reconciliationReason}</div>}
     </section>
 
-    <section id="evidence" className="rounded-2xl border bg-white p-4"><div className="mb-3 flex items-center gap-2 text-sm font-semibold"><ShieldCheck size={16} />{say("Evidence timeline", "证据时间线")}</div><div className="space-y-3">{shownEvents.length ? eventGroups.map((group) => {
+    <section id="evidence" className={`${CARD} p-4`} style={cardStyle}><h2 className="fc-section-title mb-3 flex items-center gap-2" style={sectionTitleStyle}><ShieldCheck size={16} />{say("Evidence timeline", "证据时间线")}</h2><div className="space-y-3">{shownEvents.length ? eventGroups.map((group) => {
       const eventRow = (event: TimelineEvent) => <div key={event.id} className="flex gap-3 border-l-2 border-blue-200 pl-3" data-testid="evidence-event"><div className="w-40 shrink-0 text-xs tabular-nums text-gray-500">{stamp(event.occurredAt)}</div><div><div className="text-sm font-medium">{eventLabel(event)}</div><div className="text-[11px] text-gray-500">{eventKind(event)}{event.actorName ? ` · ${event.actorName}` : ''}</div></div></div>;
       if (group.events.length <= EVENT_GROUP_AFTER) return group.events.map(eventRow);
       const first = group.events[0];

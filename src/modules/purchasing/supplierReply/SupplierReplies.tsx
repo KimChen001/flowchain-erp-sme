@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
-import { A } from "../../../components/ui";
+import { A, Card, SectionHeader } from "../../../components/ui";
 import { listButtonClass } from "../../../components/ui/listLayout";
 import { useI18n } from "../../../i18n/I18n";
 import { apiJson } from "../../../lib/api-client";
@@ -161,14 +161,11 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
   const { featured, earlier } = featuredReplies(list);
   const latest = featured[0] || null;
   return (
-    <section className="rounded-xl border bg-white p-4" data-testid="supplier-replies">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h3 className="text-sm font-semibold">{t("sectionTitle")}</h3>
-          <p className="text-[11px] text-slate-500">{t("sectionNote")}</p>
-        </div>
-        {canPaste && !open ? <button type="button" className={BUTTON.secondary} data-testid="supplier-reply-open" onClick={() => setOpen(true)}>{t("openFromOrder")}</button> : null}
-      </div>
+    // A section of the order page like its others: the title above, the card below.
+    <section data-testid="supplier-replies">
+      <SectionHeader title={t("sectionTitle")} right={canPaste && !open ? <button type="button" className={BUTTON.outline} data-testid="supplier-reply-open" onClick={() => setOpen(true)}>{t("openFromOrder")}</button> : undefined} />
+      <Card className="p-4">
+      <p className="text-xs" style={{ color: A.sub }}>{t("sectionNote")}</p>
       {pasteForm(latest || null)}
       {loadFailed ? <p className="mt-2 text-xs" style={{ color: A.sub }}>{t("loadFailed")}</p> : null}
       {replies && !list.length && !open ? <p className="mt-2 text-xs" style={{ color: A.sub }}>{t("none")}</p> : null}
@@ -181,6 +178,7 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
           {showEarlier ? <div className="mt-2 space-y-2">{earlier.map((card) => <SupplierReplyCard key={`${card.id}:${card.orderVersion}:${card.state}`} card={card} onChanged={changed} onRefused={refused(card.id)} notice={notices[card.id] || null} mayChange={mayChange} />)}</div> : null}
         </div>
       ) : null}
+      </Card>
     </section>
   );
 }
