@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { apiJson } from "../../lib/api-client";
-import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
+import { A, Card, Field, inputStyle } from "../../components/ui";
+import { StatusChip, statusToneOf } from "../../components/ui/listLayout";
 import {
   listTableCardsRef,
   tableBodyTextClass,
@@ -204,11 +205,11 @@ export default function ItemSupplierPricesPage() {
                     <td className={tdNumericRightClass}>{row.leadTimeDays === null ? muted(copy("Not recorded")) : copy("{count} days", { count: number(row.leadTimeDays) })}</td>
                     <td className={tdNowrapClass}>
                       <div className="flex flex-wrap items-center gap-1">
-                        {row.preferred && <Chip label={copy("Preferred")} color={A.blue} bg="#f0f6ff" />}
-                        {row.approved ? <Chip label={copy("Approved")} color="#0f766e" bg="#f0fdfa" /> : <Chip label={copy("Not approved")} color="#b45309" bg="#fffbeb" />}
+                        {row.preferred && <StatusChip label={copy("Preferred")} tone="info" />}
+                        {row.approved ? <StatusChip label={copy("Approved")} tone="success" /> : <StatusChip label={copy("Not approved")} tone="warning" />}
                       </div>
                     </td>
-                    <td className={tdNowrapClass}>{row.active ? <Chip label={copy("Active")} color="#0f766e" bg="#f0fdfa" /> : <Chip label={copy("Inactive")} color={A.gray1} bg={A.gray6} />}</td>
+                    <td className={tdNowrapClass}><StatusChip label={copy(row.active ? "Active" : "Inactive")} tone={statusToneOf(row.active ? "active" : "inactive")} /></td>
                   </tr>
                 ))}
               </tbody>
