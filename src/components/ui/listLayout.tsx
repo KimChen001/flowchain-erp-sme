@@ -36,6 +36,9 @@ export const listButtonClass = {
   // 32 px on a desk, 36 px on a phone, for a finger.
   secondary: `inline-flex h-8 items-center gap-1.5 rounded-lg bg-slate-50 px-3 max-sm:h-9 ${typography.denseButton} text-slate-900 hover:bg-slate-100`,
   export: `inline-flex h-8 items-center gap-1.5 rounded-lg bg-blue-50 px-3 max-sm:h-9 ${typography.denseButton} text-blue-600 hover:bg-blue-100`,
+  // The secondary look on a grey box or on the page background, where the
+  // slate fill above has no visible edge: white with a light border.
+  outline: `inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 max-sm:h-9 ${typography.denseButton} text-slate-900 hover:bg-slate-50 disabled:opacity-60`,
   primary: `inline-flex h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 max-sm:h-9 ${typography.denseButton} text-white hover:bg-blue-700 disabled:opacity-60`,
   // Reject and cancel: one look on every detail page (design audit U-17).
   danger: `inline-flex h-8 items-center gap-1.5 rounded-lg bg-red-50 px-3 max-sm:h-9 ${typography.denseButton} text-red-700 hover:bg-red-100 disabled:opacity-50`,
