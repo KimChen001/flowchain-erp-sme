@@ -305,9 +305,19 @@ test('list_shipments counts shipments and orders shipped per month over the whol
     shipmentDocument: { findMany: async ({ where, select }) => { reads.push({ where, select }); return shipments.filter((row) => (!where.postingStatus?.in || where.postingStatus.in.includes(row.postingStatus)) && (typeof where.postingStatus !== 'string' || row.postingStatus === where.postingStatus) && (!where.postedAt || row.postedAt >= where.postedAt.gte)) } },
   }
   const context = (warehouseIds) => ({ actor: { permissionCodes: new Set(['shipment.read']), tenantId: 't1' }, tenantId: 't1', prisma, routeContext: { reportReadAccess: { warehouseIds } } })
-  const facts = { today: '2026-11-20' }
+  const facts = { today: '2026-11-20', timezone: 'Europe/London' }
   const result = await tool('list_shipments').run({ days: 60 }, { facts, context: context(null) })
-  assert.deepEqual(result.byMonth, [{ month: '2026-10', shipments: 3, salesOrders: 2 }, { month: '2026-11', shipments: 1, salesOrders: 1 }])
+  // 60 days from 22 Sep: November is partial, to today (#433 review); no shipment in September.
+  assert.deepEqual(result.byMonth, [{ month: '2026-10', shipments: 3, salesOrders: 2 }, { month: '2026-11', shipments: 1, salesOrders: 1, partial: true, from: '2026-11-01', to: '2026-11-20' }])
+  const month = await tool('list_shipments').run({ days: 40 }, { facts, context: context(null) })
+  assert.deepEqual(month.byMonth[0], { month: '2026-10', shipments: 1, salesOrders: 1, partial: true, from: '2026-10-12', to: '2026-10-31' })
+  // In the workspace's zone: posted 31 Oct 23:30 UTC is 1 Nov in Tokyo.
+  shipments.push(posted('SO-5', '2026-10-31T23:30:00Z'))
+  const tokyo = await tool('list_shipments').run({ days: 60 }, { facts: { ...facts, timezone: 'Asia/Tokyo' }, context: context(null) })
+  assert.deepEqual(tokyo.byMonth.map((row) => [row.month, row.shipments]), [['2026-10', 3], ['2026-11', 2]])
+  const london = await tool('list_shipments').run({ days: 60 }, { facts, context: context(null) })
+  assert.deepEqual(london.byMonth.map((row) => [row.month, row.shipments]), [['2026-10', 4], ['2026-11', 1]])
+  shipments.pop()
   // A reader of some warehouses, or one SKU: no monthly count.
   assert.equal((await tool('list_shipments').run({ days: 60 }, { facts, context: context(['WH-1']) })).byMonth, undefined)
   assert.equal((await tool('list_shipments').run({ days: 60, sku: 'X' }, { facts, context: context(null) })).byMonth, undefined)
