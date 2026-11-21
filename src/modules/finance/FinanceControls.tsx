@@ -191,7 +191,7 @@ export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reas
       setBusy(false);
     }
   };
-  if (!open) return <button type="button" data-testid={testId} data-one-step={oneStep && !reasonLabel ? "true" : undefined} disabled={busy} className={`${listButtonClass[tone]} disabled:opacity-50`} onClick={() => (oneStep && !reasonLabel ? void runAtOnce() : setOpen(true))}>{busy ? t("finance.working") : label}</button>;
+  if (!open) return <button type="button" data-testid={testId} data-one-step={oneStep && !reasonLabel ? "true" : undefined} disabled={busy} className={tone === "secondary" ? `${listButtonClass.secondary} disabled:opacity-50` : listButtonClass[tone]} onClick={() => (oneStep && !reasonLabel ? void runAtOnce() : setOpen(true))}>{busy ? t("finance.working") : label}</button>;
   const reasonErrorId = `${reasonId}-error`;
   return (
     <div className="w-full space-y-2 rounded-xl border border-slate-200 p-3" data-testid={`${testId}-panel`}>
@@ -218,10 +218,11 @@ export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reas
         </div>
       )}
       <div className="flex flex-wrap gap-2">
-        {/* Close · Preview · Confirm, the primary action last (formLayout.tsx). */}
-        <button type="button" className={listButtonClass.secondary} onClick={() => { setOpen(false); setPlan(null); setError(""); setReasonError(""); }}>{t("finance.close")}</button>
+        {/* Preview · Confirm · Close: the reason field's next stop is Preview, so
+            Enter there never closes the panel and loses the typed reason. */}
         <button type="button" data-testid={`${testId}-preview`} className={listButtonClass.secondary} onClick={() => void preview()}><RefreshCw size={13} />{t("finance.preview")}</button>
-        <button type="button" data-testid={`${testId}-confirm`} className={`${tone === "danger" ? listButtonClass.danger : listButtonClass.primary} disabled:cursor-not-allowed disabled:opacity-50`} disabled={busy || Boolean(plan && !plan.allowed)} onClick={() => void confirm()}>{busy ? t("finance.working") : t("finance.confirm")}</button>
+        <button type="button" data-testid={`${testId}-confirm`} className={`${tone === "danger" ? listButtonClass.danger : listButtonClass.primary} disabled:cursor-not-allowed`} disabled={busy || Boolean(plan && !plan.allowed)} onClick={() => void confirm()}>{busy ? t("finance.working") : t("finance.confirm")}</button>
+        <button type="button" className={listButtonClass.secondary} onClick={() => { setOpen(false); setPlan(null); setError(""); setReasonError(""); }}>{t("finance.close")}</button>
       </div>
       {plan && (plan.allowed ? <Notice tone="success">{t("finance.previewAllowed")}</Notice> : <Notice>{(plan.blockingIssues || []).map(describe).join(" · ")}</Notice>)}
       {plan && !plan.allowed && issueDetail && (plan.blockingIssues || []).map((issue, index) => <div key={`${issue.code}-${index}`}>{issueDetail(issue)}</div>)}

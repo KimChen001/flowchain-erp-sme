@@ -137,7 +137,7 @@ const AUDIT_COPY: Record<string, Pair> = {
 // The receipt header's buttons: the one look of every detail page's actions
 // (listLayout.tsx; Cancel and Reverse as danger, design audit U-17).
 const HEADER_BUTTON = {
-  primary: `${listButtonClass.primary} disabled:opacity-50`,
+  primary: listButtonClass.primary,
   secondary: `${listButtonClass.secondary} disabled:opacity-50`,
   danger: listButtonClass.danger,
 };

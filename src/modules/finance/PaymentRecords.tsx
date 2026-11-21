@@ -347,7 +347,7 @@ export function PaymentRecords({ kind, obligation, onDone }: {
                       <TwoStepAction
                         label={t("finance.action.void_payment")}
                         testId={`payment-void-${payment.id}`}
-                        tone="secondary"
+                        tone="danger"
                         previewUrl={`${base}/${encodeURIComponent(payment.id)}/void-preview`}
                         runUrl={`${base}/${encodeURIComponent(payment.id)}/void`}
                         payload={() => ({ expectedVersion: payment.version })}

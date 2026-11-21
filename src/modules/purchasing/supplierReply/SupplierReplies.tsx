@@ -22,7 +22,7 @@ import type { SupplierReplyCardData } from "./supplierReplyTypes";
 // Pasting, recording and dismissing need procurement.purchase_order.revise;
 // without it a reader sees the cards but not their buttons.
 
-const BUTTON = { primary: `${listButtonClass.primary} !text-[12px]`, secondary: `${listButtonClass.secondary} !text-[12px]` };
+const BUTTON = { primary: `${listButtonClass.primary} !text-[12px]`, secondary: `${listButtonClass.secondary} !text-[12px]`, outline: `${listButtonClass.outline} !text-[12px]` };
 const PASTE_STATUSES = new Set(["issued", "partially_received"]);
 const REVISE = "procurement.purchase_order.revise";
 
@@ -130,7 +130,7 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
         </label>
         <span style={{ color: length > SUPPLIER_REPLY_PASTE_LIMIT ? A.red : A.sub }} data-testid="supplier-reply-count">{t("characters", { n: length.toLocaleString(), limit: SUPPLIER_REPLY_PASTE_LIMIT.toLocaleString() })}</span>
         <div className="ml-auto flex gap-2">
-          <button type="button" className={BUTTON.secondary} onClick={() => (entry === "today" && current ? setPasteAgain(false) : setOpen(false))}>{t("cancel")}</button>
+          <button type="button" className={BUTTON.outline} onClick={() => (entry === "today" && current ? setPasteAgain(false) : setOpen(false))}>{t("cancel")}</button>
           <button type="button" disabled={busy || !text.trim() || length > SUPPLIER_REPLY_PASTE_LIMIT} className={BUTTON.primary} data-testid="supplier-reply-read" onClick={() => void paste()}>{busy ? t("reading") : t("read")}</button>
         </div>
       </div>
