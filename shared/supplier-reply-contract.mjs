@@ -13,12 +13,12 @@
 // (supplierReplyOrderSchema), for the eval's scorer, from
 // server/domain/supplier-reply-reading.mjs:
 //   cleanSupplierReply(text, { sent? })
-//     -> { text, quoted, quotedTextHidden, invisibleRemoved, inlineAnswers, inline }
+//     -> { text, quoted, quotedTextHidden, invisibleRemoved, inlineAnswers, inline, inlineFrom }
 //        (sent: our sent chase; inline: the answers read from inside the
-//        quoted email, as they stand in text)
+//        quoted email, as they stand in text; inlineFrom: where they start)
 //   readSupplierReply({ order, text, receivedOn, today, callModel, reserve? })
 //     -> { readingStatus, reading, calls, usage }   (callModel is injected)
-//   checkReplyReading({ order, text, receivedOn, reading, inline? })
+//   checkReplyReading({ order, text, receivedOn, reading, inlineFrom? })
 //     -> supplierReplyCheckSchema
 import { z } from 'zod'
 

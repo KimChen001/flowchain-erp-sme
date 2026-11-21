@@ -265,7 +265,7 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
     const snapshot = supplierReplyOrderSnapshot(order, skus)
     const startedAt = Date.now()
     const read = await readWithModel({ client, context, tenantId: actor.tenantId, snapshot, cleaned, receivedOn, today, signal })
-    const check = read.readingStatus === 'read' ? checkReplyReading({ order: snapshot, text: cleaned.text, receivedOn, reading: read.reading, inline: cleaned.inline }) : null
+    const check = read.readingStatus === 'read' ? checkReplyReading({ order: snapshot, text: cleaned.text, receivedOn, reading: read.reading, inlineFrom: cleaned.inlineFrom }) : null
     const state = check ? check.state : 'needs_you'
     const id = idFactory()
     const open = SUPPLIER_REPLY_OPEN_STATES.includes(state)

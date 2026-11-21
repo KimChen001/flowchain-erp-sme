@@ -36,7 +36,7 @@ test('cleaning drops our quoted chase, a signature and invisible characters, and
   assert.equal(cleanSupplierReply('余下的货下周五发。\n\n在 2026年11月17日 10:00，Kim 写道：\n> 请确认').text, '余下的货下周五发。')
   // A right-to-left override and tag characters are gone too.
   assert.equal(cleanSupplierReply('Ship ‮on 28 Nov‬ 󠁁ok').text, 'Ship on 28 Nov ok')
-  assert.deepEqual(cleanSupplierReply('Just a reply.'), { text: 'Just a reply.', quoted: null, quotedTextHidden: false, invisibleRemoved: 0, inlineAnswers: 0, inline: [] })
+  assert.deepEqual(cleanSupplierReply('Just a reply.'), { text: 'Just a reply.', quoted: null, quotedTextHidden: false, invisibleRemoved: 0, inlineAnswers: 0, inline: [], inlineFrom: null })
   // Quotes are found again across whitespace, curly quotes and case.
   assert.ok(quoteFound('We can ship\nthe balance on 28 November.', 'we can ship the balance on 28 November.'))
   assert.ok(!quoteFound('We can ship the balance on 28 November.', 'We can ship everything on 18 November.'))
@@ -558,14 +558,15 @@ test('a supplier answering inside our quoted chase is read, with the question it
     '> Thanks, Daniel',
   ].join('\n')
   const cleaned = cleanSupplierReply(inline)
-  // Each answer keeps a pointer to its question (60 characters at most), without our digits.
-  assert.equal(cleaned.text, 'Hi Daniel, answers below.\n\n[re: Could you confirm a new date for the brackets (promised Nov)] Brackets: 28 November.\n[re: And the hinges, promised Nov?] Hinges ship on 3 December, sorry for the delay.')
+  // Each answer keeps a pointer to its question (60 characters at most), without our digits or date words.
+  assert.equal(cleaned.text, 'Hi Daniel, answers below.\n\n[re: Could you confirm a new date for the brackets (promised)?] Brackets: 28 November.\n[re: And the hinges, promised?] Hinges ship on 3 December, sorry for the delay.')
+  assert.equal(cleaned.inlineFrom, 'Hi Daniel, answers below.'.length + 2)
   assert.deepEqual([cleaned.inlineAnswers, cleaned.inline.length], [2, 2])
   assert.doesNotMatch(cleaned.text, /12 Nov|14 Nov/, 'our dates are never read')
   assert.match(cleaned.quoted, /^On Mon, 17 Nov 2026[\s\S]*promised 12 Nov\)\?[\s\S]*> Thanks, Daniel$/)
   assert.doesNotMatch(cleaned.quoted, /28 November|3 December/)
   // A date read from an answer is offered to the person, never proposed.
-  const result = checkReplyReading({ order, text: cleaned.text, receivedOn: '2026-11-18', inline: cleaned.inline, reading: reading([
+  const result = checkReplyReading({ order, text: cleaned.text, receivedOn: '2026-11-18', inlineFrom: cleaned.inlineFrom, reading: reading([
     { line: 'L1', date: '2026-11-28', quote: 'Brackets: 28 November.', dateKind: 'stated' },
     { line: 'L2', date: '2026-12-03', quote: 'Hinges ship on 3 December', dateKind: 'stated' },
   ]) })
@@ -574,9 +575,22 @@ test('a supplier answering inside our quoted chase is read, with the question it
   // Answers that do not name the item reach the reading with their questions, and still only as needs-you.
   const bare = cleanSupplierReply('See below.\nOn Mon, 17 Nov 2026, Daniel wrote:\n> Brackets?\n\n3 Dec\n\n> Hinges?\n\n1 Dec')
   assert.equal(bare.text, 'See below.\n\n[re: Brackets?] 3 Dec\n[re: Hinges?] 1 Dec')
-  assert.deepEqual(outcomes(checkReplyReading({ order, text: bare.text, receivedOn: '2026-11-18', inline: bare.inline, reading: reading([{ line: 'L1', date: '2026-12-01', quote: '1 Dec', dateKind: 'stated' }]) })), [['L1', 'needs_you', 'inline_answer', null]])
+  assert.deepEqual(outcomes(checkReplyReading({ order, text: bare.text, receivedOn: '2026-11-18', inlineFrom: bare.inlineFrom, reading: reading([{ line: 'L1', date: '2026-12-01', quote: '1 Dec', dateKind: 'stated' }]) })), [['L1', 'needs_you', 'inline_answer', null]])
+  // A quote reaching into the answers, across a line break or across from the
+  // text above, is from them: offered to the person, never proposed.
+  const wrappedAnswer = cleanSupplierReply('See below.\nOn Mon, 17 Nov 2026, Daniel wrote:\n> Brackets?\n> Hinges?\n\nHinges we can ship on\n3 December.\n\n> Thanks')
+  assert.equal(wrappedAnswer.text, 'See below.\n\n[re: Hinges?] Hinges we can ship on\n3 December.')
+  const quoted = (cleaned, line, date, quote) => outcomes(checkReplyReading({ order, text: cleaned.text, receivedOn: '2026-11-18', inlineFrom: cleaned.inlineFrom, reading: reading([{ line, date, quote, dateKind: 'stated' }]) }))
+  assert.deepEqual(quoted(wrappedAnswer, 'L2', '2026-12-03', 'ship on 3 December'), [['L2', 'needs_you', 'inline_answer', null]])
+  const join = cleanSupplierReply('We can ship on\nOn Mon, 17 Nov 2026, Daniel wrote:\n> Could you ship the brackets by next Friday?\n> Thanks\n\n28 November.\n\n> Daniel')
+  assert.equal(join.text, 'We can ship on\n\n[re: Thanks] 28 November.')
+  assert.deepEqual(quoted(join, 'L1', '2026-11-28', 'We can ship on [re: Thanks] 28 November'), [['L1', 'needs_you', 'inline_answer', null]])
+  // Our question's date words never reach the reading.
+  const asked = cleanSupplierReply('See below.\nOn Mon, 17 Nov 2026, Daniel wrote:\n> Could you ship by next Friday, 十一月十二日?\n> Or by the end of the month?\n\nYes.\n\n> Daniel')
+  assert.equal(asked.text, 'See below.\n\n[re: Or by the of the?] Yes.')
+  assert.doesNotMatch(asked.text, /friday|next|十一月|十二日|month/i)
   // The text above the quote is read and proposed as before.
-  assert.deepEqual(outcomes(checkReplyReading({ order, text: 'All of it ships on 28 November.\n\n[re: Brackets?] 3 Dec', receivedOn: '2026-11-18', inline: ['[re: Brackets?] 3 Dec'], reading: reading([{ line: 'L1', date: '2026-11-28', quote: 'All of it ships on 28 November', dateKind: 'stated' }]) })), [['L1', 'proposed', null, '2026-11-28']])
+  assert.deepEqual(outcomes(checkReplyReading({ order, text: 'All of it ships on 28 November.\n\n[re: Brackets?] 3 Dec', receivedOn: '2026-11-18', inlineFrom: 'All of it ships on 28 November.'.length + 2, reading: reading([{ line: 'L1', date: '2026-11-28', quote: 'All of it ships on 28 November', dateKind: 'stated' }]) })), [['L1', 'proposed', null, '2026-11-28']])
 })
 
 test('our own chase is never read as the supplier\'s answer: text right below a quoted line, re-wrapped quotes, a one-line ">" paste, and lines of our sent chase', () => {
@@ -584,7 +598,11 @@ test('our own chase is never read as the supplier\'s answer: text right below a 
   // A quoted line broken out by the client: our question right below it is ours, and so is what continues it.
   const split = cleanSupplierReply(`${head}> Brackets are promised 28 Nov, please confirm.\nConfirmed.\nCould you ship the hinges by 5 December instead?\n> Thanks`)
   assert.equal(split.text, 'Answers below.')
-  assert.deepEqual(outcomes(checkReplyReading({ order, text: split.text, receivedOn: '2026-11-18', inline: split.inline, reading: reading([{ line: 'L2', date: '2026-12-05', quote: 'Could you ship the hinges by 5 December instead', dateKind: 'stated' }]) })), [['L2', 'dropped', 'quote_not_found', null]])
+  assert.deepEqual(outcomes(checkReplyReading({ order, text: split.text, receivedOn: '2026-11-18', inlineFrom: split.inlineFrom, reading: reading([{ line: 'L2', date: '2026-12-05', quote: 'Could you ship the hinges by 5 December instead', dateKind: 'stated' }]) })), [['L2', 'dropped', 'quote_not_found', null]])
+  // Our request split off with blank lines and wrapped over two lines, with a
+  // chase not sent through FlowChain: read, but only offered to the person.
+  const splitOff = cleanSupplierReply(`${head}> Brackets are promised 28 Nov, please confirm.\n> Thanks\n\nCould you ship the hinges\nby 5 December instead?\n\n> Daniel`)
+  assert.deepEqual(outcomes(checkReplyReading({ order, text: splitOff.text, receivedOn: '2026-11-18', inlineFrom: splitOff.inlineFrom, reading: reading([{ line: 'L2', date: '2026-12-05', quote: 'ship the hinges by 5 December', dateKind: 'stated' }]) })), [['L2', 'needs_you', 'inline_answer', null]])
   // A re-wrapped quote: its tail on the next line is ours.
   const wrapped = cleanSupplierReply(`${head}> Are the brackets still on track for the promised\n28 November delivery?\n> Thanks`)
   assert.equal(wrapped.text, 'Answers below.')
