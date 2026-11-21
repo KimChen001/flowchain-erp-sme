@@ -1655,14 +1655,14 @@ test('an answer reads the business context once, for its facts and its tools', a
 // hiddenForRole, and a month the user wrote is theirs.
 test('the money sources a role cannot see are named for the model, and a month the user wrote is not flagged', async () => {
   const question = 'What was our gross margin in October 2026?'
-  const reply = "Your role can't see sales and margins, so I can't give the margin for October 2026. Someone whose role can see sales and margins can help."
+  const reply = "Your role can't see customer invoices and margins, so I can't give the margin for October 2026. Someone whose role can see customer invoices and margins can help."
   const buyer = await ask([[...say(reply), end()]], { roleKey: 'procurement-specialist', question })
   assertProtocol(buyer.events)
   const context = JSON.parse(buyer.client.requests[0].messages[0].content[0].text.replace(/^[^{]*/, ''))
-  assert.deepEqual(context.hiddenForRole.sources.filter((source) => ['sales_and_margins', 'receivables', 'supplier_payables'].includes(source)), ['sales_and_margins', 'receivables', 'supplier_payables'])
+  assert.deepEqual(context.hiddenForRole.sources.filter((source) => ['customer_invoices_and_margins', 'receivables', 'supplier_payables'].includes(source)), ['customer_invoices_and_margins', 'receivables', 'supplier_payables'])
   assert.deepEqual(ofType(buyer.events, 'flag').flatMap((event) => event.spans), [])
   // A role that may see them gets none of them; another month is still flagged.
   const admin = await ask([[...say('The margin for November 2026 is not in the results.'), end()]], { question })
-  assert.doesNotMatch(admin.client.requests[0].messages[0].content[0].text, /sales_and_margins|receivables|supplier_payables/)
+  assert.doesNotMatch(admin.client.requests[0].messages[0].content[0].text, /customer_invoices_and_margins|receivables|supplier_payables/)
   assert.deepEqual(ofType(admin.events, 'flag').flatMap((event) => event.spans.map((span) => span.text)), ['November 2026'])
 })

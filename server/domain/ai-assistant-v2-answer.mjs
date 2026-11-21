@@ -37,9 +37,11 @@ export function assistantV2EarlierTurns(conversationContext) {
 // cannot see one has it named in hiddenForRole, so the answer says the role
 // cannot see it rather than that a tool is missing (2026-11-20 question set:
 // a buyer asking for the month's margin got "the gross_profit report isn't
-// offered to me").
+// offered to me"). Named by what the permission opens: customer invoices
+// (sales and gross margin are read from them), not sales orders, which a
+// role may see without them (#422 review).
 const MONEY_SOURCES = Object.freeze([
-  ['sales_and_margins', 'finance.customer_invoice.read'],
+  ['customer_invoices_and_margins', 'finance.customer_invoice.read'],
   ['receivables', 'finance.receivable.read'],
   ['supplier_payables', 'finance.payable.read'],
 ])
