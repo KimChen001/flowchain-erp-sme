@@ -4,8 +4,8 @@ import { toast } from "sonner";
 import { apiJson } from "../../../lib/api-client";
 import { useI18n } from "../../../i18n/I18n";
 import { procurementErrorCode, procurementErrorText } from "../../procurement/procurementErrors";
-import { listTableCardsRef } from "../../../components/ui/workbenchTable";
-import { listButtonClass } from "../../../components/ui/listLayout";
+import { listTableCardsRef, tableBodyTextClass, tdClass, tdNowrapClass, thClass } from "../../../components/ui/workbenchTable";
+import { listButtonClass, listHeadRowStyle, listRowClass, listRowStyle } from "../../../components/ui/listLayout";
 import { A, Card, SectionHeader } from "../../../components/ui";
 
 // Promised dates of an approved or issued PO: each line's original promise,
@@ -91,15 +91,15 @@ export function PurchaseOrderPromiseDates({ poId, onChanged }: { poId: string; o
           the original and current dates under it with their names, and the
           change button below at a full tap size. */}
       {!folded && <div className="mt-2 overflow-x-auto" ref={listTableCardsRef} data-testid="po-promise-table">
-        <table className="w-full min-w-[560px] text-xs">
-          <thead><tr>{[tr("line"), tr("original"), tr("current"), ""].map((header, index) => <th key={index} className="p-2 text-left text-slate-500" {...(index === 0 ? { "data-card-title": "" } : {})}>{header}</th>)}</tr></thead>
+        <table className={`w-full min-w-[560px] text-left ${tableBodyTextClass}`}>
+          <thead><tr style={listHeadRowStyle}>{[tr("line"), tr("original"), tr("current"), ""].map((header, index) => <th key={index} className={thClass} style={{ color: A.gray1 }} {...(index === 0 ? { "data-card-title": "" } : {})}>{header}</th>)}</tr></thead>
           <tbody>
-            {po.lines.map((line) => (
-              <tr key={line.id} className="border-t" data-testid={`po-promise-line-${line.id}`}>
-                <td className="p-2 font-medium">{line.sku}{line.itemName ? ` · ${line.itemName}` : ""}</td>
-                <td className="whitespace-nowrap p-2">{line.originalPromisedDate ? day(line.originalPromisedDate) : tr("notRecorded")}</td>
-                <td className="whitespace-nowrap p-2">{day(line.promisedDate)}</td>
-                <td className="p-2">{revisable && <button type="button" data-testid={`po-promise-change-${line.id}`} className="inline-flex h-8 items-center whitespace-nowrap rounded-lg px-2 text-xs font-medium text-blue-600 hover:bg-blue-50" onClick={() => setForm({ lineId: line.id, date: line.promisedDate || "", reason: "" })}>{tr("change")}</button>}</td>
+            {po.lines.map((line, index) => (
+              <tr key={line.id} className={listRowClass} style={listRowStyle(index, po.lines.length)} data-testid={`po-promise-line-${line.id}`}>
+                <td className={`${tdClass} font-medium`}>{line.sku}{line.itemName ? ` · ${line.itemName}` : ""}</td>
+                <td className={tdNowrapClass}>{line.originalPromisedDate ? day(line.originalPromisedDate) : tr("notRecorded")}</td>
+                <td className={tdNowrapClass}>{day(line.promisedDate)}</td>
+                <td className={tdNowrapClass}>{revisable && <button type="button" data-testid={`po-promise-change-${line.id}`} className="inline-flex h-8 items-center whitespace-nowrap rounded-lg px-2 text-xs font-medium text-blue-600 hover:bg-blue-50" onClick={() => setForm({ lineId: line.id, date: line.promisedDate || "", reason: "" })}>{tr("change")}</button>}</td>
               </tr>
             ))}
           </tbody>

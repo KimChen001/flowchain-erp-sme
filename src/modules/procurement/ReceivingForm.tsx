@@ -5,6 +5,8 @@ import { Loader2 } from "lucide-react";
 import { A, Card, Field, inputStyle } from "../../components/ui";
 import { FieldError, FormActionBar, FormHeader, FormLineCard, FormSection, RequiredMark, focusFirstInvalid, formGridClass, invalidProps, useFormCopy } from "../../components/ui/formLayout";
 import { FocusFirstField } from "../../components/ui/FocusFirstField";
+import { tableBodyTextClass } from "../../components/ui/workbenchTable";
+import { typography } from "../../components/ui/typography";
 import { useI18n } from "../../i18n/I18n";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { createSecureClientMutationId } from "../../lib/client-id";
@@ -429,9 +431,9 @@ function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: Recei
           </div>
         ) : (
           <div className="overflow-x-auto rounded-lg border" style={{ borderColor: A.border }}>
-            <table className="w-full min-w-[960px] text-left text-sm">
-              <thead className="bg-gray-50 text-xs" style={{ color: A.sub }}>
-                <tr>{["include", "sku", "item", "ordered", "received", "remaining", "accepted", "rejected", "rejectionReason", "location"].map((key) => <th key={key} className={`whitespace-nowrap px-3 py-2 font-medium${key === "accepted" ? " min-w-32" : key === "item" ? " min-w-28" : ""}`}>{tr(key)}{key === "accepted" ? <> <RequiredMark /></> : null}{key === "accepted" && prefill ? <span data-testid="receiving-prefill-accepted" className="block max-w-32 whitespace-normal text-[11px] font-normal" style={{ color: A.blue }}>{tr("acceptedHint")}</span> : null}</th>)}</tr>
+            <table className={`w-full min-w-[960px] text-left ${tableBodyTextClass}`}>
+              <thead className="bg-slate-50" style={{ color: A.gray1 }}>
+                <tr>{["include", "sku", "item", "ordered", "received", "remaining", "accepted", "rejected", "rejectionReason", "location"].map((key) => <th key={key} className={`whitespace-nowrap px-3 py-2 ${typography.tableHeader}${key === "accepted" ? " min-w-32" : key === "item" ? " min-w-28" : ""}`}>{tr(key)}{key === "accepted" ? <> <RequiredMark /></> : null}{key === "accepted" && prefill ? <span data-testid="receiving-prefill-accepted" className="block max-w-32 whitespace-normal text-[11px] font-normal" style={{ color: A.blue }}>{tr("acceptedHint")}</span> : null}</th>)}</tr>
               </thead>
               <tbody>
                 {lineViews.map((view) => (
