@@ -683,6 +683,125 @@ function partQuantity(sentence) {
   return first ? Number(first[1] ?? first[2]) : null
 }
 
+// The lines a quote is about by name, checked in code against the line the
+// model chose:
+//   - codes: our SKU and the supplier's own code (its item-supplier link),
+//     three characters or more, as a whole code: not inside a longer one
+//     ("ACM" is not in "ACM-77"), and an all-digit code followed by a unit
+//     word ("300 pcs", "300件") or after "x" is a quantity;
+//   - names: the line's item name as a whole word (a plural counts; "Pen" is
+//     not in "open"), three characters or more, two for Chinese.
+// Only the quote is read, never the text around it. Inside the quote, the
+// clause that holds the date the model gave is read first ("85123A ships
+// 10 Dec, everything else 4 Dec": 10 Dec is 85123A's, 4 Dec is not):
+//   - the clause names items: the line must be one of them, or, when the
+//     clause leaves items out ("everything except 85123A"), not one of them;
+//   - it names none but leaves out the items named around it ("everything
+//     else 4 Dec"): the line must not be one of those;
+//   - it names none and is about the whole order ("6 items all ship on
+//     28 Nov", 统一): not checked, even if the quote names an item as a reason;
+//   - otherwise the items of the date's line or sentence count ("82494L
+//     Frame - 76 pcs, dispatch 26 Nov"), and failing those, the whole quote's.
+const escapeForPattern = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const CJK_NAME = /[㐀-鿿]/
+const lineCodes = (line) => [line.sku, line.supplierSku].map(text).filter((value) => value.length >= 3).map((value) => quoteForm(value))
+// A unit word after the number; a Chinese unit only on its own, not as the
+// start of a word (套装, 盒装 and 箱子 are words, 300件 and 300个 are counts).
+const QUANTITY_AFTER = /^\s*(?:pcs|pc|pieces?|units?|boxes|box|cartons?|ctns?|sets?|pairs?|dozens?|kgs?|kg)\b|^\s*[件个箱套盒](?![装子件餐人性])/
+const QUANTITY_BEFORE = /[x×*]\s*$/
+const WHOLE_ORDER = /\b(?:all (?:the )?(?:items|lines|goods|products)|all of (?:it|them|the order)|every (?:item|line)|everything|the (?:whole|entire|full) order)\b|全部|所有|整张单|整单|统一|每个品项|各品项/
+// Words that leave items out. "Except" and its kind do so even next to an
+// item ("everything except 85123A"); "the rest", "remaining", 剩下 and the
+// like only in a clause that names no item ("the remaining 100 pcs of 85123A"
+// is about 85123A).
+const EXCEPT = /\b(?:except|excluding|other than|apart from|but not)\b|除了|除.{0,20}外|以外|不含|不包括/
+const REMAINDER = /\b(?:else|the rest|remaining|others?)\b|其余|其他|其它|剩下|剩余/
+const LEAVES_OUT = { test: (value) => EXCEPT.test(value) || REMAINDER.test(value) }
+// A code and a name with only this between them are one item mentioned twice.
+const SEPARATOR = /\b(?:and|or|plus|with)\b|[,，、;；&+和及与]/
+// Where a clause ends: a comma, a semicolon, the end of a sentence (". "),
+// a line break or a list marker (" - ", "•"); and where a line or sentence does.
+const CLAUSE_BREAK = /[,，;；。!?！？\n•·]|\.\s|\s[-–—]\s/g
+const SENTENCE_BREAK = /[。!?！？\n•·]|\.\s/g
+
+function codeMentions(form, code) {
+  const pattern = new RegExp(`(?<![a-z0-9])(?<![a-z0-9][-_/.])${escapeForPattern(code)}(?![a-z0-9])(?![-_/.][a-z0-9])`, 'g')
+  const digits = /^\d+$/.test(code)
+  return [...form.matchAll(pattern)]
+    .filter((match) => !digits || !(QUANTITY_AFTER.test(form.slice(match.index + code.length)) || QUANTITY_BEFORE.test(form.slice(0, match.index))))
+    .map((match) => ({ start: match.index, end: match.index + code.length }))
+}
+function nameMentions(form, line) {
+  const name = quoteForm(line.itemName)
+  if (CJK_NAME.test(name) ? name.length < 2 : name.length < 3) return []
+  const pattern = CJK_NAME.test(name)
+    ? new RegExp(escapeForPattern(name), 'g')
+    : new RegExp(`(?<![a-z0-9])${escapeForPattern(name)}(?:e?s)?(?![a-z0-9])`, 'g')
+  return [...form.matchAll(pattern)].map((match) => ({ start: match.index, end: match.index + match[0].length }))
+}
+export function linesNamedInQuote(order, quote) {
+  const form = quoteForm(quote)
+  const lines = array(order?.lines)
+  return {
+    codes: lines.flatMap((line) => lineCodes(line).flatMap((code) => codeMentions(form, code)).map((at) => ({ ref: line.ref, ...at }))),
+    names: lines.flatMap((line) => nameMentions(form, line).map((at) => ({ ref: line.ref, ...at }))),
+  }
+}
+// The clause, and the line or sentence, of the quote around the first place
+// it writes the date given; the whole quote for both when it writes none.
+// Read with its line breaks kept (quoteForm folds them), so the items of a
+// list stay apart.
+function around(source, from, to, breaks) {
+  let start = 0
+  let end = source.length
+  for (const mark of source.matchAll(breaks)) {
+    if (mark.index + mark[0].length <= from) start = mark.index + mark[0].length
+    else if (mark.index >= to) { end = mark.index; break }
+  }
+  return source.slice(start, end)
+}
+function dateParts(quote, date, receivedOn) {
+  const source = String(quote ?? '').normalize('NFKC').replace(INVISIBLE, '').replace(/\r\n?/g, '\n').replace(/[ \t]+/g, ' ').toLowerCase()
+  const place = date ? datesWithPlaces(source, receivedOn).find((row) => row.date === date && Number.isInteger(row.index)) : null
+  if (!place) return { clause: source, sentence: source }
+  const to = place.index + place.phrase.length
+  return { clause: around(source, place.index, to, CLAUSE_BREAK), sentence: around(source, place.index, to, SENTENCE_BREAK) }
+}
+// One item's code and name side by side that point to different lines.
+function codeNameConflict(form, { codes, names }) {
+  for (const code of codes) {
+    for (const name of names) {
+      if (code.ref === name.ref || (code.start < name.end && name.start < code.end)) continue
+      const gap = code.end <= name.start ? form.slice(code.end, name.start) : form.slice(name.end, code.start)
+      if (gap.length <= 20 && !SEPARATOR.test(gap)) return true
+    }
+  }
+  return false
+}
+const refsOf = ({ codes, names }) => new Set([...codes, ...names].map((mention) => mention.ref))
+// Whether the date given to line `ref` belongs, by the quote's own words, to
+// another line (see above).
+export function lineNamedElsewhere(order, quote, ref, { date = null, receivedOn = null } = {}) {
+  const parts = dateParts(quote, date, receivedOn)
+  const clause = quoteForm(parts.clause)
+  const inClause = linesNamedInQuote(order, clause)
+  const named = refsOf(inClause)
+  if (named.size) {
+    if (EXCEPT.test(clause)) return named.has(ref)
+    return codeNameConflict(clause, inClause) || !named.has(ref)
+  }
+  // The clause names no item: the items around it, in its sentence, else in the quote.
+  for (const wider of [quoteForm(parts.sentence), quoteForm(quote)]) {
+    const inWider = linesNamedInQuote(order, wider)
+    const namedWider = refsOf(inWider)
+    if (!namedWider.size) continue
+    if (LEAVES_OUT.test(clause)) return namedWider.has(ref)
+    if (WHOLE_ORDER.test(clause)) return false
+    return codeNameConflict(wider, inWider) || !namedWider.has(ref)
+  }
+  return false
+}
+
 // The reading checked against the reply and the order (supplierReplyOrderSchema):
 // each line proposed, for the person, dropped or confirmed, the flags whose
 // quotes are in the reply, and the card's state.
@@ -731,6 +850,10 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
     const line = byRef.get(ref)
     const base = { ref, purchaseOrderLineId: line.purchaseOrderLineId, currentDate: line.promisedDate || null, quote: entries[0].quote, dateKind: entries[0].dateKind }
     if (!open || !(Number(line.remaining) > 0)) { out.push(lineRow({ ...base, issue: 'not_open' })); continue }
+    // The reply names this date by another line's code or name: the person
+    // decides which line it is for, rather than code moving it.
+    const misnamed = entries.find((entry) => lineNamedElsewhere(order, entry.quote, ref, { date: entry.date, receivedOn }))
+    if (misnamed) { out.push(lineRow({ ...base, outcome: 'needs_you', issue: 'line_mismatch', quote: misnamed.quote, dateKind: misnamed.dateKind })); continue }
     const resolved = entries.map((entry) => ({ entry, ...resolveDate(entry, receivedOn, line.promisedDate || null, reply) }))
     const failed = resolved.find((row) => row.issue)
     if (failed) { out.push(lineRow({ ...base, outcome: 'needs_you', issue: failed.issue, quote: failed.entry.quote, dateKind: failed.entry.dateKind, readings: failed.readings || null })); continue }
