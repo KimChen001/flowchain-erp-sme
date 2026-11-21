@@ -34,6 +34,18 @@ export async function openSalesOrdersOf({ listed = [], openIds = new Set(), pris
   return Object.assign(orders, { notRead: Math.max(0, outside.length - missing.length) })
 }
 
+// Whether a reader's warehouses are all the workspace's: no list (every
+// warehouse), or a list that holds each one. A reader scoped to the only
+// warehouse there is reads all of them (2026-11-21 live run: the walkthrough
+// users have one scope row each, so the open orders outside the listed ones
+// were never read). As recordedDemand checks it.
+export async function readsEveryWarehouse(prisma, tenantId, warehouseIds) {
+  if (!Array.isArray(warehouseIds)) return true
+  if (typeof prisma?.warehouse?.findMany !== 'function') return false
+  const warehouses = await prisma.warehouse.findMany({ where: { tenantId }, select: { id: true } }).catch(() => null)
+  return Array.isArray(warehouses) && warehouses.length > 0 && warehouses.every((row) => warehouseIds.includes(text(row.id)))
+}
+
 // The reason and day of each rejected or cancelled request's last step, from
 // its record (metadata.lastReason, written by the reject and cancel commands,
 // which need a reason), by id. Read here for the assistant only: the shared
@@ -564,7 +576,7 @@ export async function readAiSkillFacts(skillContext, { openPurchaseRequests = fa
       // set: two of six orders still to ship were missing). Those are read by
       // id, up to SALES_ORDERS_READ_MAX, for a reader of every warehouse (a
       // reader of some keeps the scoped list as it was).
-      const orders = await openSalesOrdersOf({ listed: business.salesOrders, openIds: open, prisma, tenantId, someWarehouses: Boolean(access.warehouseIds) })
+      const orders = await openSalesOrdersOf({ listed: business.salesOrders, openIds: open, prisma, tenantId, someWarehouses: !(await readsEveryWarehouse(prisma, tenantId, access.warehouseIds)) })
       if (orders.notRead) facts.salesOrdersNotRead = orders.notRead
       facts.salesOrders = orders.map((row) => ({
         id: text(row.salesOrderId || row.id), number: text(row.orderNumber || row.salesOrderId || row.id), customer: text(row.customerName) || null, promisedDate: dayOf(row.promisedDate),

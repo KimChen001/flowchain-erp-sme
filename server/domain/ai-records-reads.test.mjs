@@ -134,3 +134,17 @@ test('reviewed differences need the match permission; orders past the bound are 
   const orders = await openSalesOrdersOf({ listed: [], openIds, prisma: { salesOrder: { findMany: async ({ where }) => where.id.in.map((id) => ({ id })) } }, tenantId: 'T' })
   assert.deepEqual([orders.length, orders.notRead], [200, 5])
 })
+
+// 2026-11-21 live run: the walkthrough users each have one warehouse scope
+// row, so a reader of the only warehouse looked like a reader of some, and
+// the open orders outside the listed ones were never read.
+test('a scope that holds every warehouse reads as every warehouse', async () => {
+  const { readsEveryWarehouse } = await import('./ai-skill-readers.mjs')
+  const prisma = (ids) => ({ warehouse: { findMany: async () => ids.map((id) => ({ id })) } })
+  assert.equal(await readsEveryWarehouse(prisma(['WH-1']), 'T', ['WH-1']), true)
+  assert.equal(await readsEveryWarehouse(prisma(['WH-1', 'WH-2']), 'T', ['WH-1']), false)
+  assert.equal(await readsEveryWarehouse(prisma(['WH-1', 'WH-2']), 'T', null), true)
+  // Unknown warehouses, or a failing read: not every warehouse.
+  assert.equal(await readsEveryWarehouse({}, 'T', ['WH-1']), false)
+  assert.equal(await readsEveryWarehouse({ warehouse: { findMany: async () => { throw new Error('down') } } }, 'T', ['WH-1']), false)
+})
