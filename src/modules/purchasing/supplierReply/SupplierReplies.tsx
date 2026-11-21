@@ -163,7 +163,7 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
   return (
     // A section of the order page like its others: the title above, the card below.
     <section data-testid="supplier-replies">
-      <SectionHeader title={t("sectionTitle")} right={canPaste && !open ? <button type="button" className={BUTTON.secondary} data-testid="supplier-reply-open" onClick={() => setOpen(true)}>{t("openFromOrder")}</button> : undefined} />
+      <SectionHeader title={t("sectionTitle")} right={canPaste && !open ? <button type="button" className={BUTTON.outline} data-testid="supplier-reply-open" onClick={() => setOpen(true)}>{t("openFromOrder")}</button> : undefined} />
       <Card className="p-4">
       <p className="text-xs" style={{ color: A.sub }}>{t("sectionNote")}</p>
       {pasteForm(latest || null)}

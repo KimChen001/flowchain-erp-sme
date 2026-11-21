@@ -135,14 +135,14 @@ const AUDIT_COPY: Record<string, Pair> = {
   receiving_reversed: ["Receipt {doc} reversed", "收货单 {doc} 已冲销"],
 };
 
-// The receipt header's buttons: the one look of every detail page's actions
-// (listLayout.tsx; Cancel and Reverse as danger, design audit U-17).
 // The receipt page's cards, drawn as Card draws them (rounded-xl, the light
 // border and shadow of every other detail page).
 const CARD = "rounded-xl border bg-white";
 const cardStyle = { borderColor: A.border, boxShadow: "0 1px 2px rgba(15,23,42,0.04)" };
 const sectionTitleStyle = { color: A.label };
 
+// The receipt header's buttons: the one look of every detail page's actions
+// (listLayout.tsx; Cancel and Reverse as danger, design audit U-17).
 const HEADER_BUTTON = {
   primary: listButtonClass.primary,
   secondary: `${listButtonClass.secondary} disabled:opacity-50`,
