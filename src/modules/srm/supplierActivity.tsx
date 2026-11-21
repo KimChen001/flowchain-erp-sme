@@ -141,8 +141,8 @@ export function SupplierActivityCards({ supplierId, titles, empty }: { supplierI
   const issueDate = (issue: Issue) => (issue.when.date ? t(issue.when.kind === "open" ? "since" : "due", { date: f.day(issue.when.date) }) : "");
   return (
     <>
-      <Card className="p-5" data-testid="supplier-purchase-records">
-        <h2 className="text-sm font-semibold">{titles.orders}</h2>
+      <Card className="p-4 sm:p-5" data-testid="supplier-purchase-records">
+        <h2 className="fc-section-title" style={{ color: A.label }}>{titles.orders}</h2>
         {status("supplier-purchase-records")}
         {data && !orders ? <Note testId="supplier-orders-hidden">{t("ordersHidden")}</Note> : null}
         {orders && !orders.rows.length ? <div className="py-8 text-center text-xs" style={{ color: A.sub }}>{empty.orders}</div> : null}
@@ -171,7 +171,7 @@ export function SupplierActivityCards({ supplierId, titles, empty }: { supplierI
         ) : null}
         {data ? (
           <div className="mt-4" data-testid="supplier-invoice-records">
-            <h3 className="text-xs font-semibold">{t("invoices")}</h3>
+            <h3 className="text-[13px] font-semibold leading-5" style={{ color: A.label }}>{t("invoices")}</h3>
             {!invoices ? <Note testId="supplier-invoices-hidden">{t("invoicesHidden")}</Note> : !invoices.rows.length ? <Note>{t("noInvoices")}</Note> : (
               <div className={`mt-2 ${tableScrollClass}`}>
                 <table className={`w-full ${tableBodyTextClass}`}>
@@ -199,8 +199,8 @@ export function SupplierActivityCards({ supplierId, titles, empty }: { supplierI
           </div>
         ) : null}
       </Card>
-      <Card className="p-5" data-testid="supplier-risks">
-        <h2 className="text-sm font-semibold">{titles.risks}</h2>
+      <Card className="p-4 sm:p-5" data-testid="supplier-risks">
+        <h2 className="fc-section-title" style={{ color: A.label }}>{titles.risks}</h2>
         {status("supplier-risks")}
         {data && !issues ? <Note testId="supplier-risks-hidden">{t("issuesHidden")}</Note> : null}
         {issues && !issues.length ? <div className="py-8 text-center text-xs" style={{ color: A.sub }}>{empty.risks}</div> : null}

@@ -574,7 +574,7 @@ export default function SupplierMasterPage({
           ))}
         </div>
         {detailTab === "performance" ? <SupplierPerformancePanel supplierId={selected.id} /> : detailTab === "contracts" && canReadContracts ? <SupplierContractsPanel supplierId={selected.id} /> : <>
-        <Card className="p-5">
+        <Card className="p-4 sm:p-5">
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             {([
               ["基本信息", [
@@ -606,13 +606,14 @@ export default function SupplierMasterPage({
               const recorded = facts.filter(([, value]) => String(value || "").trim());
               return (
                 <section key={copy(title)}>
-                  <h2 className="text-xs font-semibold">{copy(title)}</h2>
+                  <h2 className="text-[13px] font-semibold leading-5" style={{ color: A.label }}>{copy(title)}</h2>
                   {recorded.length ? (
-                    <dl className="mt-2 space-y-1 text-xs leading-5">
+                    // Each fact as the PO overview shows one: a grey label over a semibold value.
+                    <dl className="mt-2 space-y-2">
                       {recorded.map(([label, value]) => (
-                        <div key={label} className="flex flex-wrap gap-x-2">
-                          <dt style={{ color: A.sub }}>{copy(label)}</dt>
-                          <dd className="min-w-0 break-words">{value}</dd>
+                        <div key={label} className="min-w-0">
+                          <dt className="fc-caption font-medium" style={{ color: A.gray2 }}>{copy(label)}</dt>
+                          <dd className="mt-0.5 break-words text-xs font-semibold" style={{ color: A.label }}>{value}</dd>
                         </div>
                       ))}
                     </dl>
@@ -625,8 +626,8 @@ export default function SupplierMasterPage({
           </div>
         </Card>
         <SupplierTierPanel supplier={selected} canEdit={writes.suppliers} onChanged={async () => { await openDetail(selected.id); await load(); }} />
-        <Card className="p-5">
-          <h2 className="text-sm font-semibold">{copy("可供应物料")}</h2>
+        <Card className="p-4 sm:p-5">
+          <h2 className="fc-section-title" style={{ color: A.label }}>{copy("可供应物料")}</h2>
           {relationshipLimitation && <p role="alert" className="mt-2 text-xs text-amber-700">{copy("Supplied-item links are currently unavailable.")}</p>}
           {writes.items && <div className="mt-3 grid items-start gap-2 md:grid-cols-[minmax(0,2fr)_auto_minmax(0,1fr)_auto]">
             <select

@@ -23,6 +23,10 @@ import { BackToListLink } from "../procurement/BackToListLink";
 import { procurementErrorCode, procurementErrorText } from "../procurement/procurementErrors";
 import { matchExceptionLabel } from "../../domain/procurement/variance-types";
 
+// A header fact, as OverviewFields draws one (components/document/DocumentShell.tsx).
+const FACT_LABEL = "fc-caption font-medium";
+const FACT_VALUE = "mt-1 text-xs font-semibold";
+
 // The supplier invoice screens of the trial's procure-to-pay chain: enter an
 // invoice against a posted receipt, then submit, match, review exceptions,
 // approve or cancel it, and hold or release its payable. Every step previews
@@ -703,7 +707,7 @@ function DuplicateChecks({ invoice, checks, canDismiss, onDone }: { invoice: { i
   return (
     <Card className="space-y-3 p-5" data-testid="supplier-invoice-duplicates">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="font-semibold">{t("finance.duplicates.title")}</h3>
+        <h2 className="fc-section-title" style={{ color: A.label }}>{t("finance.duplicates.title")}</h2>
         <span className="text-xs text-slate-500" data-testid="duplicate-window">{t("finance.duplicates.window", { days: checks.windowDays })}</span>
       </div>
       {checks.notChecked.map((code) => <p key={code} className="text-xs text-amber-700" data-testid={`duplicate-not-checked-${code}`}>{notCheckedText[code] || code}</p>)}
@@ -959,7 +963,7 @@ function MatchCard({ invoice, onDone }: { invoice: any; onDone: () => void }) {
   const shownStatus = shownMatchStatus(match.status, exceptions);
   return (
     <Card className="space-y-3 p-5" data-testid="supplier-invoice-match" id="supplier-invoice-match">
-      <div className="flex items-center justify-between gap-2"><h3 className="font-semibold">{t("finance.threeWayMatch")}</h3><StatusChip status={shownStatus} /></div>
+      <div className="flex items-center justify-between gap-2"><h2 className="fc-section-title" style={{ color: A.label }}>{t("finance.threeWayMatch")}</h2><StatusChip status={shownStatus} /></div>
       {summary && <p className="text-sm text-slate-600" data-testid="supplier-invoice-match-summary">{summary}</p>}
       {followUpError && <Notice>{followUpError}</Notice>}
       {exceptions.map((entry) => {
@@ -1228,16 +1232,17 @@ export function SupplierInvoiceDetail() {
                   : <StatusChip status={shownStatus} />}
               </span>
             </div>
-            <p className="mt-1 text-sm text-slate-500" data-testid="supplier-invoice-sources">
+            <p className="mt-1 text-xs" style={{ color: A.sub }} data-testid="supplier-invoice-sources">
               {data.supplierName || "—"}
               {" · "}{t("finance.purchaseOrder")} {data.relatedPoId ? <BusinessEntityLink entityType="purchase_order" entityId={data.relatedPoId} number={data.relatedPoNumber || data.poNumber} /> : "—"}
               {" · "}{t("finance.receipt")} {data.relatedGrnId ? <BusinessEntityLink entityType="receiving_doc" entityId={data.relatedGrnId}>{data.relatedGrnNumber || data.relatedGrnId}</BusinessEntityLink> : data.awaitingReceipt ? <span className="font-medium text-amber-700">{t("finance.awaitingReceipt")}</span> : "—"}
               {data.relatedPoId && <>{" · "}<BusinessEntityLink entityType="three_way_match" entityId={`MATCH-${data.id}`}>{t("finance.threeWayMatch")}</BusinessEntityLink></>}
             </p>
-            <dl className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm" data-testid="supplier-invoice-facts">
-              <div><dt className="text-xs text-slate-500">{t("finance.invoiceDate")}</dt><dd className="font-medium tabular-nums" data-testid="supplier-invoice-date">{formatCalendarDay(data.invoiceDate, locale)}</dd></div>
-              <div><dt className="text-xs text-slate-500">{t("finance.dueDate")}</dt><dd className="font-medium tabular-nums" data-testid="supplier-invoice-due-date">{formatCalendarDay(data.dueDate, locale)}</dd></div>
-              <div><dt className="text-xs text-slate-500">{t("finance.currency")}</dt><dd className="font-medium" data-testid="supplier-invoice-currency-fact">{data.currency || "—"}</dd></div>
+            {/* The facts as the PO and request overviews show them: a grey label over a semibold value. */}
+            <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3" data-testid="supplier-invoice-facts">
+              <div><dt className={FACT_LABEL} style={{ color: A.gray2 }}>{t("finance.invoiceDate")}</dt><dd className={`${FACT_VALUE} tabular-nums`} style={{ color: A.label }} data-testid="supplier-invoice-date">{formatCalendarDay(data.invoiceDate, locale)}</dd></div>
+              <div><dt className={FACT_LABEL} style={{ color: A.gray2 }}>{t("finance.dueDate")}</dt><dd className={`${FACT_VALUE} tabular-nums`} style={{ color: A.label }} data-testid="supplier-invoice-due-date">{formatCalendarDay(data.dueDate, locale)}</dd></div>
+              <div><dt className={FACT_LABEL} style={{ color: A.gray2 }}>{t("finance.currency")}</dt><dd className={FACT_VALUE} style={{ color: A.label }} data-testid="supplier-invoice-currency-fact">{data.currency || "—"}</dd></div>
             </dl>
           </div>
           <div className="text-right">
@@ -1266,7 +1271,7 @@ export function SupplierInvoiceDetail() {
       {data.duplicateChecks && <DuplicateChecks invoice={data} checks={data.duplicateChecks} canDismiss={actions.includes("dismiss_duplicate")} onDone={load} />}
 
       <Card className="p-5">
-        <h3 className="mb-3 font-semibold">{t("finance.lines")}</h3>
+        <h2 className="fc-section-title mb-3" style={{ color: A.label }}>{t("finance.lines")}</h2>
         {/* Phones show each line as a card (listTableCardsRef): the item first. */}
         <div className="overflow-x-auto" ref={listTableCardsRef}>
           <table className="w-full min-w-[640px] text-sm" data-testid="supplier-invoice-lines-table">
@@ -1294,7 +1299,7 @@ export function SupplierInvoiceDetail() {
       {payable && (
         <Card className="space-y-3 p-5" data-testid="supplier-invoice-payable" id="supplier-invoice-payable">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="font-semibold">{t("finance.payables")} · {payable.obligationNumber || payable.id}</h3>
+            <h2 className="fc-section-title" style={{ color: A.label }}>{t("finance.payables")} · {payable.obligationNumber || payable.id}</h2>
             {/* The payable's total stays here; what is paid and still owed is under it. */}
             <div className="flex items-center gap-2" data-testid="supplier-invoice-payable-total"><strong>{money(payable.originalAmount ?? data.totalAmount, payable.currency, locale)}</strong><StatusChip status={payable.status} /></div>
           </div>

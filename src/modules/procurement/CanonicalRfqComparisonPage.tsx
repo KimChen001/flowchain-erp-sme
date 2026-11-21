@@ -14,6 +14,7 @@ import { compareQuote } from "../../../shared/price-history.mjs";
 import { formatCalendarDay, formatDateTimeInTimeZone } from "../../lib/format";
 import { rfqMoney, rfqQuantity } from "./rfqFormat";
 import { RfqNoOrderNote } from "./RfqNoOrderNote";
+import { OverviewFieldGrid } from "../../components/document/DocumentShell";
 import { procurementErrorText } from "./procurementErrors";
 import type {
   RfqAwardDecision,
@@ -137,7 +138,7 @@ function Availability({ comparison }: { comparison: RfqSupplierComparison }) {
       <div className="flex items-start gap-3">
         {multiCurrency ? <TriangleAlert className="mt-0.5 text-amber-600" size={18} /> : <Scale className="mt-0.5 text-blue-600" size={18} />}
         <div>
-          <h2 className="text-sm font-semibold">{title}</h2>
+          <h2 className="fc-section-title" style={{ color: A.label }}>{title}</h2>
           <p className="mt-1 text-xs" style={{ color: A.sub }}>{description}</p>
         </div>
       </div>
@@ -152,7 +153,7 @@ function ResponseSummary({ responses }: { responses: RfqComparisonResponse[] }) 
   return (
     <Card className="overflow-hidden" data-testid="rfq-comparison-responses">
       <div className="border-b p-4">
-        <h2 className="text-sm font-semibold">{tr("供应商响应摘要", "Supplier response summary")}</h2>
+        <h2 className="fc-section-title" style={{ color: A.label }}>{tr("供应商响应摘要", "Supplier response summary")}</h2>
         <p className="mt-1 text-xs" style={{ color: A.sub }}>{tr("供应商按编号排列，不按价格排序。", "Suppliers are listed by supplier ID, not by price.")}</p>
       </div>
       {responses.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前询价单尚无报价记录。", "This RFQ has no quotation records.")}</div> : (
@@ -195,7 +196,7 @@ function LineMatrix({ comparison }: { comparison: RfqSupplierComparison }) {
   const history = usePriceHistory(comparison.lines.flatMap((line) => comparison.responses.map((response) => historyKeyOf(line, response))));
   return (
     <Card className="overflow-hidden" data-testid="rfq-comparison-line-matrix">
-      <div className="border-b p-4"><h2 className="text-sm font-semibold">{tr("行项目并列展示", "Line-by-line comparison")}</h2><p className="mt-1 text-xs" style={{ color: A.sub }}>{tr("金额按报价记录显示，不重新计算。", "Amounts are shown as quoted, not recalculated.")}</p></div>
+      <div className="border-b p-4"><h2 className="fc-section-title" style={{ color: A.label }}>{tr("行项目并列展示", "Line-by-line comparison")}</h2><p className="mt-1 text-xs" style={{ color: A.sub }}>{tr("金额按报价记录显示，不重新计算。", "Amounts are shown as quoted, not recalculated.")}</p></div>
       {comparison.lines.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前询价单没有行项目。", "This RFQ has no line items.")}</div> : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-max text-left text-xs">
@@ -278,7 +279,7 @@ function AwardDecisionPanel({ comparison, award, canAward, onAward }: { comparis
   const selected = eligible.find((response) => response.supplierId === supplierId);
   const awardSupplier = comparison.responses.find((response) => response.supplierId === award?.supplierId);
 
-  if (award) return <Card className="border-emerald-200 bg-emerald-50 p-4" data-testid="rfq-award-decision"><div className="flex items-start gap-3"><CheckCircle2 className="mt-0.5 text-emerald-700" size={18} /><div><h2 className="text-sm font-semibold">{tr("正式授标决定已记录", "Formal award decision recorded")}</h2><p className="mt-1 text-xs text-slate-700">{awardSupplier?.supplierName || award.supplierId} · {tr(`报价修订 ${award.quotationRevisionNumber}`, `Quote revision ${award.quotationRevisionNumber}`)} · {exactAmount(award.quotedAmount, award.currency)}</p><p className="mt-2 text-xs text-slate-600">{award.decisionReason}</p><p className="mt-2 text-[11px] text-slate-500">{tr("人工决定，不可修改", "Recorded by a person; cannot be changed")} · {date(award.decidedAt)}</p></div></div></Card>;
+  if (award) return <Card className="border-emerald-200 bg-emerald-50 p-4" data-testid="rfq-award-decision"><div className="flex items-start gap-3"><CheckCircle2 className="mt-0.5 text-emerald-700" size={18} /><div><h2 className="fc-section-title" style={{ color: A.label }}>{tr("正式授标决定已记录", "Formal award decision recorded")}</h2><p className="mt-1 text-xs text-slate-700">{awardSupplier?.supplierName || award.supplierId} · {tr(`报价修订 ${award.quotationRevisionNumber}`, `Quote revision ${award.quotationRevisionNumber}`)} · {exactAmount(award.quotedAmount, award.currency)}</p><p className="mt-2 text-xs text-slate-600">{award.decisionReason}</p><p className="mt-2 text-[11px] text-slate-500">{tr("人工决定，不可修改", "Recorded by a person; cannot be changed")} · {date(award.decidedAt)}</p></div></div></Card>;
 
   const unavailable = comparison.rfqStatus !== "collecting_quotes" || eligible.length === 0;
   const submit = async () => {
@@ -306,7 +307,7 @@ function AwardDecisionPanel({ comparison, award, canAward, onAward }: { comparis
     } finally { setBusy(false); }
   };
 
-  return <Card className="p-4" data-testid="rfq-award-decision"><div className="flex items-start gap-3"><ShieldCheck className="mt-0.5 text-blue-600" size={18} /><div className="min-w-0 flex-1"><h2 className="text-sm font-semibold">{tr("人工复核授标", "Reviewed award decision")}</h2><p className="mt-1 text-xs text-slate-500">{tr("选择一份符合条件的最新报价修订。系统不会排名或推荐供应商，也不会自动创建采购订单。", "Select one eligible latest quote revision. FlowChain does not rank or recommend suppliers, and it does not create a purchase order automatically.")}</p>
+  return <Card className="p-4" data-testid="rfq-award-decision"><div className="flex items-start gap-3"><ShieldCheck className="mt-0.5 text-blue-600" size={18} /><div className="min-w-0 flex-1"><h2 className="fc-section-title" style={{ color: A.label }}>{tr("人工复核授标", "Reviewed award decision")}</h2><p className="mt-1 text-xs text-slate-500">{tr("选择一份符合条件的最新报价修订。系统不会排名或推荐供应商，也不会自动创建采购订单。", "Select one eligible latest quote revision. FlowChain does not rank or recommend suppliers, and it does not create a purchase order automatically.")}</p>
     {!canAward ? <p className="mt-3 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">{tr("当前角色可以查看比价，但没有记录正式授标决定的权限。", "Your role can review the comparison but cannot record a formal award decision.")}</p> : unavailable ? <p className="mt-3 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">{comparison.rfqStatus !== "collecting_quotes" ? tr("只有处于收集报价状态的询价单可以授标。", "An award can be recorded only while the RFQ is collecting quotes.") : tr("当前没有符合授标要求的完整报价。", "No complete eligible quotation is available for award.")}</p> : <div className="mt-4 space-y-3">
       <fieldset className="space-y-2"><legend className="text-xs font-semibold">{tr("选择供应商报价", "Select supplier quotation")}</legend>{eligible.map((response) => <label key={response.supplierId} className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-xs ${supplierId === response.supplierId ? "border-blue-500 bg-blue-50" : "border-slate-200"}`}><input className="mt-0.5" type="radio" name="rfq-award-supplier" value={response.supplierId} checked={supplierId === response.supplierId} onChange={() => { setSupplierId(response.supplierId); setReviewed(false); }} /><span><strong>{response.supplierName || response.supplierId}</strong><span className="mt-1 block text-slate-600">{tr(`报价修订 ${response.latestRevision?.revisionNumber ?? "—"}`, `Quote revision ${response.latestRevision?.revisionNumber ?? "—"}`)} · {exactAmount(response.latestRevision?.quotedAmount, response.latestRevision?.currency)}</span></span></label>)}</fieldset>
       <label className="block text-xs font-semibold">{tr("决定理由", "Decision reason")}<textarea rows={3} maxLength={2000} value={reason} onChange={(event) => setReason(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 p-2 font-normal" placeholder={tr("说明价格、交期、质量或业务判断依据", "Describe the price, lead time, quality, or business basis")}/></label>
@@ -338,12 +339,10 @@ function LoadedComparison({ comparison, award, canAward, onAward }: { comparison
       <RfqNoOrderNote />
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0"><div className="text-xs font-semibold uppercase tracking-wide" style={{ color: A.sub }}>{tr("只读供应商报价比较", "Supplier quotation comparison")} · {rfqNumber}</div><h1 className="fc-page-title mt-1">{comparison.rfqTitle || rfqNumber}</h1><p className="mt-2 text-xs" style={{ color: A.sub }}>{tr("本页不排名、不推荐、不授标，也不创建采购订单。", "This page does not rank or recommend suppliers. A formal award requires a separate authorized human decision and does not create a purchase order.")}</p></div>
+          <div className="min-w-0"><h1 className="fc-page-title">{comparison.rfqTitle || rfqNumber}</h1><div className="mt-1 text-xs" style={{ color: A.sub }}>{tr("只读供应商报价比较", "Supplier quotation comparison")} · <span className="font-semibold tabular-nums" style={{ color: A.blue }}>{rfqNumber}</span></div><p className="mt-2 text-xs" style={{ color: A.sub }}>{tr("本页不排名、不推荐、不授标，也不创建采购订单。", "This page does not rank or recommend suppliers. A formal award requires a separate authorized human decision and does not create a purchase order.")}</p></div>
           <div className="flex flex-wrap gap-2"><Chip label={tr("只读比较", "Read-only comparison")} color={A.blue} bg="#eff6ff" /><Chip label={localLabel(RFQ_STATUS_LABELS, comparison.rfqStatus || "", language, comparison.rfqStatusRaw || tr("状态未知", "Unknown status"))} color={A.sub} bg="#f1f5f9" /></div>
         </div>
-        <dl className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {[[tr("询价单编号", "RFQ number"), rfqNumber], [tr("询价单币种", "RFQ currency"), comparison.rfqCurrency || "—"], [tr("有效报价", "Eligible quotations"), String(comparison.summary.eligibleResponseCount)], [tr("有报价修订的响应", "Responses with a quote revision"), String(comparison.summary.authoritativeResponseCount)], [tr("参与供应商", "Participating suppliers"), String(comparison.participationSummary.participantCount)], [tr("全部报价记录", "All quotation records"), String(comparison.summary.quotationCount)], [tr("显示顺序", "Display order"), tr("按供应商编号", "By supplier ID")], [tr("生成时间", "Generated at"), date(comparison.generatedAt)]].map(([label, value]) => <div className="rounded-lg bg-slate-50 p-3" key={label}><dt className="text-xs" style={{ color: A.sub }}>{label}</dt><dd className="mt-1 break-words text-sm font-medium">{value}</dd></div>)}
-        </dl>
+        <OverviewFieldGrid className="mt-5" fields={[[tr("询价单编号", "RFQ number"), rfqNumber], [tr("询价单币种", "RFQ currency"), comparison.rfqCurrency || "—"], [tr("有效报价", "Eligible quotations"), String(comparison.summary.eligibleResponseCount)], [tr("有报价修订的响应", "Responses with a quote revision"), String(comparison.summary.authoritativeResponseCount)], [tr("参与供应商", "Participating suppliers"), String(comparison.participationSummary.participantCount)], [tr("全部报价记录", "All quotation records"), String(comparison.summary.quotationCount)], [tr("显示顺序", "Display order"), tr("按供应商编号", "By supplier ID")], [tr("生成时间", "Generated at"), date(comparison.generatedAt)]].map(([label, value]) => ({ label, value }))} />
       </Card>
 
       <Availability comparison={comparison} />
@@ -352,7 +351,7 @@ function LoadedComparison({ comparison, award, canAward, onAward }: { comparison
       {(noParticipants || noQuotations || comparison.comparisonAvailability === "no_eligible_responses") && <Card className="p-4" data-testid="rfq-comparison-empty-context"><div className="flex items-start gap-2"><CircleAlert className="mt-0.5 text-slate-500" size={16} /><p className="text-xs" style={{ color: A.sub }}>{noParticipants ? tr("当前询价单尚无供应商参与记录。", "This RFQ has no supplier participation records.") : noQuotations ? tr("已有参与记录，但尚无报价。", "Suppliers are participating, but no quotations have been recorded.") : tr("现有报价均为草稿、不完整、已撤回、历史记录或缺少完整行项目覆盖。", "All current quotations are drafts, incomplete, withdrawn, historical, or missing complete line coverage.")}</p></div></Card>}
 
       <Card className="p-4" data-testid="rfq-comparison-participation-summary">
-        <h2 className="text-sm font-semibold">{tr("供应商参与摘要", "Supplier participation summary")}</h2>
+        <h2 className="fc-section-title" style={{ color: A.label }}>{tr("供应商参与摘要", "Supplier participation summary")}</h2>
         <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">{[[tr("参与总数", "Total"), comparison.participationSummary.participantCount], [tr("计划参与", "Planned"), comparison.participationSummary.plannedCount], [tr("内部邀请", "Invited"), comparison.participationSummary.invitedInternalCount], [tr("已记录响应", "Responses"), comparison.participationSummary.responseRecordedCount], [tr("尚无报价", "No quotation"), comparison.participationSummary.noResponseCount], [tr("已拒绝", "Declined"), comparison.participationSummary.declinedCount], [tr("已撤回", "Withdrawn"), comparison.participationSummary.withdrawnCount], [tr("已关闭", "Closed"), comparison.participationSummary.closedCount]].map(([label, value]) => <div className="rounded-lg bg-slate-50 p-3" key={label}><div className="text-[11px]" style={{ color: A.sub }}>{label}</div><div className="mt-1 text-lg font-semibold tabular-nums">{value}</div></div>)}</div>
       </Card>
 
@@ -360,18 +359,18 @@ function LoadedComparison({ comparison, award, canAward, onAward }: { comparison
       <LineMatrix comparison={comparison} />
 
       <Card className="overflow-hidden" data-testid="rfq-comparison-commercial-terms">
-        <div className="border-b p-4"><h2 className="text-sm font-semibold">{tr("商业条款", "Commercial terms")}</h2></div>
+        <div className="border-b p-4"><h2 className="fc-section-title" style={{ color: A.label }}>{tr("商业条款", "Commercial terms")}</h2></div>
         {comparison.responses.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前没有可展示的供应商商业条款。", "No supplier commercial terms are available.")}</div> : <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-xs"><thead className="bg-slate-50" style={{ color: A.sub }}><tr>{[tr("供应商", "Supplier"), tr("付款条款", "Payment terms"), tr("有效期", "Valid until"), tr("交付日期", "Delivery date"), tr("原币报价", "Original-currency quote"), tr("资格", "Eligibility")].map((label) => <th className="p-3 font-medium" key={label}>{label}</th>)}</tr></thead><tbody>{comparison.responses.map((response) => <tr className="border-t" key={response.supplierId}><td className="p-3 font-medium">{response.supplierName || response.supplierId}</td><td className="p-3">{response.latestRevision?.paymentTerms || "—"}</td><td className="p-3">{dateOnly(response.latestRevision?.validUntil)}</td><td className="p-3">{dateOnly(response.latestRevision?.deliveryDate)}</td><td className="p-3 tabular-nums">{exactAmount(response.latestRevision?.quotedAmount, response.latestRevision?.currency)}</td><td className="p-3">{localLabel(ELIGIBILITY_LABELS, response.comparisonEligibility, language, response.comparisonEligibility)}</td></tr>)}</tbody></table></div>}
       </Card>
 
       <Card className="p-4" data-testid="rfq-comparison-non-response">
-        <h2 className="text-sm font-semibold">{tr("已参与但尚无报价", "Participating without a quotation")}</h2>
+        <h2 className="fc-section-title" style={{ color: A.label }}>{tr("已参与但尚无报价", "Participating without a quotation")}</h2>
         <p className="mt-1 text-xs" style={{ color: A.sub }}>{tr("这些供应商已参与，但尚未录入报价。", "These suppliers are participating but have no quotation recorded yet.")}</p>
         <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{comparison.nonResponseParticipants.map((participant) => <div className="rounded-lg border p-3 text-xs" data-testid={`rfq-comparison-non-response-${participant.supplierId}`} key={participant.supplierId}><div className="font-medium">{participant.supplierName || tr("未提供名称", "Name not provided")}</div><div className="mt-1" style={{ color: A.sub }}>{participant.supplierId}</div><div className="mt-2">{localLabel(PARTICIPATION_STATUS_LABELS, participant.status || "", language, participant.statusRaw || tr("状态不可识别", "Unrecognized status"))}</div><div className="mt-1" style={{ color: A.sub }}>{tr("内部邀请时间", "Internal invitation")}: {date(participant.invitedAt)}</div><div className="mt-1" style={{ color: A.sub }}>{tr("响应状态：尚无报价记录", "Response status: no quotation recorded")}</div></div>)}{comparison.nonResponseParticipants.length === 0 && <div className="rounded-lg bg-slate-50 p-4 text-xs" style={{ color: A.sub }}>{tr("每个参与的供应商都已有报价记录。", "Every participating supplier has a quotation record.")}</div>}</div>
       </Card>
 
       <Card className="p-4" data-testid="rfq-comparison-limitations">
-        <div className="flex items-center gap-2"><ShieldCheck size={16} className="text-blue-600" /><h2 className="text-sm font-semibold">{tr("关于此比较", "About this comparison")}</h2></div>
+        <div className="flex items-center gap-2"><ShieldCheck size={16} className="text-blue-600" /><h2 className="fc-section-title" style={{ color: A.label }}>{tr("关于此比较", "About this comparison")}</h2></div>
         <ul className="mt-3 space-y-2 text-xs" style={{ color: A.sub }}><li>· {tr("每份报价以最新的报价修订为准。", "Each quotation is read from its latest quote revision.")}</li><li>· {tr("不符合比较条件的报价仍会显示，但不参与比较。", "Quotations that are not eligible stay visible but are not compared.")}</li><li>· {tr("参与记录是内部采购记录，不代表邮件已送达、供应商已登录或已在线提交。", "Participation is an internal purchasing record; it does not show that an email was delivered or that the supplier signed in or submitted online.")}</li><li>· {tr("本页不排名、不推荐，也不转为采购订单；授标须由有权限的用户明确确认。", "This page does not rank or recommend suppliers or create purchase orders; an authorized user must confirm an award.")}</li>{serverNotes.map((note) => <li key={note}>· {note}</li>)}</ul>
       </Card>
 

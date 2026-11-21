@@ -165,11 +165,13 @@ const LINE_STATUS: Record<string, { label: string; tone: StatusTone }> = {
 const MONEY_EPSILON = 0.005;
 const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
 
+// A header fact as the PO and request overviews show one (OverviewFields):
+// a grey label over a semibold value, no box.
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-lg bg-slate-50 p-3">
-      <dt className="text-xs" style={{ color: A.sub }}>{label}</dt>
-      <dd className="mt-1 text-sm font-medium">{children}</dd>
+    <div className="min-w-0">
+      <dt className="fc-caption font-medium" style={{ color: A.gray2 }}>{label}</dt>
+      <dd className="mt-1 break-words text-xs font-semibold" style={{ color: A.label }}>{children}</dd>
     </div>
   );
 }
@@ -210,7 +212,7 @@ function LineMatch({ match, invoiceTotal, currency, copy, locale }: {
 
   return (
     <section className="mt-5" data-testid="three-way-match-lines">
-      <div className="text-sm font-semibold">{copy("Match by line")}</div>
+      <h2 className="fc-section-title" style={{ color: A.label }}>{copy("Match by line")}</h2>
       <p className="mt-1 text-xs" style={{ color: A.sub }}>
         {copy("Each invoice line against its purchase order line: the invoiced quantity at the PO price, and the quantity received. Amounts exclude tax.")}
       </p>
@@ -447,7 +449,7 @@ export function ProcurementDocumentDetailPage({
                   <h1 className="fc-page-title" style={{ color: A.label }} title={record.id || documentId} data-testid="procurement-document-heading">{heading}</h1>
                   {statusChip(status === "—" ? undefined : status)}
                 </div>
-                <p className="mt-1 text-sm" style={{ color: A.sub }}>{record.supplierName || copy("No linked supplier")}</p>
+                <p className="mt-1 text-xs" style={{ color: A.sub }}>{record.supplierName || copy("No linked supplier")}</p>
                 <p className="mt-1 text-xs" style={{ color: A.sub }} data-testid="procurement-document-note">{readOnlyNote}</p>
               </div>
               <button type="button" onClick={() => void load()} className={listButtonClass.secondary}>
@@ -456,7 +458,7 @@ export function ProcurementDocumentDetailPage({
               </button>
             </div>
 
-            <dl className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 lg:grid-cols-4">
               <Fact label={copy("Supplier")}>
                 <BusinessEntityLink entityType="supplier" entityId={record.supplierId}>{record.supplierName || record.supplierId || "—"}</BusinessEntityLink>
               </Fact>

@@ -293,7 +293,7 @@ function Drilldown({ row, metric, onClose }: { row: SupplierScorecardRow; metric
     const orders = row.notSentPurchaseOrders || [];
     return (
       <div className="mt-3 rounded-lg border p-3" style={{ borderColor: A.border }} data-testid="supplier-performance-drilldown">
-        <div className="flex items-center justify-between"><h3 className="text-xs font-semibold">{heading}</h3><button type="button" onClick={onClose} className="text-xs" style={{ color: A.blue }}>{tr("close")}</button></div>
+        <div className="flex items-center justify-between"><h3 className="text-[13px] font-semibold leading-5" style={{ color: A.label }}>{heading}</h3><button type="button" onClick={onClose} className="text-xs" style={{ color: A.blue }}>{tr("close")}</button></div>
         <p className="mt-1 text-[11px]" style={{ color: A.sub }}>{tr("notSentNote")}</p>
         {orders.length ? (
           <div className="mt-2 overflow-x-auto"><table className="w-full min-w-[620px] text-xs"><thead><tr>{[tr("po"), tr("sku"), tr("original"), tr("current"), tr("ordered"), tr("amount")].map((header) => <th key={header} className="p-2 text-left" style={{ color: A.gray1 }}>{header}</th>)}</tr></thead>
@@ -314,7 +314,7 @@ function Drilldown({ row, metric, onClose }: { row: SupplierScorecardRow; metric
   if (metric === "priceVariances") {
     return (
       <div className="mt-3 rounded-lg border p-3" style={{ borderColor: A.border }} data-testid="supplier-performance-drilldown">
-        <div className="flex items-center justify-between"><h3 className="text-xs font-semibold">{heading}</h3><button type="button" onClick={onClose} className="text-xs" style={{ color: A.blue }}>{tr("close")}</button></div>
+        <div className="flex items-center justify-between"><h3 className="text-[13px] font-semibold leading-5" style={{ color: A.label }}>{heading}</h3><button type="button" onClick={onClose} className="text-xs" style={{ color: A.blue }}>{tr("close")}</button></div>
         {row.invoices.length ? (
           <div className="mt-2 overflow-x-auto"><table className="w-full min-w-[520px] text-xs"><thead><tr>{[tr("invoice"), tr("invoiceDate"), tr("po"), tr("variance")].map((header) => <th key={header} className="p-2 text-left" style={{ color: A.gray1 }}>{header}</th>)}</tr></thead>
             <tbody>{row.invoices.map((invoice) => (
@@ -335,7 +335,7 @@ function Drilldown({ row, metric, onClose }: { row: SupplierScorecardRow; metric
   const otifText = (value: boolean | null | undefined) => value === null || value === undefined ? "—" : value ? tr("yes") : tr("no");
   return (
     <div className="mt-3 rounded-lg border p-3" style={{ borderColor: A.border }} data-testid="supplier-performance-drilldown">
-      <div className="flex items-center justify-between"><h3 className="text-xs font-semibold">{heading}</h3><button type="button" onClick={onClose} className="text-xs" style={{ color: A.blue }}>{tr("close")}</button></div>
+      <div className="flex items-center justify-between"><h3 className="text-[13px] font-semibold leading-5" style={{ color: A.label }}>{heading}</h3><button type="button" onClick={onClose} className="text-xs" style={{ color: A.blue }}>{tr("close")}</button></div>
       {deliveries.length ? (
         <div className="mt-2 overflow-x-auto"><table className="w-full min-w-[860px] text-xs"><thead><tr>{[tr("po"), tr("sku"), tr("original"), tr("current"), tr("arrived"), tr("lateBy"), tr("result"), tr("received"), tr("rejected"), tr("fullOn"), tr("inFull"), tr("otifShort"), tr("amount")].map((header) => <th key={header} className="p-2 text-left" style={{ color: A.gray1 }}>{header}</th>)}</tr></thead>
           <tbody>{deliveries.map((delivery) => (
@@ -472,10 +472,10 @@ export function SupplierPerformancePanel({ supplierId }: { supplierId: string })
   const { data, error, loading, reload } = useSupplierScorecard({ supplierId, ...period });
   const row = data?.suppliers.find((item) => item.supplierId === supplierId);
   return (
-    <Card className="p-5" data-testid="supplier-performance-panel">
+    <Card className="p-4 sm:p-5" data-testid="supplier-performance-panel">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="flex items-center gap-1 text-sm font-semibold">{tr("title")}<Definition /></h2>
+          <h2 className="fc-section-title flex items-center gap-1" style={{ color: A.label }}>{tr("title")}<Definition /></h2>
           <p className="mt-1 text-xs" style={{ color: A.sub }}>{tr("subtitle")}{data?.rules.promiseBasis === "po_date" && <span data-testid="supplier-performance-basis"> {tr("basisNote")}</span>}</p>
           {data && <p className="mt-1 text-[11px]" style={{ color: A.gray1 }} data-testid="supplier-performance-scope">{data.period.from} — {data.period.to} · {tr("graceDays")}: {data.rules.graceDays}</p>}
         </div>

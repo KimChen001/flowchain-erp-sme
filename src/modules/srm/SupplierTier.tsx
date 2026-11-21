@@ -172,11 +172,11 @@ export function SupplierTierPanel({ supplier, canEdit, onChanged }: { supplier: 
   const fieldError = (field: string) => errors.find((error) => error.field === field)?.message;
   const generalErrors = errors.filter((error) => !error.field || error.field !== "businessOwnerId");
 
-  return <Card className="p-5" data-testid="supplier-tier-panel">
+  return <Card className="p-4 sm:p-5" data-testid="supplier-tier-panel">
     <div className="grid gap-5 md:grid-cols-2">
       <section className="min-w-0">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold">{t("Tier")}</h2>
+          <h2 className="fc-section-title" style={{ color: A.label }}>{t("Tier")}</h2>
           {canEdit && editing !== "tier" && <button type="button" data-testid="supplier-change-tier" onClick={() => setEditing("tier")} className={listButtonClass.secondary}>{t("Change tier")}</button>}
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-2"><TierChip tier={supplier.tier} /></div>
@@ -188,7 +188,7 @@ export function SupplierTierPanel({ supplier, canEdit, onChanged }: { supplier: 
       </section>
       <section className="min-w-0">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold">{t("Business owner")}</h2>
+          <h2 className="fc-section-title" style={{ color: A.label }}>{t("Business owner")}</h2>
           {canEdit && editing !== "owner" && <button type="button" data-testid="supplier-change-owner" onClick={openOwner} className={listButtonClass.secondary}>{t("Change owner")}</button>}
         </div>
         <p className="mt-2 text-sm" data-testid="supplier-owner">{supplier.businessOwner?.name || t("No owner")}</p>
@@ -213,7 +213,7 @@ export function SupplierTierPanel({ supplier, canEdit, onChanged }: { supplier: 
     </form>}
 
     {history.length > 0 && <section className="mt-5">
-      <h3 className="text-xs font-semibold">{t("Tier and owner history")}</h3>
+      <h3 className="text-[13px] font-semibold leading-5" style={{ color: A.label }}>{t("Tier and owner history")}</h3>
       <ol data-testid="supplier-tier-history" className="mt-2 space-y-2">
         {history.map((row, index) => <li key={index} className="border-l-2 pl-3 text-xs" style={{ borderColor: A.border }}>
           <div style={{ color: A.sub }}>{formatDateTime(row.at)} · {person(row.by)}</div>
