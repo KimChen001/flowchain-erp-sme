@@ -6,6 +6,7 @@ import { EntityLink } from "../../components/business/EntityLink";
 import { ListCard, ListSearchCard, ListStateRow, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { useI18n } from "../../i18n/I18n";
+import { unitLabel } from "../../i18n/unitLabels";
 import { statusCodeLabel } from "../../i18n/statusLabels";
 import { apiJson } from "../../lib/api-client";
 import { formatCalendarDay } from "../../lib/format";
@@ -133,7 +134,7 @@ export function ReceivablePurchaseOrderChooser() {
   const statusLabel = (status: string) => statusCodeLabel(status, language) || status;
   const open = (row: Receivable) => row.open === null
     ? tr("openLines", { count: formatNumber(row.openLines) })
-    : `${formatNumber(row.open)}${row.unit ? ` ${row.unit}` : ""}`;
+    : `${formatNumber(row.open)}${row.unit ? ` ${unitLabel(row.unit, language, row.open)}` : ""}`;
   const backToOrders = (
     <button type="button" onClick={() => navigate("/app/procurement/orders")} className={listButtonClass.secondary} data-testid="receiving-po-chooser-orders">
       <ArrowLeft size={13} />{tr("backToOrders")}
