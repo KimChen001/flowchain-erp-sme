@@ -254,9 +254,19 @@ const listOpenPurchaseRequests = defineAiTool({
     // An approved request set aside on Today (purchase_request_to_convert).
     const aside = await decisionsSetAside(context)
     const asideOfRequest = (row) => (row.status === 'approved' ? asideFor(aside, 'purchase_request', row.id) : null)
+    // The rejected and cancelled requests beside the open ones, with the
+    // reason given (2026-11-20: "were any rejected, and why?" got "none").
+    const closed = status === 'all' && !args.sku ? array(facts.purchaseRequests.closed) : []
     return {
       asOf: facts.asOf,
       ...(aside.size ? { setAsideCount: rows.filter(asideOfRequest).length } : {}),
+      ...(closed.length ? {
+        closed: {
+          rejected: closed.filter((row) => row.status === 'rejected').length,
+          cancelled: closed.filter((row) => row.status === 'cancelled').length,
+          latest: closed.slice(0, 5).map((row) => ({ request: row.number || row.id, status: row.status, reason: row.reason, decidedOn: row.decidedOn, skus: row.skus, ref: aiToolRef('purchase_request', row.id, row.number || row.id) })),
+        },
+      } : {}),
       ...aiToolList(rows.map((row) => {
         const lines = row.lines.map((line) => ({ sku: line.sku, quantity: line.quantity, unit: line.unit }))
         const [only] = lines.length === 1 ? lines : []

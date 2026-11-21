@@ -234,6 +234,11 @@ export function mapPurchaseRequest(record = {}) {
     linkedPo: text(record.linkedPoId),
     source: text(record.source),
     reason: text(record.reason || meta.reason),
+    // The last step taken on it and the reason given (rejecting or
+    // cancelling a submitted request needs one), with its day.
+    lastAction: text(meta.lastAction) || null,
+    lastReason: text(meta.lastReason) || null,
+    lastActionAt: isoDate(asArray(meta.timeline).at(-1)?.at) || null,
     createdAt: isoDate(record.createdAt),
     updatedAt: isoDate(record.updatedAt),
   }
