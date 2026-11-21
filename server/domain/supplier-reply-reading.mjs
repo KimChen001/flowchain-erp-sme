@@ -70,6 +70,30 @@ const HEADER_NEXT = /^\s*(?:Sent|Date|发送时间|时间)\s*[:：]/i
 // The signature delimiter is "-- " with its space (RFC 3676); a bare "--" is
 // the supplier's own text.
 const SIGNATURE = /^-- $/
+// Markers after which mail clients quote the earlier message line by line
+// with ">" ("On … wrote:", 在…写道): a supplier may answer inside it, between
+// the quoted lines (an inline reply).
+const QUOTING_MARKERS = [THREAD_START[0], THREAD_START[5]]
+const QUOTED = /^\s*>/
+
+// The supplier's own lines inside a ">"-quoted earlier message: every line
+// after the first quoted one that is not itself quoted, up to a signature or
+// an older message that is not quoted (an Outlook header, "Original
+// Message"). Our chase stays out: its lines are the quoted ones. Returns the
+// indexes in `region`.
+function inlineAnswers(region) {
+  const first = region.findIndex((line) => QUOTED.test(line))
+  if (first < 0) return []
+  const kept = []
+  for (let at = first; at < region.length; at += 1) {
+    const line = region[at]
+    if (QUOTED.test(line)) continue
+    if (SIGNATURE.test(line) || THREAD_START.some((pattern) => pattern.test(line))) break
+    if (HEADER_FROM.test(line) && region.slice(at + 1, at + 5).some((next) => HEADER_NEXT.test(next))) break
+    if (line.trim()) kept.push(at)
+  }
+  return kept
+}
 
 // The reply as the reading sees it: invisible characters stripped, the quoted
 // earlier message and a trailing signature dropped (kept apart for display,
@@ -87,13 +111,23 @@ export function cleanSupplierReply(value) {
   const visible = unhidden.replace(/<!--[\s\S]*?(?:-->|$)/g, (comment) => { comments.push(comment); return '' }).replace(/[ 　]/g, ' ')
   const lines = visible.split('\n')
   let cut = lines.length
+  // Where the marker ends, when it is one after which the earlier message is
+  // quoted with ">" (an inline reply may follow); null otherwise.
+  let quotingFrom = null
   for (let at = 0; at < lines.length && cut === lines.length; at += 1) {
     const line = lines[at]
-    if (THREAD_START.some((pattern) => pattern.test(line))) cut = at
+    if (THREAD_START.some((pattern) => pattern.test(line))) {
+      cut = at
+      if (QUOTING_MARKERS.some((pattern) => pattern.test(line))) quotingFrom = at + 1
     // "On Mon, 17 Nov 2026 at 10:00, Kim <kim@x.com>" wrapped before "wrote:".
-    else if (/^\s*On\b/i.test(line) && /^\s*wrote:\s*$/i.test(lines[at + 1] || '')) cut = at
-    else if (HEADER_FROM.test(line) && lines.slice(at + 1, at + 5).some((next) => HEADER_NEXT.test(next))) cut = at
+    } else if (/^\s*On\b/i.test(line) && /^\s*wrote:\s*$/i.test(lines[at + 1] || '')) {
+      cut = at
+      quotingFrom = at + 2
+    } else if (HEADER_FROM.test(line) && lines.slice(at + 1, at + 5).some((next) => HEADER_NEXT.test(next))) cut = at
   }
+  // The supplier's answers written inside our quoted chase are read; the
+  // quoted lines, with our dates, are not.
+  const inline = new Set(quotingFrom === null ? [] : inlineAnswers(lines.slice(quotingFrom)).map((at) => at + quotingFrom))
   const kept = []
   const dropped = []
   let signature = false
@@ -103,10 +137,14 @@ export function cleanSupplierReply(value) {
     if (/^\s*>/.test(line)) { dropped.push(line); continue }
     kept.push(line)
   }
+  // Inline answers follow what the supplier wrote above the quote, each on its own line.
+  if (inline.size) kept.push('', ...[...inline].sort((a, b) => a - b).map((at) => lines[at]))
   const tidy = kept.map((line) => line.replace(/[ \t]+/g, ' ').trim()).join('\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, SUPPLIER_REPLY_LIMITS.text)
-  // In reading order: a signature or quoted lines, then the earlier message.
-  const hidden = [...dropped, ...lines.slice(cut), ...comments].join('\n').trim()
-  return { text: tidy, quoted: hidden || null, quotedTextHidden: Boolean(hidden), invisibleRemoved }
+  // In reading order: a signature or quoted lines, then the earlier message
+  // without the inline answers (they are read, above).
+  const earlier = lines.slice(cut).filter((_line, at) => !inline.has(at + cut))
+  const hidden = [...dropped, ...earlier, ...comments].join('\n').trim()
+  return { text: tidy, quoted: hidden || null, quotedTextHidden: Boolean(hidden), invisibleRemoved, inlineAnswers: inline.size }
 }
 
 // Whether the reply holds text addressed to the system rather than to the
