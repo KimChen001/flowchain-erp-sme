@@ -1014,3 +1014,14 @@ test('the reorder list and suggest_purchase_lines order up to the same level', a
     assert.equal(suggested.lotSize, own ? 25 : null)
   }
 })
+
+// 2026-11-20 question set: "What should I reorder this week?" was answered
+// "due by 27 Nov" (today + 7), a date the list did not give. It gives the
+// last day of each window its counts use.
+test('reorder_list gives the last day of the 7- and 30-day windows it counts', async () => {
+  const scenario = aiSkillScenario()
+  const context = await loadAiSkillContext({ ...scenario.ctx, aiReadServices: { reorderList: { read: async () => ({ rows: [] }) } } })
+  const facts = await readAiSkillFacts(context)
+  const result = (await runAiReadTool('reorder_list', {}, { facts, context })).result
+  assert.deepEqual(result.dueWindowEnds, { within7Days: addCalendarDays(facts.today, 7), within30Days: addCalendarDays(facts.today, 30) })
+})
