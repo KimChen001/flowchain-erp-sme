@@ -405,13 +405,33 @@ function dayKeys(value, dayFirst = false) {
   return keys
 }
 
+// The months a text writes, as [month, year or null]: October 2026, Oct,
+// 2026-10, 2026 年 10 月, 10月 (not 3 个月, a count). "may" in lower case is
+// the verb, not the month.
+const MONTH_FORMS = [
+  [new RegExp(`\\b${MONTH}\\b\\.?(?:,?\\s+(\\d{4})(?!\\d))?`, 'gi'), (m) => (m[1] === 'may' ? [0, null] : [MONTHS[m[1].slice(0, 3).toLowerCase()], m[2] ? +m[2] : null])],
+  [/(?<!\d)(\d{4})-(\d{1,2})(?![\d-])/g, (m) => [+m[2], +m[1]]],
+  [/(?<![\d.])(?:(\d{4})\s*年\s*)?(\d{1,2})\s*月(?!\s*\d)/g, (m) => [+m[2], m[1] ? +m[1] : null]],
+]
+function monthKeys(value) {
+  const source = text(value).normalize('NFKC')
+  return MONTH_FORMS.flatMap(([pattern, read]) => [...source.matchAll(pattern)].map((match) => read(match)).filter(([month]) => month >= 1 && month <= 12))
+}
+
 // Whether a date the check flagged is one the user typed in this conversation.
 // locale: the workspace's, for the order of a slash date (18/11 in en-GB).
+// A month on its own ("no margin figure for October 2026", when the user
+// asked about October 2026) is typed when the user wrote that month, and
+// the same year where both give one (2026-11-20 question set).
 export function aiV2UserTypedDate(value, userText, { locale = null } = {}) {
   const dayFirst = aiSlashDayFirst(locale)
-  const typed = dayKeys(userText, dayFirst)
-  if (!typed.size) return false
-  return [...dayKeys(value, dayFirst)].some((key) => typed.has(key))
+  const days = dayKeys(value, dayFirst)
+  if (days.size) {
+    const typed = dayKeys(userText, dayFirst)
+    return [...days].some((key) => typed.has(key))
+  }
+  const typed = monthKeys(userText)
+  return monthKeys(value).some(([month, year]) => typed.some(([typedMonth, typedYear]) => typedMonth === month && (!year || !typedYear || year === typedYear)))
 }
 
 // The words of a status, a signal type or a priority the results give as a

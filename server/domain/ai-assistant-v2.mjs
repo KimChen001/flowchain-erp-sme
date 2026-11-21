@@ -660,7 +660,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     // order plan, Today's decisions) read the same business context, once
     // (design audit 2026-11-15, L5-15).
     if (facts.businessContext && context.routeContext && !context.routeContext.aiSkillBusinessContext) context.routeContext.aiSkillBusinessContext = facts.businessContext
-    const hidden = assistantV2Hidden(facts)
+    const hidden = assistantV2Hidden(facts, context)
     const partial = assistantV2Partial(facts)
     const restartTurns = earlier.length ? [] : assistantV2EarlierTurns(body.conversationContext)
     // The server kept no thread but the panel holds a conversation (a
