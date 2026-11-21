@@ -211,6 +211,10 @@ const attentionList = defineAiTool({
       // The window of po_due_7d, for "7 orders fall due within 7 days".
       dueSoonDays: DUE_SOON_DAYS,
       ...(lateBySku.length ? { lateLinesBySku: lateBySku } : {}),
+      // Items the reorder list could not judge (a reader of some warehouses):
+      // not checked for stock here, as on Today, and said so rather than
+      // left out without a word (#409 review).
+      ...(array(facts.reorder?.notJudged).length ? { stockNotChecked: { items: array(facts.reorder.notJudged).length, reason: 'reader_sees_some_warehouses' } } : {}),
     }
   },
 })

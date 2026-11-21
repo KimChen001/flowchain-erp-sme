@@ -98,3 +98,19 @@ test('stock under its safety level is covered only by the list\'s own row', () =
   const signals = buildAiSkillSignals({ asOf: '2026-09-29', inventory: { rows: below }, reorder: { rows: [], notJudged: [{ sku: 'G' }] } })
   assert.deepEqual([coveredOf(signals, 'F'), coveredOf(signals, 'G')], [false, false])
 })
+
+// #409 review: items the list could not judge are said to be not checked,
+// as Today says it, never dropped without a word.
+test('attention_list says how many items were not checked for stock', async () => {
+  const scenario = aiSkillScenario()
+  const plain = await readAiSkillFacts(await loadAiSkillContext(scenario.ctx))
+  const [first, second] = plain.inventory.rows
+  const run = async (notJudged) => {
+    const reorderList = { read: async () => ({ rows: [], notJudged }) }
+    const context = await loadAiSkillContext({ ...scenario.ctx, aiReadServices: { reorderList } })
+    const facts = await readAiSkillFacts(context)
+    return (await runAiReadTool('attention_list', { kind: 'today' }, { facts, context })).result
+  }
+  assert.deepEqual((await run([{ sku: first.sku }, { sku: second.sku }])).stockNotChecked, { items: 2, reason: 'reader_sees_some_warehouses' })
+  assert.equal((await run([])).stockNotChecked, undefined)
+})
