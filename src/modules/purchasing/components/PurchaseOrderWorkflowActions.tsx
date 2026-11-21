@@ -7,12 +7,11 @@ import { useI18n } from "../../../i18n/I18n";
 import { usePermissionSet } from "../../../lib/usePermissionSet";
 import { listButtonClass } from "../../../components/ui/listLayout";
 import { useConfirm } from "../../../components/ui/ConfirmDialog";
-import { typography } from "../../../components/ui/typography";
 import { procurementErrorCode, procurementErrorText } from "../../procurement/procurementErrors";
 
-// A secondary header button: the list button height, with a border so it
-// shows on the page background beside the supplier invoice entry button.
-export const poSecondaryButtonClass = `inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 ${typography.denseButton} text-slate-700 hover:bg-slate-50 disabled:opacity-50`;
+// A secondary header button: the one secondary look of every detail page
+// (purchase request, supplier, item), 36 px tall on a phone.
+export const poSecondaryButtonClass = `${listButtonClass.secondary} disabled:opacity-50`;
 
 type WorkflowAction = "submit" | "approve" | "reject" | "issue" | "cancel" | "close";
 // Rejecting or cancelling looks the same as on a purchase request (design audit U-17).
