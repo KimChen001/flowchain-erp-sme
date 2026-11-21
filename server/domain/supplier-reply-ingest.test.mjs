@@ -7,7 +7,7 @@ import {
   createIngestRateLimiter, formatIntegrationToken, hashIntegrationSecret, integrationSecretMatches, newIntegrationToken, parseIntegrationToken,
 } from './integration-tokens.mjs'
 import { handleSupplierReplyIngestRoute } from '../routes/supplier-reply-ingest.routes.mjs'
-import { createSupplierReplyIngestService, orderNumbersIn, supplierReplyIngestEnabled, supplierReplyIngestPerHour } from '../services/supplier-reply-ingest.mjs'
+import { createSupplierReplyIngestService, orderNumbersIn, supplierReplyIngestEnabled, supplierReplyIngestPerDay } from '../services/supplier-reply-ingest.mjs'
 import { supplierReplyPasteRequestSchema } from '../../shared/supplier-reply-contract.mjs'
 
 // Supplier replies without pasting (docs/supplier-reply-ingest-api.md): a
@@ -116,7 +116,7 @@ test('a token reads fcsr.<workspace>.<id>.<secret>; only the hash and a four-cha
   }
 })
 
-test('the rate limit counts each workspace on its own and frees up after the hour', () => {
+test('the rate limit counts each workspace on its own and frees up as the window passes', () => {
   let clock = 0
   const limiter = createIngestRateLimiter({ limit: 2, windowMs: 1000, now: () => clock })
   assert.ok(limiter.take('a').ok)
@@ -126,9 +126,9 @@ test('the rate limit counts each workspace on its own and frees up after the hou
   assert.ok(limiter.take('b').ok)
   clock = 1000
   assert.ok(limiter.take('a').ok)
-  assert.equal(supplierReplyIngestPerHour({}), 60)
-  assert.equal(supplierReplyIngestPerHour({ FLOWCHAIN_SUPPLIER_REPLY_INGEST_PER_HOUR: '12' }), 12)
-  assert.equal(supplierReplyIngestPerHour({ FLOWCHAIN_SUPPLIER_REPLY_INGEST_PER_HOUR: '0' }), 60)
+  assert.equal(supplierReplyIngestPerDay({}), 50)
+  assert.equal(supplierReplyIngestPerDay({ FLOWCHAIN_SUPPLIER_REPLY_INGEST_PER_DAY: '12' }), 12)
+  assert.equal(supplierReplyIngestPerDay({ FLOWCHAIN_SUPPLIER_REPLY_INGEST_PER_DAY: '0' }), 50)
 })
 
 test('order numbers are found in the subject and text, first mention first, once each', () => {
@@ -267,7 +267,7 @@ test('public-data workspaces and workspaces without AI reading switched on are r
   await assert.rejects(() => on.service.ingest({ authorization: onToken, body: { text: 'PO-202611-0012 ships Friday.' } }), { code: 'SUPPLIER_REPLY_INGEST_AI_OFF' })
 })
 
-test('each workspace may send so many replies an hour', async () => {
+test('each workspace may send so many replies a day', async () => {
   const { paste, service, advance } = setup({ limit: 2 })
   const token = await tokenFor(service)
   const body = { text: 'PO-202611-0012 ships Friday.' }
@@ -275,7 +275,7 @@ test('each workspace may send so many replies an hour', async () => {
   await service.ingest({ authorization: token, body })
   await assert.rejects(() => service.ingest({ authorization: token, body }), (error) => error.code === 'SUPPLIER_REPLY_INGEST_RATE_LIMITED' && error.status === 429 && Number(error.details[0].code) > 0)
   assert.equal(paste.calls.length, 2)
-  advance(60 * 60 * 1000)
+  advance(24 * 60 * 60 * 1000)
   assert.equal((await service.ingest({ authorization: token, body })).status, 201)
 })
 

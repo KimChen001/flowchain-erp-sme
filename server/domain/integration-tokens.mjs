@@ -87,10 +87,12 @@ export function publicIntegrationToken(record, owners = new Map(), uses = new Ma
   }
 }
 
-// A fixed-window count per workspace, in this server process: at most
-// `limit` ingested replies in any `windowMs`. A multi-process deployment
-// would keep the count in the database instead.
-export function createIngestRateLimiter({ limit = 60, windowMs = 60 * 60 * 1000, now = () => Date.now() } = {}) {
+// A sliding-window count per workspace, in this server process: at most
+// `limit` ingested replies in any `windowMs` (a day by default, as inbound
+// mail in docs/supplier-reply-dates-design.md §4.11). A multi-process
+// deployment would keep the count in the database instead.
+export const INGEST_WINDOW_MS = 24 * 60 * 60 * 1000
+export function createIngestRateLimiter({ limit = 50, windowMs = INGEST_WINDOW_MS, now = () => Date.now() } = {}) {
   const seen = new Map()
   return {
     take(tenantId) {

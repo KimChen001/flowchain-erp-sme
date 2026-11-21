@@ -21,7 +21,7 @@ the reply then takes the paste path unchanged:
 | --- | --- |
 | `FLOWCHAIN_SUPPLIER_REPLY_INGEST=on` | The routes exist. Without it all four answer 404. |
 | `FLOWCHAIN_SUPPLIER_REPLY_INGEST_PUBLIC_DATA=on` | Public-data workspaces may use it too. Without it they are refused. |
-| `FLOWCHAIN_SUPPLIER_REPLY_INGEST_PER_HOUR` | Replies each workspace may send an hour (default 60, at most 1000). |
+| `FLOWCHAIN_SUPPLIER_REPLY_INGEST_PER_DAY` | Replies each workspace may send a day (default 50, as inbound mail in the reply design §4.11; at most 1000). |
 
 A workspace also needs:
 
@@ -103,7 +103,7 @@ The answer carries ids and codes only:
 | 409 | `SUPPLIER_REPLY_ORDER_NOT_OPEN` | The order no longer takes dates. |
 | 422 | `SUPPLIER_REPLY_INGEST_NO_ORDER` / `…_ORDER_NOT_FOUND` / `…_SEVERAL_ORDERS` | No order, an unknown one, or more than one open one. |
 | 422 | `SUPPLIER_REPLY_INGEST_INVALID` | The body does not match the fields above. |
-| 429 | `SUPPLIER_REPLY_INGEST_RATE_LIMITED` | Over the hourly limit; `Retry-After` says when to try again. |
+| 429 | `SUPPLIER_REPLY_INGEST_RATE_LIMITED` | Over the daily limit; `Retry-After` says when to try again. |
 
 ## Not done in this draft
 
@@ -115,7 +115,12 @@ The answer carries ids and codes only:
 - **The rate limit counts per server process.** Several processes would need
   the count in the database.
 - **The sender is stored but not checked** against the supplier's email
-  address. The token is the trust boundary.
+  address. The token is the trust boundary. Inbound mail (reply design
+  §4.11) shows "sender not on record" on the card; this would too.
+- **Tokens do not expire**, and refused calls are not audited. The local MCP
+  prototype (#391) expires its token after 30 days, ends it when the user
+  signs out or changes role, and audits every call, refusals included. If
+  both go ahead, they should share one token module and these rules.
 - **One order per reply.** An email about several orders is refused and must
   be sent once per order.
 - **Attachments are not read.** Only the plain-text body is used.

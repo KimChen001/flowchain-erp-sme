@@ -1,6 +1,6 @@
 import { createIngestRateLimiter } from '../domain/integration-tokens.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
-import { createSupplierReplyIngestService, supplierReplyIngestEnabled, supplierReplyIngestPerHour } from '../services/supplier-reply-ingest.mjs'
+import { createSupplierReplyIngestService, supplierReplyIngestEnabled, supplierReplyIngestPerDay } from '../services/supplier-reply-ingest.mjs'
 import { createSupplierReplyService } from '../services/supplier-reply-service.mjs'
 
 // Supplier replies without pasting (docs/supplier-reply-ingest-api.md):
@@ -16,11 +16,11 @@ const INGEST_PATH = '/api/integrations/supplier-replies'
 const TOKENS_PATH = '/api/settings/integrations/supplier-reply-tokens'
 const REVOKE_PATH = /^\/api\/settings\/integrations\/supplier-reply-tokens\/([^/]+)\/revoke$/
 
-// One count per server process, so the hourly limit holds across requests.
+// One count per server process, so the daily limit holds across requests.
 let limiter = null
 let limiterSize = null
 function sharedLimiter(env) {
-  const size = supplierReplyIngestPerHour(env)
+  const size = supplierReplyIngestPerDay(env)
   if (!limiter || limiterSize !== size) {
     limiter = createIngestRateLimiter({ limit: size })
     limiterSize = size

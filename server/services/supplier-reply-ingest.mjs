@@ -12,8 +12,8 @@
 //   pasting does (ai-workspace-access.mjs);
 // - not a public-data workspace, unless
 //   FLOWCHAIN_SUPPLIER_REPLY_INGEST_PUBLIC_DATA=on.
-// Each workspace may send FLOWCHAIN_SUPPLIER_REPLY_INGEST_PER_HOUR replies an
-// hour (60 by default).
+// Each workspace may send FLOWCHAIN_SUPPLIER_REPLY_INGEST_PER_DAY replies a
+// day (50 by default, the inbound mail limit of the reply design, §4.11).
 import { z } from 'zod'
 import { assertAuthorized, can } from '../auth/authorization-service.mjs'
 import { aiOptInRequired } from '../domain/ai-workspace-access.mjs'
@@ -46,9 +46,9 @@ const refuseToken = () => fail('INTEGRATION_TOKEN_INVALID', 'The integration tok
 
 export const supplierReplyIngestEnabled = (env = {}) => text(env.FLOWCHAIN_SUPPLIER_REPLY_INGEST).toLowerCase() === 'on'
 const publicDataAllowed = (env = {}) => text(env.FLOWCHAIN_SUPPLIER_REPLY_INGEST_PUBLIC_DATA).toLowerCase() === 'on'
-export function supplierReplyIngestPerHour(env = {}) {
-  const value = Number(env.FLOWCHAIN_SUPPLIER_REPLY_INGEST_PER_HOUR)
-  return Number.isInteger(value) && value > 0 && value <= 1000 ? value : 60
+export function supplierReplyIngestPerDay(env = {}) {
+  const value = Number(env.FLOWCHAIN_SUPPLIER_REPLY_INGEST_PER_DAY)
+  return Number.isInteger(value) && value > 0 && value <= 1000 ? value : 50
 }
 
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -96,7 +96,7 @@ const ownerIdentity = (tenantId, user) => ({ authenticated: true, source: 'integ
 
 export function createSupplierReplyIngestService({ prisma, replies, env = process.env, now = () => new Date(), limiter, resolveActor = resolveProvisionedActor } = {}) {
   if (!prisma) throw new Error('The supplier reply ingestion service needs prisma.')
-  const rate = limiter || createIngestRateLimiter({ limit: supplierReplyIngestPerHour(env), now: () => now().getTime() })
+  const rate = limiter || createIngestRateLimiter({ limit: supplierReplyIngestPerDay(env), now: () => now().getTime() })
 
   // Why a workspace may not take replies this way, or null when it may.
   async function workspaceRefusal(tenantId) {
@@ -130,7 +130,7 @@ export function createSupplierReplyIngestService({ prisma, replies, env = proces
     const refusal = await workspaceRefusal(tenantId)
     if (refusal) fail(refusal.code, refusal.message || 'The integration token is missing, unknown or revoked.', refusal.status)
     const taken = rate.take(tenantId)
-    if (!taken.ok) fail('SUPPLIER_REPLY_INGEST_RATE_LIMITED', 'Too many replies from this workspace in the last hour. Try again later.', 429, [{ field: 'retryAfterSeconds', code: String(taken.retryAfterSeconds) }])
+    if (!taken.ok) fail('SUPPLIER_REPLY_INGEST_RATE_LIMITED', 'Too many replies from this workspace in the last day. Try again later.', 429, [{ field: 'retryAfterSeconds', code: String(taken.retryAfterSeconds) }])
     // Best effort: when the token was last used (its own record, see
     // integration-tokens.mjs).
     const usedAt = now().toISOString()
