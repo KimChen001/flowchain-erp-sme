@@ -8,7 +8,7 @@ import { usePermissionSet } from "../../lib/usePermissionSet";
 import { useRouteAvailability } from "../../app/routeAvailability";
 import { A, useConfirm } from "../../components/ui";
 import { OverviewFieldGrid } from "../../components/document/DocumentShell";
-import { StatusChip, listButtonClass, listHeadRowStyle, statusToneOf } from "../../components/ui/listLayout";
+import { StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, statusToneOf } from "../../components/ui/listLayout";
 import { listTableCardsRef, tableMinSmClass, tableScrollClass, tdClass, tdIdClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
@@ -498,7 +498,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
       <div className="border-b px-4 py-3"><h2 className="fc-section-title" style={sectionTitleStyle}>{say("Receiving lines", "收货明细")}</h2></div>
       <div className={tableScrollClass} ref={listTableCardsRef} data-testid="receiving-lines"><table className={tableMinSmClass}>
         <thead><tr style={listHeadRowStyle}>{lineColumns.map(([label, numeric]) => <th key={label} className={numeric ? thRightClass : thClass} style={{ color: A.gray1 }} data-card-title={label === itemColumn ? "" : undefined}>{label}</th>)}</tr></thead>
-        <tbody>{detail.lines.map((line) => <tr key={line.id} className="border-t">
+        <tbody>{detail.lines.map((line, index) => <tr key={line.id} className={listRowClass} style={listRowStyle(index, detail.lines.length)}>
           <td className={tdIdClass}>{line.sku}</td>
           <td className={tdNowrapClass}><div className="max-w-[320px] truncate max-sm:max-w-none max-sm:whitespace-normal max-sm:font-semibold" title={line.itemName}>{line.itemName}</div></td>
           <td className={tdNumericRightClass}>{qty(line.orderedQuantity)}</td>
@@ -526,9 +526,9 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
         <span data-testid="receiving-reconciliation-summary">{matchedSummary}</span>
         <button type="button" data-testid="receiving-reconciliation-toggle" aria-expanded={showReconciliation} aria-controls={showReconciliation ? "receiving-reconciliation-table" : undefined} onClick={() => setShowReconciliation((open) => !open)} className="text-sm font-medium text-blue-600 hover:underline">{showReconciliation ? say("Hide details", "收起明细") : say("Show details", "显示明细")}</button>
       </div>}
-      {showReconciliationTable ? <div id="receiving-reconciliation-table" className={tableScrollClass}><table className={tableMinSmClass}>
+      {showReconciliationTable ? <div id="receiving-reconciliation-table" className={tableScrollClass} ref={listTableCardsRef}><table className={tableMinSmClass}>
         <thead><tr style={listHeadRowStyle}>{reconciliationColumns.map(([label, numeric]) => <th key={label} className={numeric ? thRightClass : thClass} style={{ color: A.gray1 }}>{label}</th>)}</tr></thead>
-        <tbody>{reconciliationEntries.map((entry) => <tr key={`${entry.sku}-${entry.warehouseId || ''}-${entry.locationKey}`} className="border-t">
+        <tbody>{reconciliationEntries.map((entry, index) => <tr key={`${entry.sku}-${entry.warehouseId || ''}-${entry.locationKey}`} className={listRowClass} style={listRowStyle(index, reconciliationEntries.length)}>
           <td className={tdIdClass}>{entry.sku}</td>
           <td className={tdClass}>{warehouseName(entry.warehouseId) || say("No warehouse", "未指定仓库")}</td>
           <td className={tdNowrapClass}>{recordedLocation(entry.sku, entry.locationKey)}</td>

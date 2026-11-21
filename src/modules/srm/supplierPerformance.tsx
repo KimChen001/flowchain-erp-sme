@@ -2,8 +2,9 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { Info, RefreshCw } from "lucide-react";
 import { useSearchParams } from "react-router";
 import { A, Card } from "../../components/ui";
-import { listTableCardsRef } from "../../components/ui/workbenchTable";
-import { listButtonClass } from "../../components/ui/listLayout";
+import { listTableCardsRef, tableBodyTextClass } from "../../components/ui/workbenchTable";
+import { typography } from "../../components/ui/typography";
+import { listButtonClass, listHeadRowStyle } from "../../components/ui/listLayout";
 import { EntityLink } from "../../components/business/EntityLink";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
@@ -296,15 +297,15 @@ function Drilldown({ row, metric, onClose }: { row: SupplierScorecardRow; metric
         <div className="flex items-center justify-between"><h3 className="text-[13px] font-semibold leading-5" style={{ color: A.label }}>{heading}</h3><button type="button" onClick={onClose} className="text-xs" style={{ color: A.blue }}>{tr("close")}</button></div>
         <p className="mt-1 text-[11px]" style={{ color: A.sub }}>{tr("notSentNote")}</p>
         {orders.length ? (
-          <div className="mt-2 overflow-x-auto"><table className="w-full min-w-[620px] text-xs"><thead><tr>{[tr("po"), tr("sku"), tr("original"), tr("current"), tr("ordered"), tr("amount")].map((header) => <th key={header} className="p-2 text-left" style={{ color: A.gray1 }}>{header}</th>)}</tr></thead>
+          <div className="mt-2 overflow-x-auto"><table className={`w-full min-w-[620px] ${tableBodyTextClass}`}><thead><tr style={{ ...listHeadRowStyle, color: A.gray1 }}>{[tr("po"), tr("sku"), tr("original"), tr("current"), tr("ordered"), tr("amount")].map((header) => <th key={header} className={`px-3 py-2 text-left ${typography.tableHeader}`} style={{ color: A.gray1 }}>{header}</th>)}</tr></thead>
             <tbody>{orders.map((order) => order.lines.map((line, index) => (
-              <tr key={line.purchaseOrderLineId} className="border-t" data-testid={`supplier-performance-not-sent-${line.purchaseOrderLineId}`}>
-                <td className="p-2">{index === 0 ? <EntityLink kind="purchase_order" id={order.purchaseOrderId} number={order.orderNumber} /> : null}</td>
-                <td className="p-2">{line.sku}{line.itemName ? ` · ${line.itemName}` : ""}</td>
-                <td className="p-2">{format.day(line.originalPromisedDate)}</td>
-                <td className="p-2">{format.day(line.currentPromisedDate)}</td>
-                <td className="p-2 tabular-nums">{format.number(line.orderedQuantity)} {line.unit}</td>
-                <td className="p-2 tabular-nums">{format.money(line.amount, line.currency)}</td>
+              <tr key={line.purchaseOrderLineId} style={{ borderTop: "0.5px solid rgba(0,0,0,0.04)" }} data-testid={`supplier-performance-not-sent-${line.purchaseOrderLineId}`}>
+                <td className="px-3 py-2">{index === 0 ? <EntityLink kind="purchase_order" id={order.purchaseOrderId} number={order.orderNumber} /> : null}</td>
+                <td className="px-3 py-2">{line.sku}{line.itemName ? ` · ${line.itemName}` : ""}</td>
+                <td className="px-3 py-2">{format.day(line.originalPromisedDate)}</td>
+                <td className="px-3 py-2">{format.day(line.currentPromisedDate)}</td>
+                <td className="px-3 py-2 tabular-nums">{format.number(line.orderedQuantity)} {line.unit}</td>
+                <td className="px-3 py-2 tabular-nums">{format.money(line.amount, line.currency)}</td>
               </tr>
             )))}</tbody></table></div>
         ) : <p className="mt-2 text-xs" style={{ color: A.sub }}>{tr("noDrilldown")}</p>}
@@ -316,13 +317,13 @@ function Drilldown({ row, metric, onClose }: { row: SupplierScorecardRow; metric
       <div className="mt-3 rounded-lg border p-3" style={{ borderColor: A.border }} data-testid="supplier-performance-drilldown">
         <div className="flex items-center justify-between"><h3 className="text-[13px] font-semibold leading-5" style={{ color: A.label }}>{heading}</h3><button type="button" onClick={onClose} className="text-xs" style={{ color: A.blue }}>{tr("close")}</button></div>
         {row.invoices.length ? (
-          <div className="mt-2 overflow-x-auto"><table className="w-full min-w-[520px] text-xs"><thead><tr>{[tr("invoice"), tr("invoiceDate"), tr("po"), tr("variance")].map((header) => <th key={header} className="p-2 text-left" style={{ color: A.gray1 }}>{header}</th>)}</tr></thead>
+          <div className="mt-2 overflow-x-auto"><table className={`w-full min-w-[520px] ${tableBodyTextClass}`}><thead><tr style={{ ...listHeadRowStyle, color: A.gray1 }}>{[tr("invoice"), tr("invoiceDate"), tr("po"), tr("variance")].map((header) => <th key={header} className={`px-3 py-2 text-left ${typography.tableHeader}`} style={{ color: A.gray1 }}>{header}</th>)}</tr></thead>
             <tbody>{row.invoices.map((invoice) => (
-              <tr key={invoice.supplierInvoiceId} className="border-t">
-                <td className="p-2"><EntityLink kind="supplier_invoice" id={invoice.supplierInvoiceId}>{invoice.invoiceNumber}</EntityLink></td>
-                <td className="p-2">{format.day(invoice.invoiceDate)}</td>
-                <td className="p-2">{invoice.purchaseOrderId ? <EntityLink kind="purchase_order" id={invoice.purchaseOrderId} /> : "—"}</td>
-                <td className="p-2 tabular-nums">{format.money(invoice.varianceAmount, invoice.currency)}</td>
+              <tr key={invoice.supplierInvoiceId} style={{ borderTop: "0.5px solid rgba(0,0,0,0.04)" }}>
+                <td className="px-3 py-2"><EntityLink kind="supplier_invoice" id={invoice.supplierInvoiceId}>{invoice.invoiceNumber}</EntityLink></td>
+                <td className="px-3 py-2">{format.day(invoice.invoiceDate)}</td>
+                <td className="px-3 py-2">{invoice.purchaseOrderId ? <EntityLink kind="purchase_order" id={invoice.purchaseOrderId} /> : "—"}</td>
+                <td className="px-3 py-2 tabular-nums">{format.money(invoice.varianceAmount, invoice.currency)}</td>
               </tr>
             ))}</tbody></table></div>
         ) : <p className="mt-2 text-xs" style={{ color: A.sub }}>{tr("noDrilldown")}</p>}
@@ -337,39 +338,39 @@ function Drilldown({ row, metric, onClose }: { row: SupplierScorecardRow; metric
     <div className="mt-3 rounded-lg border p-3" style={{ borderColor: A.border }} data-testid="supplier-performance-drilldown">
       <div className="flex items-center justify-between"><h3 className="text-[13px] font-semibold leading-5" style={{ color: A.label }}>{heading}</h3><button type="button" onClick={onClose} className="text-xs" style={{ color: A.blue }}>{tr("close")}</button></div>
       {deliveries.length ? (
-        <div className="mt-2 overflow-x-auto"><table className="w-full min-w-[860px] text-xs"><thead><tr>{[tr("po"), tr("sku"), tr("original"), tr("current"), tr("arrived"), tr("lateBy"), tr("result"), tr("received"), tr("rejected"), tr("fullOn"), tr("inFull"), tr("otifShort"), tr("amount")].map((header) => <th key={header} className="p-2 text-left" style={{ color: A.gray1 }}>{header}</th>)}</tr></thead>
+        <div className="mt-2 overflow-x-auto"><table className={`w-full min-w-[860px] ${tableBodyTextClass}`}><thead><tr style={{ ...listHeadRowStyle, color: A.gray1 }}>{[tr("po"), tr("sku"), tr("original"), tr("current"), tr("arrived"), tr("lateBy"), tr("result"), tr("received"), tr("rejected"), tr("fullOn"), tr("inFull"), tr("otifShort"), tr("amount")].map((header) => <th key={header} className={`px-3 py-2 text-left ${typography.tableHeader}`} style={{ color: A.gray1 }}>{header}</th>)}</tr></thead>
           <tbody>{deliveries.map((delivery) => (
             <Fragment key={delivery.obligationId}>
-              <tr className="border-t font-medium" style={{ background: A.gray6 }} data-testid={`supplier-performance-delivery-${delivery.obligationId}`}>
-                <td className="p-2"><EntityLink kind="purchase_order" id={delivery.purchaseOrderId} /></td>
-                <td className="p-2">{tr("delivery")} · {tr("deliveryLines", { n: delivery.lines.length })}</td>
-                <td className="p-2">{format.day(delivery.originalPromisedDate)}</td>
-                <td className="p-2">{delivery.revised && <span className="rounded bg-amber-50 px-1 text-[11px] text-amber-700">{tr("revised")}</span>}</td>
-                <td className="p-2">{format.day(delivery.lastFirstReceiptDay)}</td>
-                <td className="p-2 tabular-nums">{delivery.daysLate ? format.number(delivery.daysLate) : "—"}</td>
-                <td className="p-2">{result(delivery)}</td>
-                <td className="p-2" />
-                <td className="p-2" />
-                <td className="p-2">{format.day(delivery.fullDay)}</td>
-                <td className="p-2">{inFullText(delivery)}</td>
-                <td className="p-2">{otifText(delivery.otif)}</td>
-                <td className="p-2" />
+              <tr className="font-medium" style={{ background: A.gray6, borderTop: "0.5px solid rgba(0,0,0,0.04)" }} data-testid={`supplier-performance-delivery-${delivery.obligationId}`}>
+                <td className="px-3 py-2"><EntityLink kind="purchase_order" id={delivery.purchaseOrderId} /></td>
+                <td className="px-3 py-2">{tr("delivery")} · {tr("deliveryLines", { n: delivery.lines.length })}</td>
+                <td className="px-3 py-2">{format.day(delivery.originalPromisedDate)}</td>
+                <td className="px-3 py-2">{delivery.revised && <span className="rounded bg-amber-50 px-1 text-[11px] text-amber-700">{tr("revised")}</span>}</td>
+                <td className="px-3 py-2">{format.day(delivery.lastFirstReceiptDay)}</td>
+                <td className="px-3 py-2 tabular-nums">{delivery.daysLate ? format.number(delivery.daysLate) : "—"}</td>
+                <td className="px-3 py-2">{result(delivery)}</td>
+                <td className="px-3 py-2" />
+                <td className="px-3 py-2" />
+                <td className="px-3 py-2">{format.day(delivery.fullDay)}</td>
+                <td className="px-3 py-2">{inFullText(delivery)}</td>
+                <td className="px-3 py-2">{otifText(delivery.otif)}</td>
+                <td className="px-3 py-2" />
               </tr>
               {delivery.lines.map((line) => (
-                <tr key={line.purchaseOrderLineId} className="border-t" style={{ color: A.gray1 }} data-testid={`supplier-performance-line-${line.purchaseOrderLineId}`}>
-                  <td className="p-2 pl-5" />
-                  <td className="p-2">{line.sku}{line.itemName ? ` · ${line.itemName}` : ""}</td>
-                  <td className="p-2">{format.day(line.originalPromisedDate)}</td>
-                  <td className="p-2">{format.day(line.currentPromisedDate)}{line.revised && <span className="ml-1 rounded bg-amber-50 px-1 text-[11px] text-amber-700">{tr("revised")}</span>}</td>
-                  <td className="p-2">{format.day(line.firstReceiptDay)}</td>
-                  <td className="p-2 tabular-nums">{line.daysLate ? format.number(line.daysLate) : "—"}</td>
-                  <td className="p-2">{result(line)}</td>
-                  <td className="p-2 tabular-nums">{format.number(line.acceptedQuantity)} / {format.number(line.orderedQuantity)} {line.unit}</td>
-                  <td className="p-2 tabular-nums">{format.number(line.rejectedQuantity)}</td>
-                  <td className="p-2">{format.day(line.fullDay)}</td>
-                  <td className="p-2">{inFullText(line)}</td>
-                  <td className="p-2">{otifText(line.otif)}</td>
-                  <td className="p-2 tabular-nums">{format.money(line.amount, line.currency)}</td>
+                <tr key={line.purchaseOrderLineId} style={{ color: A.gray1, borderTop: "0.5px solid rgba(0,0,0,0.04)" }} data-testid={`supplier-performance-line-${line.purchaseOrderLineId}`}>
+                  <td className="px-3 py-2 pl-5" />
+                  <td className="px-3 py-2">{line.sku}{line.itemName ? ` · ${line.itemName}` : ""}</td>
+                  <td className="px-3 py-2">{format.day(line.originalPromisedDate)}</td>
+                  <td className="px-3 py-2">{format.day(line.currentPromisedDate)}{line.revised && <span className="ml-1 rounded bg-amber-50 px-1 text-[11px] text-amber-700">{tr("revised")}</span>}</td>
+                  <td className="px-3 py-2">{format.day(line.firstReceiptDay)}</td>
+                  <td className="px-3 py-2 tabular-nums">{line.daysLate ? format.number(line.daysLate) : "—"}</td>
+                  <td className="px-3 py-2">{result(line)}</td>
+                  <td className="px-3 py-2 tabular-nums">{format.number(line.acceptedQuantity)} / {format.number(line.orderedQuantity)} {line.unit}</td>
+                  <td className="px-3 py-2 tabular-nums">{format.number(line.rejectedQuantity)}</td>
+                  <td className="px-3 py-2">{format.day(line.fullDay)}</td>
+                  <td className="px-3 py-2">{inFullText(line)}</td>
+                  <td className="px-3 py-2">{otifText(line.otif)}</td>
+                  <td className="px-3 py-2 tabular-nums">{format.money(line.amount, line.currency)}</td>
                 </tr>
               ))}
             </Fragment>

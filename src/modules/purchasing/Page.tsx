@@ -360,13 +360,13 @@ function PurchaseOrderLineCards({ rows, currency, priceHistory }: { rows: PoEvid
     <Card className="overflow-hidden p-0">
       <div className={tableScrollClass} data-testid="po-line-cards" ref={listTableCardsRef}>
         <table className={`w-full min-w-[960px] ${tableBodyTextClass}`}>
-          <thead><tr>{headers.map(([label, align]) => <th key={label} className={align === "right" ? thRightClass : thClass}>{label}</th>)}</tr></thead>
+          <thead><tr style={listHeadRowStyle}>{headers.map(([label, align]) => <th key={label} className={align === "right" ? thRightClass : thClass} style={{ color: A.gray1 }}>{label}</th>)}</tr></thead>
           <tbody>
-            {rows.map((line) => {
+            {rows.map((line, index) => {
               const fmt = (value: number) => formatCurrencyAmount(value, line.currency || currency);
               const from = source(line);
               return (
-                <tr key={line.poLineId} className="border-t border-slate-100 align-top">
+                <tr key={line.poLineId} className={`${listRowClass} align-top`} style={listRowStyle(index, rows.length)}>
                   <td className={tdNowrapClass}><span className="font-semibold tabular-nums" style={{ color: A.blue }} title={line.poLineId} data-testid="po-line-name">{lineName(line.lineNumber)}</span></td>
                   <td className="min-w-[240px] max-w-[380px] px-4 py-3">
                     <div className="font-semibold" style={{ color: A.label }}>{line.sku} · {line.itemName}</div>

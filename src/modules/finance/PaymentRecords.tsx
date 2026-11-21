@@ -3,13 +3,14 @@ import { CheckCircle2, Info } from "lucide-react";
 import { toast } from "sonner";
 import { A, Field } from "../../components/ui";
 import { FormActionBar, focusFirstInvalid } from "../../components/ui/formLayout";
-import { listTableCardsRef } from "../../components/ui/workbenchTable";
+import { listTableCardsRef, tableBodyTextClass } from "../../components/ui/workbenchTable";
+import { typography } from "../../components/ui/typography";
 import { useI18n } from "../../i18n/I18n";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { apiErrorText } from "../../lib/apiErrorText";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { StatusChip, TwoStepAction, field } from "./FinanceControls";
-import { listButtonClass } from "../../components/ui/listLayout";
+import { listButtonClass, listHeadRowStyle, listRowStyle } from "../../components/ui/listLayout";
 
 // Payments made or received outside FlowChain, recorded on a bill to pay or a
 // receivable (docs/bills-invoices-and-accounting-handoff.md, step 2). Each
@@ -320,24 +321,24 @@ export function PaymentRecords({ kind, obligation, onDone }: {
       {payments.length ? (
         // Phones show each payment as a card (listTableCardsRef): the date first.
         <div className="overflow-x-auto" ref={listTableCardsRef}>
-          <table className="w-full min-w-[560px] text-sm">
+          <table className={`w-full min-w-[560px] ${tableBodyTextClass}`}>
             <thead>
-              <tr className="border-b text-left text-xs text-slate-500">
-                <th className="py-2">{t("finance.paymentDate")}</th>
-                <th className="py-2">{t("finance.paymentMethod")}</th>
-                <th className="py-2">{t("finance.paymentReference")}</th>
-                <th className="py-2">{t("finance.amount")}</th>
-                <th className="py-2">{t("finance.status")}</th>
+              <tr className="text-left" style={{ ...listHeadRowStyle, color: A.gray1 }}>
+                <th className={`py-2 pr-3 ${typography.tableHeader}`}>{t("finance.paymentDate")}</th>
+                <th className={`py-2 pr-3 ${typography.tableHeader}`}>{t("finance.paymentMethod")}</th>
+                <th className={`py-2 pr-3 ${typography.tableHeader}`}>{t("finance.paymentReference")}</th>
+                <th className={`py-2 pr-3 text-right ${typography.tableHeader}`}>{t("finance.amount")}</th>
+                <th className={`py-2 pr-3 ${typography.tableHeader}`}>{t("finance.status")}</th>
                 <th className="py-2" />
               </tr>
             </thead>
             <tbody>
-              {payments.map((payment) => (
-                <tr key={payment.id} data-testid="payment-row" className={`border-b border-slate-50 align-top ${payment.status === "voided" ? "text-slate-500" : ""}`}>
-                  <td className="py-2">{day(payment.paymentDate, locale)}</td>
-                  <td className="py-2">{METHOD_KEYS[payment.method] ? t(METHOD_KEYS[payment.method]) : payment.method}</td>
-                  <td className="py-2">{payment.reference || "—"}{payment.note && <div className="text-xs text-slate-500">{payment.note}</div>}</td>
-                  <td className={`py-2 ${payment.status === "voided" ? "line-through" : "font-medium"}`}>{money(payment.amount, payment.currency, locale)}</td>
+              {payments.map((payment, index) => (
+                <tr key={payment.id} data-testid="payment-row" style={listRowStyle(index, payments.length)} className={`align-top ${payment.status === "voided" ? "text-slate-500" : ""}`}>
+                  <td className="py-2 pr-3">{day(payment.paymentDate, locale)}</td>
+                  <td className="py-2 pr-3">{METHOD_KEYS[payment.method] ? t(METHOD_KEYS[payment.method]) : payment.method}</td>
+                  <td className="py-2 pr-3">{payment.reference || "—"}{payment.note && <div className="text-xs text-slate-500">{payment.note}</div>}</td>
+                  <td className={`py-2 pr-3 text-right tabular-nums ${payment.status === "voided" ? "line-through" : "font-medium"}`}>{money(payment.amount, payment.currency, locale)}</td>
                   <td className="py-2">
                     <StatusChip status={payment.status} />
                     {payment.voidReason && <div className="mt-1 text-xs text-slate-500">{payment.voidReason}</div>}

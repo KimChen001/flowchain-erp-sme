@@ -6,7 +6,7 @@ import { useI18n } from "../../i18n/I18n";
 import { statusCodeLabel } from "../../i18n/statusLabels";
 import { StatusChip, listHeadRowStyle, listRowClass, listRowStyle, statusToneOf } from "../../components/ui/listLayout";
 import { financeStatusTone, shownBillStatus, useFinanceStatusLabel } from "../finance/FinanceControls";
-import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
+import { listTableCardsRef, tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 
 // A supplier's purchase records and open risks on its detail page
 // (docs/supplier-tiers-design.md §5, T3), from
@@ -147,9 +147,9 @@ export function SupplierActivityCards({ supplierId, titles, empty }: { supplierI
         {data && !orders ? <Note testId="supplier-orders-hidden">{t("ordersHidden")}</Note> : null}
         {orders && !orders.rows.length ? <div className="py-8 text-center text-xs" style={{ color: A.sub }}>{empty.orders}</div> : null}
         {orders && orders.rows.length ? (
-          <div className={`mt-3 ${tableScrollClass}`}>
+          <div className={`mt-3 ${tableScrollClass}`} ref={listTableCardsRef}>
             <table className={`w-full ${tableBodyTextClass}`}>
-              <thead><tr style={{ ...listHeadRowStyle, color: A.sub }}>
+              <thead><tr style={{ ...listHeadRowStyle, color: A.gray1 }}>
                 <th className={thClass}>{t("po")}</th><th className={thClass}>{t("date")}</th><th className={thClass}>{t("status")}</th><th className={thClass}>{t("promised")}</th>
                 {data?.visibility.orderAmounts ? <th className={thRightClass}>{t("amount")}</th> : null}
               </tr></thead>
@@ -173,9 +173,9 @@ export function SupplierActivityCards({ supplierId, titles, empty }: { supplierI
           <div className="mt-4" data-testid="supplier-invoice-records">
             <h3 className="text-[13px] font-semibold leading-5" style={{ color: A.label }}>{t("invoices")}</h3>
             {!invoices ? <Note testId="supplier-invoices-hidden">{t("invoicesHidden")}</Note> : !invoices.rows.length ? <Note>{t("noInvoices")}</Note> : (
-              <div className={`mt-2 ${tableScrollClass}`}>
+              <div className={`mt-2 ${tableScrollClass}`} ref={listTableCardsRef}>
                 <table className={`w-full ${tableBodyTextClass}`}>
-                  <thead><tr style={{ ...listHeadRowStyle, color: A.sub }}>
+                  <thead><tr style={{ ...listHeadRowStyle, color: A.gray1 }}>
                     <th className={thClass}>{t("invoice")}</th><th className={thClass}>{t("date")}</th><th className={thClass}>{t("status")}</th><th className={thClass}>{t("match")}</th>
                     {data.visibility.invoiceAmounts ? <th className={thRightClass}>{t("amount")}</th> : null}
                   </tr></thead>

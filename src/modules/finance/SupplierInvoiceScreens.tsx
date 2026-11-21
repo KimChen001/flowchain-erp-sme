@@ -6,8 +6,9 @@ import { toast } from "sonner";
 import { A, Card, Field, inputStyle, useConfirm } from "../../components/ui";
 import { FieldError, FormActionBar, FormHeader, FormSection, focusFirstInvalid, formGridClass, invalidProps, useFormCopy } from "../../components/ui/formLayout";
 import { FocusFirstField } from "../../components/ui/FocusFirstField";
-import { StatusChip as ToneChip, listButtonClass, type StatusTone } from "../../components/ui/listLayout";
-import { listTableCardsRef } from "../../components/ui/workbenchTable";
+import { StatusChip as ToneChip, listButtonClass, listHeadRowStyle, listRowStyle, type StatusTone } from "../../components/ui/listLayout";
+import { listTableCardsRef, tableBodyTextClass } from "../../components/ui/workbenchTable";
+import { typography } from "../../components/ui/typography";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { useI18n } from "../../i18n/I18n";
 import { unitLabel } from "../../i18n/unitLabels";
@@ -508,13 +509,13 @@ export function NewSupplierInvoice() {
             // Phones show each line as a card (listTableCardsRef): the item
             // first, then each figure and input with its column name.
             <div className="overflow-x-auto rounded-lg border" style={{ borderColor: A.border }} ref={listTableCardsRef}>
-              <table className="w-full min-w-[860px] text-left text-sm">
-                <thead className="bg-gray-50 text-xs" style={{ color: A.sub }}>
+              <table className={`w-full min-w-[860px] text-left ${tableBodyTextClass}`}>
+                <thead className="bg-slate-50" style={{ color: A.gray1 }}>
                   <tr>
                     {/* Figures read right-aligned; the inputs keep the left edge. */}
                     {[[tr("sku"), false], [tr("item"), false], ...basisHeads.map((head) => [head, true] as const), [t("finance.poPrice"), true], [t("finance.quantity"), false], [t("finance.unitPrice"), false], [t("finance.tax"), false], [tr("amount"), true]].map(([head, right]) => (
                       // The item name takes the spare width, so the input columns stay narrow.
-                      <th key={String(head)} className={`whitespace-nowrap px-3 py-2 font-medium${right ? " text-right" : ""}${head === tr("item") ? " w-full" : ""}`} {...(head === tr("item") ? { "data-card-title": "" } : {})}>{head}</th>
+                      <th key={String(head)} className={`whitespace-nowrap px-3 py-2 ${typography.tableHeader}${right ? " text-right" : ""}${head === tr("item") ? " w-full" : ""}`} {...(head === tr("item") ? { "data-card-title": "" } : {})}>{head}</th>
                     ))}
                   </tr>
                 </thead>
@@ -1274,18 +1275,18 @@ export function SupplierInvoiceDetail() {
         <h2 className="fc-section-title mb-3" style={{ color: A.label }}>{t("finance.lines")}</h2>
         {/* Phones show each line as a card (listTableCardsRef): the item first. */}
         <div className="overflow-x-auto" ref={listTableCardsRef}>
-          <table className="w-full min-w-[640px] text-sm" data-testid="supplier-invoice-lines-table">
-            <thead><tr className="border-b text-left text-xs text-slate-500"><th className="py-2 pr-3" data-card-title="">{say("Item", "物料")}</th><th className="py-2 pr-3">{t("finance.quantity")}</th><th className="py-2 pr-3">{t("finance.unitPrice")}</th><th className="py-2 pr-3">{t("finance.tax")}</th><th className="py-2">{t("finance.amount")}</th></tr></thead>
+          <table className={`w-full min-w-[640px] ${tableBodyTextClass}`} data-testid="supplier-invoice-lines-table">
+            <thead><tr className="text-left" style={{ ...listHeadRowStyle, color: A.gray1 }}><th className={`py-2 pr-3 ${typography.tableHeader}`} data-card-title="">{say("Item", "物料")}</th><th className={`py-2 pr-3 ${typography.tableHeader} text-right`}>{t("finance.quantity")}</th><th className={`py-2 pr-3 ${typography.tableHeader} text-right`}>{t("finance.unitPrice")}</th><th className={`py-2 pr-3 ${typography.tableHeader} text-right`}>{t("finance.tax")}</th><th className={`py-2 text-right ${typography.tableHeader}`}>{t("finance.amount")}</th></tr></thead>
             <tbody>
-              {(data.lines || []).map((line: any) => {
+              {(data.lines || []).map((line: any, index: number) => {
                 const quantity = Number.isFinite(Number(line.quantity)) && line.quantity !== null && line.quantity !== "" ? Number(line.quantity) : null;
                 return (
-                  <tr key={line.id} className="border-b border-slate-50">
+                  <tr key={line.id} style={listRowStyle(index, (data.lines || []).length)}>
                     <td className="py-2 pr-3">{line.sku} · {line.itemName}</td>
-                    <td className="py-2 pr-3 tabular-nums">{quantity === null ? "—" : `${formatNumber(quantity)}${line.unit ? ` ${unitLabel(line.unit, language, quantity)}` : ""}`}</td>
-                    <td className="py-2 pr-3 tabular-nums">{money(line.unitPrice, data.currency, locale)}</td>
-                    <td className="py-2 pr-3 tabular-nums">{money(line.enteredTaxAmount, data.currency, locale)}</td>
-                    <td className="py-2 tabular-nums">{money(line.totalAmount, data.currency, locale)}</td>
+                    <td className="py-2 pr-3 text-right tabular-nums">{quantity === null ? "—" : `${formatNumber(quantity)}${line.unit ? ` ${unitLabel(line.unit, language, quantity)}` : ""}`}</td>
+                    <td className="py-2 pr-3 text-right tabular-nums">{money(line.unitPrice, data.currency, locale)}</td>
+                    <td className="py-2 pr-3 text-right tabular-nums">{money(line.enteredTaxAmount, data.currency, locale)}</td>
+                    <td className="py-2 text-right tabular-nums">{money(line.totalAmount, data.currency, locale)}</td>
                   </tr>
                 );
               })}

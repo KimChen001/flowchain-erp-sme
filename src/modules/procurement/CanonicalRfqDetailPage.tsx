@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Ban, ExternalLink, FilePlus2, Play, RefreshCw, Scale, TriangleAlert } from "lucide-react";
 import { Link } from "react-router";
 import { A, Card, useConfirm } from "../../components/ui";
-import { StatusChip, listHeadRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
-import { thClass, thRightClass } from "../../components/ui/workbenchTable";
+import { StatusChip, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
+import { listTableCardsRef, tableBodyTextClass, tableScrollClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { ApiError } from "../../lib/api-client";
 import { apiErrorText } from "../../lib/apiErrorText";
 import { listButtonClass } from "../../components/ui/listLayout";
@@ -198,13 +198,13 @@ function RevisionSummary({ revision, currency }: { revision: ProcurementQuotatio
   );
 }
 
-function QuotationRow({ quotation, currency }: { quotation: ProcurementRfqQuotation; currency: string }) {
+function QuotationRow({ quotation, currency, index, count }: { quotation: ProcurementRfqQuotation; currency: string; index: number; count: number }) {
   const { language, locale } = useI18n();
   const tr: Tr = (zh, en) => language === "en-US" ? en : zh;
   const hasAuthority = quotation.authorityState === "revision_authoritative";
   const { day, when } = useRfqDates();
   return (
-    <tr className="border-t align-top" data-testid={`rfq-quotation-${quotation.id}`}>
+    <tr className={`${listRowClass} align-top`} style={listRowStyle(index, count)} data-testid={`rfq-quotation-${quotation.id}`}>
       <td className="whitespace-nowrap px-4 py-3 font-medium tabular-nums">{quotation.id}</td>
       <td className="px-4 py-3"><div>{quotation.supplierName || quotation.supplierId || tr("未提供", "Not provided")}</div>{quotation.lines.length > 0 && <div className="mt-1 space-y-0.5 text-[11px]" style={{ color: A.sub }}>{quotation.lines.map((line) => <div key={line.id} data-testid={`rfq-quotation-line-${line.id}`}>{line.sku || line.itemName || line.itemId || line.id} · {number(line.quantity, locale)} {line.unit || ""} · <span className="whitespace-nowrap">{money(line.unitPrice, quotation.currency || currency, locale)}</span></div>)}</div>}</td>
       <td className="px-4 py-3">{hasAuthority ? <StatusChip label={statusLabel(quotation.status, QUOTATION_STATUS_LABELS, language)} tone={statusToneOf(quotation.status)} /> : <StatusChip label={tr("缺少报价修订", "Quote revision missing")} tone="warning" />}</td>
@@ -319,9 +319,9 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, canTransition, no
       <Card className="overflow-hidden" data-testid="rfq-lines">
         <div className="border-b p-4"><h2 className="fc-section-title" style={{ color: A.label }}>{tr("询价单行项目", "RFQ line items")}</h2></div>
         {record.lines.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前询价单没有行项目。", "This RFQ has no line items.")}</div> : (
-          <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-xs">
-            <thead><tr style={listHeadRowStyle}>{([[tr("行", "Line")], [tr("物料 / SKU", "Item / SKU")], [tr("数量", "Quantity"), "right"], [tr("单位", "Unit")], [tr("目标 / 参考单价", "Target / reference unit price"), "right"], [tr("需求日期", "Need by")], [tr("交付地点", "Delivery location")]] as const).map(([label, align]) => <th key={label} className={align === "right" ? thRightClass : thClass} style={{ color: A.gray1 }}>{label}</th>)}</tr></thead>
-            <tbody>{record.lines.map((line, index) => <tr key={line.id} className="border-t align-top" data-testid={`rfq-line-${line.id}`}>
+          <div className={tableScrollClass} ref={listTableCardsRef}><table className={`w-full min-w-[760px] text-left ${tableBodyTextClass}`}>
+            <thead><tr style={listHeadRowStyle}>{([[tr("行", "Line")], [tr("物料 / SKU", "Item / SKU")], [tr("数量", "Quantity"), "right"], [tr("单位", "Unit")], [tr("目标 / 参考单价", "Target / reference unit price"), "right"], [tr("需求日期", "Need by")], [tr("交付地点", "Delivery location")]] as const).map(([label, align]) => <th key={label} className={align === "right" ? thRightClass : thClass} style={{ color: A.gray1 }} data-card-title={label === tr("物料 / SKU", "Item / SKU") ? "" : undefined}>{label}</th>)}</tr></thead>
+            <tbody>{record.lines.map((line, index) => <tr key={line.id} className={`${listRowClass} align-top`} style={listRowStyle(index, record.lines.length)} data-testid={`rfq-line-${line.id}`}>
               <td className="whitespace-nowrap px-4 py-3 font-medium tabular-nums" title={line.id}>{tr(`第 ${index + 1} 行`, `Line ${index + 1}`)}</td>
               <td className="px-4 py-3"><div>{line.itemName || "—"}</div><div className="mt-1" style={{ color: A.sub }}>{line.sku || line.itemId || "—"}</div></td>
               <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{number(line.quantity, locale)}</td>
@@ -351,7 +351,7 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, canTransition, no
 
       <Card className="overflow-hidden" data-testid="rfq-quotations">
         <div className="flex items-center justify-between gap-3 border-b p-4"><h2 className="fc-section-title" style={{ color: A.label }}>{tr("供应商报价", "Supplier quotations")}</h2><span className="text-xs" style={{ color: A.sub }}>{tr(`${record.quotations.length} 条报价 · 以最新的报价修订为当前版本`, `${record.quotations.length} quotations · the latest quote revision is current`)}</span></div>
-        {record.quotations.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前询价单没有报价记录。", "This RFQ has no quotation records.")}</div> : <div className="overflow-x-auto"><table className="w-full min-w-[960px] text-left text-xs"><thead><tr style={listHeadRowStyle}>{([[tr("报价 ID", "Quotation ID")], [tr("供应商", "Supplier")], [tr("状态", "Status")], [tr("报价总额", "Quoted total"), "right"], [tr("提交时间", "Submitted at")], [tr("修订记录", "Revisions")]] as const).map(([label, align]) => <th key={label} className={align === "right" ? thRightClass : thClass} style={{ color: A.gray1 }}>{label}</th>)}</tr></thead><tbody>{record.quotations.map((quotation) => <QuotationRow key={quotation.id} quotation={quotation} currency={record.currency || ""} />)}</tbody></table></div>}
+        {record.quotations.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前询价单没有报价记录。", "This RFQ has no quotation records.")}</div> : <div className={tableScrollClass} ref={listTableCardsRef}><table className={`w-full min-w-[960px] text-left ${tableBodyTextClass}`}><thead><tr style={listHeadRowStyle}>{([[tr("报价 ID", "Quotation ID")], [tr("供应商", "Supplier")], [tr("状态", "Status")], [tr("报价总额", "Quoted total"), "right"], [tr("提交时间", "Submitted at")], [tr("修订记录", "Revisions")]] as const).map(([label, align]) => <th key={label} className={align === "right" ? thRightClass : thClass} style={{ color: A.gray1 }}>{label}</th>)}</tr></thead><tbody>{record.quotations.map((quotation, index) => <QuotationRow key={quotation.id} quotation={quotation} currency={record.currency || ""} index={index} count={record.quotations.length} />)}</tbody></table></div>}
       </Card>
 
       <Card className="p-4" data-testid="rfq-data-limitations">
