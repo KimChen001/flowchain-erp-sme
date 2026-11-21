@@ -51,6 +51,7 @@ const zh: Record<string, string> = {
   "Items": "物料总数", "{count} active": "{count} 个启用", "Inactive items": "停用物料",
   "Kept for history, not offered on new documents": "保留历史记录，新单据中不再提供",
   "No reorder point": "未设再订货点", "Active items the reorder list cannot check": "补货清单无法检查的启用物料",
+  "not in the list": "不在列表中",
   "Suppliers for this item are added on each supplier's page, under Supplied items; Set as preferred there makes one the default.": "该物料的供应商在各供应商页面的“可供应物料”中添加；在那里点击“设为首选”即设为默认供应商。",
   "Open suppliers": "打开供应商列表",
   "Warehouses and their locations are added and edited in Settings › Warehouses & access.": "仓库及其库位在“设置 › 仓库与权限”中添加和编辑。",

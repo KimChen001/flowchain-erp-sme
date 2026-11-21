@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { orderedCurrencyCodes } from "../../lib/currencyOptions";
+import { useWorkspaceCurrency } from "../../lib/useWorkspaceCurrency";
+import { linkedFieldOptions, paymentTermOptions, type LinkedOption } from "./linkedFieldOptions";
 import { toast } from "sonner";
 import { Eye } from "lucide-react";
 import { ApiError, apiJson } from "../../lib/api-client";
@@ -50,6 +53,20 @@ function CustomerForm({ customer = null, onSaved, onCancel }: { customer?: Custo
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const editing = Boolean(customer?.id);
+  // Currency and payment terms are chosen: a term typed as "30 days" matched
+  // no term, so the invoice's due date stayed blank. Null when the terms could
+  // not load (the field is then typed, as before).
+  const { currency: workspaceCurrency } = useWorkspaceCurrency();
+  const [termOptions, setTermOptions] = useState<LinkedOption[] | null>([]);
+  useEffect(() => {
+    apiJson<{ options?: Array<{ id: string; code?: string; label?: string }> }>("/api/master-data/payment-terms/select")
+      .then((result) => setTermOptions(paymentTermOptions(result.options)))
+      .catch(() => setTermOptions(null));
+  }, []);
+  const choices = (key: CustomerField): LinkedOption[] | null =>
+    key === "currency" ? orderedCurrencyCodes(workspaceCurrency, null, form.currency).map((code) => ({ value: code, label: code }))
+      : key === "paymentTerms" ? termOptions
+      : null;
   const save = async () => {
     setSaving(true);
     setError("");
@@ -77,9 +94,24 @@ function CustomerForm({ customer = null, onSaved, onCancel }: { customer?: Custo
     <div data-testid="customer-form" data-mode={editing ? "edit" : "create"} className="space-y-3 border-b px-4 py-4" style={{ borderColor: A.border }}>
       {editing ? <p className="text-xs font-semibold" style={{ color: A.label }}>{copy("Edit customer")} · {customer?.code}</p> : null}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {CUSTOMER_FIELDS.map((field) => (
+        {CUSTOMER_FIELDS.map((field) => {
+          const options = choices(field.key);
+          return (
           <label key={field.key} className="grid gap-1 text-xs">
             <span style={{ color: A.gray1 }}>{copy(field.label)}{field.required ? " *" : ""}</span>
+            {options ? (
+              <select
+                aria-label={copy(field.label)}
+                data-testid={`customer-field-${field.key}`}
+                className="rounded-md border px-2 py-1.5 text-sm"
+                style={{ borderColor: fieldErrors[field.key] ? A.red : A.border }}
+                value={form[field.key]}
+                onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
+              >
+                <option value="">{copy("Not set")}</option>
+                {linkedFieldOptions(options, form[field.key]).map((option) => <option key={option.value} value={option.value}>{option.unknown ? `${option.label} (${copy("not in the list")})` : option.label}</option>)}
+              </select>
+            ) : (
             <input
               aria-label={copy(field.label)}
               data-testid={`customer-field-${field.key}`}
@@ -89,9 +121,11 @@ function CustomerForm({ customer = null, onSaved, onCancel }: { customer?: Custo
               disabled={editing && field.key === "code"}
               onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
             />
+            )}
             {fieldErrors[field.key] ? <span style={{ color: A.red }}>{fieldErrors[field.key]}</span> : null}
           </label>
-        ))}
+          );
+        })}
         <label className="grid gap-1 text-xs">
           <span style={{ color: A.gray1 }}>{copy("Credit status")}</span>
           <select aria-label={copy("Credit status")} data-testid="customer-field-creditStatus" className="rounded-md border px-2 py-1.5 text-sm" style={{ borderColor: fieldErrors.creditStatus ? A.red : A.border }} value={form.creditStatus} onChange={(event) => setForm((current) => ({ ...current, creditStatus: event.target.value }))}>

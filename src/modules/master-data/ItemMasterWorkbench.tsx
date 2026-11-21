@@ -34,6 +34,7 @@ import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { apiErrorText } from "../../lib/apiErrorText";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import { ItemStockAndOrders } from "./ItemStockAndOrders";
+import { linkedFieldOptions, taxCodeOptions as taxCodeOptionsOf, warehouseOptions as warehouseOptionsOf, type LinkedOption } from "./linkedFieldOptions";
 
 export type MasterItem = {
   itemId: string;
@@ -218,6 +219,19 @@ export default function ItemMasterWorkbench({
   const canEdit = useMasterDataWriteAccess().items;
   const [items, setItems] = useState<MasterItem[]>([]);
   const [loaded, setLoaded] = useState(false);
+  // The warehouses and tax codes the form offers (null when they could not
+  // load: the fields are then typed, as before).
+  const [warehouseOptions, setWarehouseOptions] = useState<LinkedOption[] | null>([]);
+  const [taxCodeOptions, setTaxCodeOptions] = useState<LinkedOption[] | null>([]);
+  useEffect(() => {
+    apiJson<{ warehouses?: Array<{ id?: string; code?: string; name?: string; status?: string }> }>("/api/master-data/warehouses")
+      .then((result) => setWarehouseOptions(warehouseOptionsOf(result.warehouses)))
+      .catch(() => setWarehouseOptions(null));
+    // { id: the tax code, label: its name } (mapTaxCode), stored by code.
+    apiJson<{ taxCodes?: Array<{ id?: string; label?: string; status?: string }> }>("/api/master-data/tax-codes")
+      .then((result) => setTaxCodeOptions(taxCodeOptionsOf(result.taxCodes)))
+      .catch(() => setTaxCodeOptions(null));
+  }, []);
   // Supplier names for the preferred supplier column; ids when unavailable.
   const [suppliers, setSuppliers] = useState<Map<string, SupplierName>>(new Map());
   const [selected, setSelected] = useState<MasterItem | null>(null);
@@ -359,7 +373,19 @@ export default function ItemMasterWorkbench({
         </div>
         {error && <p className="mt-3 text-xs text-red-600">{error}</p>}
         <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
-          {fields.map(([key, label, inputType]) => (
+          {fields.map(([key, label, inputType]) => {
+            // A field that names a warehouse or a tax code is chosen from the
+            // workspace's own, not typed (the server wants the warehouse's id).
+            const linked = key === "defaultWarehouseId" ? warehouseOptions : key === "taxCodeId" ? taxCodeOptions : null;
+            if (linked) return (
+              <Field key={key} label={copy(label)}>
+                <select aria-label={copy(label)} data-testid={`item-field-${key}`} value={String(editing[key] ?? "")} onChange={(event) => setEditing({ ...editing, [key]: event.target.value })} style={inputStyle}>
+                  <option value="">{copy("Not set")}</option>
+                  {linkedFieldOptions(linked, String(editing[key] ?? "")).map((option) => <option key={option.value} value={option.value}>{option.unknown ? `${option.label} (${copy("not in the list")})` : option.label}</option>)}
+                </select>
+              </Field>
+            );
+            return (
             <Field key={key} label={copy(label)}>
               <input
                 aria-label={copy(label)}
@@ -372,7 +398,8 @@ export default function ItemMasterWorkbench({
                 style={inputStyle}
               />
             </Field>
-          ))}
+            );
+          })}
           <Field label={copy("状态")}>
             <select
               value={String(editing.status)}
