@@ -65,6 +65,9 @@ const DATE_PATTERNS = [
   { pattern: /(?<!\d)(\d{4})-(\d{1,2})-(\d{1,2})(?!\d)/g, read: (m) => ({ year: +m[1], month: +m[2], day: +m[3] }) },
   { pattern: /(?<!\d)(?:(\d{4})\s*年\s*)?(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]/g, read: (m) => ({ year: m[1] ? +m[1] : null, month: +m[2], day: +m[3] }) },
   { pattern: /(?<!\d)(\d{4})\s*年\s*(\d{1,2})\s*月/g, read: (m) => ({ year: +m[1], month: +m[2], day: null }) },
+  // A range of months written once (2026 年 10—11 月, 1-3 月): both months
+  // (2026-11-20: the 10 of "10—11 月" was read as a figure).
+  { pattern: /(?<![\d.])(?:(\d{4})\s*年\s*)?(\d{1,2})\s*[—–\-~～至到]\s*(\d{1,2})\s*月(?!\s*\d)/g, read: (m) => ({ year: m[1] ? +m[1] : null, month: +m[2], day: null, endMonth: +m[3] }) },
   // A month alone (上季度 7月至9月), not a count of months (3 个月).
   { pattern: /(?<![\d.])(\d{1,2})\s*月(?!\s*\d)/g, read: (m) => ({ year: null, month: +m[1], day: null }) },
   // A range of days in one month, both checked (2026-11-08 on DeepSeek: "本周内
@@ -291,6 +294,7 @@ export function aiGroundingSources(results = [], { dayFirst = false } = {}) {
         const year = date.year ? String(date.year) : '????'
         const month = String(date.month).padStart(2, '0')
         months.add(`${year}-${month}`)
+        if (date.endMonth >= 1 && date.endMonth <= 12) months.add(`${year}-${String(date.endMonth).padStart(2, '0')}`)
         if (date.day) days.add(`${year}-${month}-${String(date.day).padStart(2, '0')}`)
         if (date.endDay) days.add(`${year}-${month}-${String(date.endDay).padStart(2, '0')}`)
         return ' '.repeat(match[0].length)
@@ -714,8 +718,9 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
       const date = read(match, dayFirst)
       if (!date.month || date.month > 12 || (date.day !== null && (date.day < 1 || date.day > 31))) return match[0]
       if (date.endDay !== undefined && (date.endDay <= date.day || date.endDay > 31)) return match[0]
+      if (date.endMonth !== undefined && (date.endMonth <= date.month || date.endMonth > 12)) return match[0]
       checked.date += 1
-      if (!dayKnown(date) || (date.endDay && !dayKnown({ ...date, day: date.endDay }))) fail('date', match[0])
+      if (!dayKnown(date) || (date.endDay && !dayKnown({ ...date, day: date.endDay })) || (date.endMonth && !dayKnown({ ...date, month: date.endMonth }))) fail('date', match[0])
       return blank(match[0])
     })
   }
