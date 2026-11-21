@@ -80,7 +80,7 @@ export function PurchaseOrderPromiseDates({ poId, onChanged }: { poId: string; o
     // A section of the order page like its others: the title above, the card below.
     <section data-testid="po-promise-dates">
       <SectionHeader title={tr("title")} right={unchanged && !form ? (
-        <button type="button" aria-expanded={!folded} data-testid="po-promise-toggle" className="h-8 rounded-lg px-2 text-xs font-medium text-blue-600 hover:bg-blue-50" onClick={() => setExpanded(!expanded)}>
+        <button type="button" aria-expanded={!folded} data-testid="po-promise-toggle" className="h-8 rounded-lg px-2 text-xs font-medium text-blue-600 hover:bg-blue-50 max-sm:h-9" onClick={() => setExpanded(!expanded)}>
           {tr(folded ? "showLines" : "hideLines")}
         </button>
       ) : undefined} />

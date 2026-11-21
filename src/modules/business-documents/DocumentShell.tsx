@@ -4,6 +4,7 @@ import { Link } from "react-router";
 import type { DocumentLanguage } from "../../../shared/business-documents.mjs";
 import { A, Card } from "../../components/ui";
 import { listButtonClass } from "../../components/ui/listLayout";
+import { backLinkClass } from "../procurement/BackToListLink";
 import { useI18n } from "../../i18n/I18n";
 import { documentPageRule } from "./documentPaging";
 import "./business-documents.css";
@@ -85,8 +86,8 @@ export function DocumentShell({
       <style>{`${documentPageRule(language)} ${SCREEN_SCALE_CSS}`}</style>
       <Card className="p-4">
         <div className="business-document-toolbar" data-testid="business-document-toolbar">
-          <Link to={backTo} className="inline-flex items-center gap-2 text-sm font-semibold" style={{ color: A.blue }}>
-            <ArrowLeft size={16} />{backLabel}
+          <Link to={backTo} className={backLinkClass}>
+            <ArrowLeft size={13} />{backLabel}
           </Link>
           <div className="flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-2 text-sm">

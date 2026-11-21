@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { RetryButton } from "../../components/ui/listLayout";
+import { backLinkClass } from "../procurement/BackToListLink";
 import { ArrowLeft } from "lucide-react";
 import { Link } from "react-router";
 import type { DocumentLanguage, PurchaseOrderDocument } from "../../../shared/business-documents.mjs";
@@ -171,6 +172,7 @@ export function PurchaseOrderDocumentPage({ orderId }: { orderId: string }) {
   const message = { notFound: t("documents.notFound"), forbidden: t("documents.forbidden"), error: t("documents.loadFailed") };
   return (
     <div className="space-y-4" data-testid="po-document-state">
+      <Link to={backTo} className={backLinkClass}><ArrowLeft size={13} />{t("documents.back")}</Link>
       <Card className="py-16 text-center">
         {state === "loading"
           ? <div className="text-sm" style={{ color: A.sub }}>{t("documents.loading")}</div>
@@ -179,7 +181,6 @@ export function PurchaseOrderDocumentPage({ orderId }: { orderId: string }) {
               {state === "error" && <RetryButton onClick={() => void load()} label={t("documents.retry")} />}
             </>}
       </Card>
-      <Link to={backTo} className="inline-flex items-center gap-2 text-sm font-semibold" style={{ color: A.blue }}><ArrowLeft size={16} />{t("documents.back")}</Link>
     </div>
   );
 }

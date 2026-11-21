@@ -20,7 +20,7 @@ import { PaymentRecords } from "./PaymentRecords";
 import { addCalendarDays } from "../../lib/prefill";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import { documentNumberFor, rememberDocumentNumbers, useDocumentNumber } from "../../lib/documentNumbers";
-import { BackToListLink } from "../procurement/BackToListLink";
+import { BackToListLink, backLinkClass } from "../procurement/BackToListLink";
 import { procurementErrorCode, procurementErrorText } from "../procurement/procurementErrors";
 import { matchExceptionLabel } from "../../domain/procurement/variance-types";
 import { knownCodeText } from "../../lib/apiErrorText";
@@ -1221,7 +1221,7 @@ export function SupplierInvoiceDetail() {
   return (
     <div className="space-y-4" data-testid="supplier-invoice-detail">
       {fromPayables
-        ? <Link to={returnTo} data-testid="back-to-payables" className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline"><ArrowLeft size={13} />{say("Back to payables", "返回应付款")}</Link>
+        ? <Link to={returnTo} data-testid="back-to-payables" className={backLinkClass}><ArrowLeft size={13} />{say("Back to payables", "返回应付款")}</Link>
         : <BackToListLink list="bills" />}
       {error && <Notice>{error}</Notice>}
       <Card className="p-5">

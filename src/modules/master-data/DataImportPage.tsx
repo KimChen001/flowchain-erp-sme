@@ -265,7 +265,7 @@ export default function DataImportPage() {
       <div role="tablist" aria-label={copy("Import data")} className="flex flex-wrap gap-1 border-b" style={{ borderColor: A.border }}>
         {TYPES.map((entry) => (
           <button key={entry.type} type="button" role="tab" aria-selected={type === entry.type} data-testid={`data-import-type-${entry.type}`} onClick={() => chooseType(entry.type)}
-            className="px-3 py-2 text-xs font-semibold" style={{ color: type === entry.type ? A.blue : A.gray1, borderBottom: type === entry.type ? `2px solid ${A.blue}` : "2px solid transparent" }}>
+            className="px-3 py-2 text-xs font-semibold max-sm:min-h-9" style={{ color: type === entry.type ? A.blue : A.gray1, borderBottom: type === entry.type ? `2px solid ${A.blue}` : "2px solid transparent" }}>
             {copy(entry.label)}
           </button>
         ))}

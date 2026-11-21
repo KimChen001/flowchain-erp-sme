@@ -17,6 +17,7 @@ import { compareQuote } from "../../../shared/price-history.mjs";
 import { formatCalendarDay, formatDateTimeInTimeZone } from "../../lib/format";
 import { rfqMoney, rfqQuantity } from "./rfqFormat";
 import { RfqNoOrderNote } from "./RfqNoOrderNote";
+import { backLinkClass } from "./BackToListLink";
 import { OverviewFieldGrid } from "../../components/document/DocumentShell";
 import { procurementErrorText } from "./procurementErrors";
 import type {
@@ -338,7 +339,7 @@ function LoadedComparison({ comparison, award, canAward, onAward }: { comparison
   useDetailCrumb(tr("报价比较", "Quote comparison"));
   return (
     <div className="space-y-4" data-testid="canonical-rfq-comparison">
-      <Link className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline" to={`/app/procurement/rfq/${encodeURIComponent(comparison.rfqId)}`}><ArrowLeft size={13} />{tr(`返回 ${rfqNumber}`, `Back to ${rfqNumber}`)}</Link>
+      <Link className={backLinkClass} to={`/app/procurement/rfq/${encodeURIComponent(comparison.rfqId)}`}><ArrowLeft size={13} />{tr(`返回 ${rfqNumber}`, `Back to ${rfqNumber}`)}</Link>
       <RfqNoOrderNote />
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -416,5 +417,5 @@ export function CanonicalRfqComparisonPage({ documentId, effectivePermissionCode
     error: tr("供应商报价比较加载失败，请稍后重试。", "The supplier quotation comparison is temporarily unavailable. Try again later."),
     network: tr("无法连接到供应商报价比较服务，请检查网络后重试。", "The supplier quotation comparison service could not be reached. Check your connection and try again."),
   };
-  return <div className="space-y-4" data-testid="canonical-rfq-comparison-state"><Card className="py-16 text-center">{state === "loading" ? <div className="text-sm" style={{ color: A.sub }}>{tr("正在读取供应商报价比较…", "Loading supplier quotation comparison…")}</div> : <><div className="text-sm font-semibold" style={{ color: A.label }}>{messages[state]}</div>{state !== "malformed" && <RetryButton onClick={() => void load()} label={tr("重试", "Retry")} />}</>}</Card><Link className="inline-flex items-center gap-2 text-sm font-semibold text-blue-600" to={documentId ? `/app/procurement/rfq/${encodeURIComponent(documentId)}` : "/app/procurement/rfq"}><ArrowLeft size={16} />{tr("返回询价单", "Back to RFQ")}</Link></div>;
+  return <div className="space-y-4" data-testid="canonical-rfq-comparison-state"><Link className={backLinkClass} to={documentId ? `/app/procurement/rfq/${encodeURIComponent(documentId)}` : "/app/procurement/rfq"}><ArrowLeft size={13} />{tr("返回询价单", "Back to RFQ")}</Link><Card className="py-16 text-center">{state === "loading" ? <div className="text-sm" style={{ color: A.sub }}>{tr("正在读取供应商报价比较…", "Loading supplier quotation comparison…")}</div> : <><div className="text-sm font-semibold" style={{ color: A.label }}>{messages[state]}</div>{state !== "malformed" && <RetryButton onClick={() => void load()} label={tr("重试", "Retry")} />}</>}</Card></div>;
 }
