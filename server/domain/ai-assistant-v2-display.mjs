@@ -265,9 +265,9 @@ export function aiV2TextTidier({ language = 'en-US', formats = aiV2Formats(), re
     // Not a date's year, after a month (Dec 2026, 4 Dec 2026) or a month and
     // day (Dec 4, 2026, which an ISO date becomes above): "4 Dec 2026 只是…"
     // was "4 Dec 2,026" (2026-11-20 question set). 只 starting a word (只是,
-    // 只有, 只能, 只要, 只需) is no unit.
+    // 只有, 只能, 只要, 只需, 只剩) is no unit (2026-11-21: "23308 只剩 4 天" was "23,308").
     const stored = [...new Set(array(units()).map(text).filter((unit) => unit && unit.length <= 20))]
-    const unitWords = [...new Set([...UNIT_WORDS, ...stored])].sort((a, b) => b.length - a.length).map(escape).map((unit) => (unit === '只' ? String.raw`只(?![是有能要需])` : unit))
+    const unitWords = [...new Set([...UNIT_WORDS, ...stored])].sort((a, b) => b.length - a.length).map(escape).map((unit) => (unit === '只' ? String.raw`只(?![是有能要需剩])` : unit))
     out = out.replace(new RegExp(String.raw`(?<![\w.]|\d,|\b${MONTH}\.?,?\s|\b${MONTH}\.?\s\d{1,2}(?:st|nd|rd|th)?,?\s)(\d{4,})(?=\s?(?:${unitWords.join('|')})(?![A-Za-z]))`, 'gu'), (whole) => formats.number(Number(whole)))
     // A stored unit after its quantity, in the answer's language and number
     // ("300 box" -> "300 boxes", "50 pcs" -> "50 件"); a Chinese unit word

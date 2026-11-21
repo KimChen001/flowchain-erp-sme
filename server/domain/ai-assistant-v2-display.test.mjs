@@ -70,6 +70,8 @@ test('Chinese text gets full-width punctuation next to Chinese words, never betw
   assert.equal(tidy('2026-12-04 个别行还没到'), 'Dec 4, 2026 个别行还没到')
   assert.equal(tidy('Dec 4th, 2026 件数未定'), 'Dec 4th, 2026 件数未定')
   assert.equal(tidy('3500 只在仓库里'), '3,500 只在仓库里')
+  // A SKU before 只剩 (only … left) stays as written (2026-11-21 live run).
+  assert.equal(tidy('23308 只剩 4 天用量'), '23308 只剩 4 天用量')
   assert.equal(tidy('累计 19,120 美元,差异 200 USD。'), '累计 $19,120，差异 $200。')
   assert.equal(tidy('见 [指南](https://example.com/a) 和 ![图](a.png)'), '见 [指南](https://example.com/a) 和 ![图](a.png)')
   assert.equal(tidy('1) 第一步\n2) 第二步'), '1) 第一步\n2) 第二步')
