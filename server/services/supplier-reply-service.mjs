@@ -243,7 +243,10 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
     })
   }
 
-  async function pasteReply(orderId, body, context, { signal } = {}) {
+  // `origin` is set by the ingestion endpoint only (supplier-reply-ingest.mjs),
+  // never from a request body: where the reply came from, its sender and
+  // message id, and the token that brought it.
+  async function pasteReply(orderId, body, context, { signal, origin = null } = {}) {
     const input = parsed(supplierReplyPasteRequestSchema, body)
     const client = await db()
     const actor = await actorOf(client, context)
@@ -282,7 +285,7 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
         await tx.supplierReply.create({
           data: {
             id, tenantId: actor.tenantId, purchaseOrderId: order.id, supplierId: text(order.supplierId) || null, activeKey: active ? order.id : null,
-            source: 'paste', receivedOn, text: cleaned.text, quotedTextHidden: cleaned.quotedTextHidden, quotedText: cleaned.quoted, state, readingStatus: read.readingStatus,
+            source: origin?.source === 'email' ? 'email' : 'paste', sender: text(origin?.sender).slice(0, 320) || null, messageId: text(origin?.messageId).slice(0, 998) || null, receivedOn, text: cleaned.text, quotedTextHidden: cleaned.quotedTextHidden, quotedText: cleaned.quoted, state, readingStatus: read.readingStatus,
             provider: read.provider || null, model: read.model || null, promptVersion: read.promptVersion || null, reading: read.reading || null, check: check || null,
             usage: { calls: read.calls, inputTokens: read.usage?.inputTokens || 0, outputTokens: read.usage?.outputTokens || 0, ms: Date.now() - startedAt, invisibleRemoved: cleaned.invisibleRemoved, issues: read.issues || null },
             instructionsIgnored: supplierReplyInstructionsIgnored(input.text), createdById: actor.user.id,
@@ -293,7 +296,7 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
           data: {
             id: idFactory(), tenantId: actor.tenantId, actorId: actor.user.id, source: 'supplier_reply_service', module: 'procurement', action: 'supplier_reply_pasted',
             entityType: 'PurchaseOrder', entityId: order.id, summary: `Supplier reply on purchase order ${snapshot.number}: ${state}.`,
-            metadata: { replyId: id, state, readingStatus: read.readingStatus, calls: read.calls, lines: array(check?.lines).map((line) => line.outcome), superseded, active },
+            metadata: { replyId: id, state, readingStatus: read.readingStatus, calls: read.calls, lines: array(check?.lines).map((line) => line.outcome), superseded, active, ...(origin?.source === 'email' ? { source: 'email', tokenId: text(origin.tokenId) || null } : {}) },
           },
         })
       })
