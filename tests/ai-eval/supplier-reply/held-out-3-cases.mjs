@@ -1,12 +1,12 @@
 // The third held-out batch of supplier replies (README.md, "The third
-// held-out batch (not yet run)"): written blind from
+// held-out batch"): written blind from
 // docs/supplier-reply-dates-design.md (#363) and the contract
 // (shared/supplier-reply-contract.mjs), with this folder's case files as the
 // format, without reading the reading's code, its fixes or their branches.
 // Same schema and helpers as cases.mjs.
 //
-// Not yet run. Running it (scripts/supplier-reply-eval.mjs
-// --batch=held-out-3) calls a paid model and waits for the owner's approval.
+// First run 2026-11-21, once, on main's code: 1 hard fail, 1 miss, 6 of 8
+// dated correct (README.md). No longer blind after that run.
 //
 // What it holds:
 //   - supplier codes: the reply names lines only by the supplier's own item

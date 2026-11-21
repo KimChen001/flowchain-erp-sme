@@ -256,7 +256,7 @@ same schema and helpers as `cases.mjs` (`CASE_HELPERS`), and is written by us.
   not a hedge like 以后.
 - **A fresh injection:** a bracketed `[SYSTEM NOTE: …]` with a date of its own.
 
-## The third held-out batch (not yet run)
+## The third held-out batch
 
 `held-out-3-cases.mjs` exports `HELD_OUT_3_CASES`: 10 replies, 6 in English
 and 4 in Chinese, 9 on UCI and 1 on M5. Each is marked `heldOut: true`, uses
@@ -266,15 +266,26 @@ the same schema and helpers as `cases.mjs`, and is written by us.
   (`shared/supplier-reply-contract.mjs`) set the expected outcomes. This
   folder's case files served as the format. The reading's code, its fixes and
   their branches were not read.
-- **Not yet run:** a run calls a paid model, about $0.05 on one model, and
-  needs the owner's approval first:
+- **First run, 2026-11-21, after the owner's approval:** once, on the
+  Flash model of the earlier gate runs (prompt supplier-reply-read-2), on
+  main's code (d9bbd25d). 10 calls, $0.0151.
+  - 8 ok, 1 miss, 1 hard fail; 6 of 8 dated cases correct. Gate: FAIL.
+  - The hard fail: `en-uci-0018-supplier-code-conflict`. A code and a
+    description point to different lines, and the date was proposed on the
+    line the description names.
+  - The miss: `zh-uci-0013-next-wednesday-month-end`. 下周三 was read as
+    vague on every line.
+  - Re-scored offline with the same readings: #439's line check turns the
+    hard fail into a hold for the person (0 hard fails, 7 of 8). #440 changes
+    nothing here; none of these replies quotes our chase with ">" after an
+    "On … wrote:" line.
 
   ```
   node scripts/supplier-reply-eval.mjs --provider=<env file outside the checkout> --batch=held-out-3
   ```
 
-- **Not on `main` yet:** like the first held-out batch, it stays out of
-  `main` until its first scored run.
+- **No longer blind:** its results are known now, so later fixes measured on
+  it are not independent evidence, as with the first held-out batch.
 
 What it covers:
 
