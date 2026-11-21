@@ -586,10 +586,12 @@ test('the approval case accepts the seed\'s pending order by number, and still t
     { orderNumber: 'PO-202611-0023', status: 'pending_approval', supplierName: facts.waitingForApproval[0].supplier },
     { orderNumber: 'PO-202611-0024', status: 'issued', supplierName: facts.waitingForApproval[0].supplier },
     { orderNumber: 'PO-202611-0099', status: 'pending_approval', supplierName: 'Someone Else Ltd' },
+    // A supplier whose name only contains the wanted one is another supplier.
+    { orderNumber: 'PO-202611-0098', status: 'pending_approval', supplierName: `${facts.waitingForApproval[0].supplier} Holdings` },
   ]
   const resolved = withResolvedMentions(approval.expect, orders).mentions[0]
   assert.ok(resolved.any.includes('PO-202611-0023'))
-  assert.ok(!resolved.any.includes('PO-202611-0024') && !resolved.any.includes('PO-202611-0099'))
+  assert.ok(!resolved.any.includes('PO-202611-0024') && !resolved.any.includes('PO-202611-0099') && !resolved.any.includes('PO-202611-0098'))
   for (const word of mention.any) assert.ok(resolved.any.includes(word), word)
   assert.equal('orderWaitingApproval' in resolved, false)
   // Without a pending order, the mention is as written.
