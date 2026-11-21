@@ -5,7 +5,7 @@ import { AlertTriangle, ClipboardList, FileClock, Truck } from "lucide-react";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { A, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
-import { ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, StatusChip, listHeadRowStyle, listRowClass, listRowStyle, type StatusTone } from "../../components/ui/listLayout";
+import { ListCard, ListSearchCard, ListStateBlock, ListStateRow, RefreshButton, ResetButton, StatusChip, listHeadRowStyle, listRowClass, listRowStyle, type StatusTone } from "../../components/ui/listLayout";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { POStatusPill } from "../purchasing/components/POStatusPill";
 import { apiJson } from "../../lib/api-client";
@@ -301,6 +301,7 @@ export function OrderFulfillmentLinesPage() {
           "Each purchase order line with what was received and invoiced against it. Select a number to open the order, receipt or invoice.",
           "每条采购订单行的收货和开票情况。点击编号可打开订单、收货单或发票。",
         )}
+        activeFilters={[view === "open" ? "" : view, supplier].filter(Boolean).length}
         actions={<>
           <ResetButton onClick={reset} />
           <RefreshButton onClick={() => void load()} />
@@ -401,8 +402,8 @@ export function OrderFulfillmentLinesPage() {
         </div>
         ) : (
         <div className="divide-y">
-          {state === "loading" && <div className="px-4 py-12 text-center text-sm" style={{ color: A.sub }}>{copy("正在读取订单履约明细…")}</div>}
-          {state === "error" && <div className="px-4 py-12 text-center text-sm" style={{ color: A.sub }}>{procurementErrorText(error, language, ["Try again in a moment.", "请稍后重试。"])}</div>}
+          {state === "loading" && <ListStateBlock state="loading" />}
+          {state === "error" && <ListStateBlock state="error" title={copy("订单履约明细加载失败")} detail={procurementErrorText(error, language, ["Try again in a moment.", "请稍后重试。"])} onRetry={() => void load()} />}
           {state === "loaded" && pageRows.map((row) => (
             <article key={row.id} data-testid={`fulfillment-line-mobile-${row.id}`} className="p-4">
               <div className="flex items-start justify-between gap-3">

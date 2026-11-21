@@ -13,7 +13,7 @@ import { toast } from "sonner";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { A, Card, Chip, Field, inputStyle, useConfirm } from "../../components/ui";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
-import { ExportButton, ListSearchCard, PrimaryButton, RefreshButton, ResetButton, StatusChip, statusToneOf, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, listTableCardsRef, rowActionClass } from "../../components/ui/listLayout";
+import { ExportButton, ListCard, ListSearchCard, ListStateRow, PrimaryButton, RefreshButton, ResetButton, StatusChip, statusToneOf, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, listTableCardsRef, rowActionClass } from "../../components/ui/listLayout";
 import { EntityLink } from "../../components/business/EntityLink";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
@@ -865,8 +865,8 @@ export default function SupplierMasterPage({
           </Field>
       </ListSearchCard>
 
-      <Card>
-        <div className="flex flex-wrap items-end gap-3 px-5 pt-3" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
+      <ListCard title={copy("Supplier list")} total={sortedRows.length} shown={supplierPage.pageRows.length} testId="supplier-list">
+        <div className="flex flex-wrap items-end gap-3 px-4 pt-2 sm:px-5" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
           <div role="tablist" aria-label={copy("Supplier list")} className="flex flex-wrap gap-1">
             {LIST_TABS.map((item) => (
               <button key={item.tab} type="button" role="tab" aria-selected={tab === item.tab} data-testid={`supplier-list-tab-${item.tab}`} onClick={() => setTab(item.tab)}
@@ -887,29 +887,7 @@ export default function SupplierMasterPage({
             </label>
           </div>
         </div>
-        {error ? (
-          <div className="p-8 text-center">
-            <div className="text-sm text-red-700">{copy("供应商数据加载失败")}</div>
-            <button onClick={load} className="mt-3 text-xs text-blue-600">
-              {copy("重试")}
-            </button>
-          </div>
-        ) : loading && rows.length === 0 ? (
-          <div className="p-8 text-center text-xs">{copy("加载中")}</div>
-        ) : rows.length === 0 && filtersApplied ? (
-          <div className="py-14 text-center text-sm" style={{ color: A.sub }}>
-            {copy("没有符合筛选条件的供应商")}
-          </div>
-        ) : rows.length === 0 ? (
-          <div className="py-14 text-center text-sm" style={{ color: A.sub }}>
-            {copy("暂无供应商")}
-            {writes.suppliers && <>
-              <br />
-              <span className="text-xs">{copy("点击“新增供应商”开始维护供应商资料。")}</span>
-            </>}
-          </div>
-        ) : (
-          <div className={tableScrollClass} ref={listTableCardsRef}>
+          <div className={tableScrollClass}>
             <table className={`w-full min-w-[1140px] text-left ${tableBodyTextClass}`}>
               <thead>
                 <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
@@ -934,7 +912,11 @@ export default function SupplierMasterPage({
                 </tr>
               </thead>
               <tbody>
-                {supplierPage.pageRows.map((row, index) => (
+                {error ? <ListStateRow colSpan={writes.suppliers ? 11 : 10} state="error" title={copy("供应商数据加载失败")} onRetry={load} />
+                  : loading && rows.length === 0 ? <ListStateRow colSpan={writes.suppliers ? 11 : 10} state="loading" />
+                  : rows.length === 0 ? <ListStateRow colSpan={writes.suppliers ? 11 : 10} state="empty" title={copy(filtersApplied ? "没有符合筛选条件的供应商" : "暂无供应商")} detail={!filtersApplied && writes.suppliers ? copy("点击“新增供应商”开始维护供应商资料。") : undefined} />
+                  : null}
+                {!error && supplierPage.pageRows.map((row, index) => (
                   <tr key={row.id} className={listRowClass} style={listRowStyle(index, supplierPage.pageRows.length)}>
                     <td className={`${tdIdClass} sticky left-0 z-10 max-w-[240px] bg-white`}>
                       <EntityLink kind="supplier" id={row.id} className={tableLinkClass}>
@@ -968,9 +950,8 @@ export default function SupplierMasterPage({
               </tbody>
             </table>
           </div>
-        )}
         {!error && rows.length > 0 && <ListPager page={supplierPage.page} pageSize={SUPPLIER_PAGE_SIZE} total={sortedRows.length} onPage={supplierPage.setPage} testId="supplier-list-pager" />}
-      </Card>
+      </ListCard>
       {confirmDialog.element}
     </div>
   );

@@ -1311,6 +1311,7 @@ export default function CanonicalProcurementPanel({
         <ListSearchCard
           title={tr("searchTitle")}
           subtitle={tr("searchSubtitle")}
+          activeFilters={[filters.item, filters.requester, statusFilter].filter(Boolean).length}
           actions={<>
             <ResetButton onClick={resetFilters} />
             <RefreshButton onClick={reload} />
@@ -1336,7 +1337,7 @@ export default function CanonicalProcurementPanel({
         </ListSearchCard>
 
         {/* Total: the requests the filters match; shown: those on this page (design audit U-14). */}
-        <ListCard title={tr("listTitle")} total={loaded ? shownRows.length : undefined} shown={paged.pageRows.length} testId="purchase-request-list">
+        <ListCard title={tr("listTitle")} total={loaded ? shownRows.length : undefined} shown={paged.pageRows.length} all={loaded ? rows.length : undefined} testId="purchase-request-list">
           <div className={tableScrollClass}>
             <table className={`w-full min-w-[1100px] text-left ${tableBodyTextClass}`}>
               <thead>

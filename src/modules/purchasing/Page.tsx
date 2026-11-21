@@ -1786,6 +1786,7 @@ export default function PurchasingOrdersPage({
       <ListSearchCard
         title={copy("采购订单查询")}
         subtitle={say("Search POs, source PRs and RFQs, suppliers, receipts, invoices, and match status", "查询采购订单、来源采购申请和询价单、供应商、收货、发票和三单匹配状态")}
+        activeFilters={(["supplier", "skuOrItem", "status", "source", "owner", "etaFrom", "etaTo"] as const).filter((key) => filters[key] !== defaultPurchaseOrderWorkbenchFilters[key]).length}
         actions={<>
           <ResetButton onClick={resetFilters} />
           <RefreshButton onClick={() => loadWorkbench()} />
@@ -1849,7 +1850,7 @@ export default function PurchasingOrdersPage({
         </p>
       ) : null}
 
-      <ListCard title={copy("采购订单列表")} total={filtered.length} shown={paged.pageRows.length}>
+      <ListCard title={copy("采购订单列表")} total={filtered.length} shown={paged.pageRows.length} all={orders.length}>
         <div className={tableScrollClass}>
           {/* Fixed column widths that fit beside the sidebar at 1440px, so the
               pinned Actions column never covers the last data column. */}
