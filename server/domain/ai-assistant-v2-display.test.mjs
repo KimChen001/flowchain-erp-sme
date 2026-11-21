@@ -59,6 +59,17 @@ test('Chinese text gets full-width punctuation next to Chinese words, never betw
   assert.equal(tidy('不客气!'), '不客气！')
   assert.equal(tidy('影响哪些销售订单?'), '影响哪些销售订单？')
   assert.equal(tidy('时间 10:30,数量 1,000 件'), '时间 10:30，数量 1,000 件')
+  // A date's year is no quantity, and 只 starting a word (只是, 只有) is no
+  // unit (2026-11-20: "4 Dec 2026 只是…" was written "4 Dec 2,026").
+  assert.equal(tidy('4 Dec 2026 只是 Acme 给出的日期'), '4 Dec 2026 只是 Acme 给出的日期')
+  assert.equal(tidy('2026-12-04 只是回复里的日期'), 'Dec 4, 2026 只是回复里的日期')
+  assert.equal(tidy('还剩 3500 只，共 2026 只杯子'), '还剩 3,500 只，共 2,026 只杯子')
+  // After a month and day too, as an ISO date is written (#424 review).
+  assert.equal(tidy('Dec 4, 2026 包括两批货'), 'Dec 4, 2026 包括两批货')
+  assert.equal(tidy('Dec 4, 2026 个别行还没到'), 'Dec 4, 2026 个别行还没到')
+  assert.equal(tidy('2026-12-04 个别行还没到'), 'Dec 4, 2026 个别行还没到')
+  assert.equal(tidy('Dec 4th, 2026 件数未定'), 'Dec 4th, 2026 件数未定')
+  assert.equal(tidy('3500 只在仓库里'), '3,500 只在仓库里')
   assert.equal(tidy('累计 19,120 美元,差异 200 USD。'), '累计 $19,120，差异 $200。')
   assert.equal(tidy('见 [指南](https://example.com/a) 和 ![图](a.png)'), '见 [指南](https://example.com/a) 和 ![图](a.png)')
   assert.equal(tidy('1) 第一步\n2) 第二步'), '1) 第一步\n2) 第二步')
