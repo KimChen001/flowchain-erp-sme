@@ -268,6 +268,8 @@ test('stock_projection also runs the weeks at the recorded shipping rate, apart 
   for (const [index, week] of result.atRecordedRate.entries()) {
     balance += week.incoming - 70
     assert.deepEqual([week.from, week.incoming, week.demand, week.endAvailable, week.short], [result.weeks[index].from, result.weeks[index].incoming, 70, balance, balance < 0])
+    // How many short, as a positive figure (2026-11-20: "-71 pcs" was copied).
+    assert.equal(week.shortBy, balance < 0 ? -balance : 0)
   }
   assert.equal(result.firstWeekShortAtRecordedRate, result.atRecordedRate.find((week) => week.short)?.from || null)
   const late = result.notPlacedInAWeek.incomingPastPromisedDate.reduce((sum, entry) => sum + entry.quantity, 0)
@@ -1013,4 +1015,25 @@ test('the reorder list and suggest_purchase_lines order up to the same level', a
     assert.equal(suggested.suggestedQuantity.value, own ? 175 : 122)
     assert.equal(suggested.lotSize, own ? 25 : null)
   }
+})
+
+// 2026-11-20 question set: 65 items due today came by SKU, so the first page
+// was 21xxx codes and the cakestand, fourth furthest below its reorder
+// point, was never named. The furthest below come beside the page.
+test('reorder_list names the order-now items furthest below their reorder point, over every row', async () => {
+  const scenario = aiSkillScenario()
+  const loaded = await loadAiSkillContext(scenario.ctx)
+  const today = (await readAiSkillFacts(loaded)).today
+  const shortfalls = [12, 201, 65, 162, 97, 3, 40, 8]
+  const rows = shortfalls.map((shortfall, index) => ({ sku: `2${String(index).padStart(4, '0')}`, itemName: `Item ${index}`, orderNow: true, orderByDate: today, shortfall, position: 100, reorderPoint: 100 + shortfall, incoming: 0, supplier: { id: 'SUP-1', name: 'Supplier', leadTimeDays: 14 }, purchaseRequest: { quantity: shortfall + 20, raisedToMinimum: index === 2 } }))
+  rows.push({ sku: '29999', itemName: 'Not due', orderNow: false, orderByDate: addCalendarDays(today, 9), shortfall: 500, position: 1, reorderPoint: 501, supplier: { id: 'SUP-1', name: 'Supplier' } })
+  const context = await loadAiSkillContext({ ...scenario.ctx, aiReadServices: { reorderList: { read: async () => ({ rows }) } } })
+  const run = async (args) => (await runAiReadTool('reorder_list', args, { facts: await readAiSkillFacts(context), context })).result
+  const list = await run({ limit: 3 })
+  assert.deepEqual(list.largestShortfallsNow.map((row) => [row.sku, row.shortfall, row.requestQuantity]), [['20001', 201, 221], ['20003', 162, 182], ['20004', 97, 117], ['20002', 65, 85], ['20006', 40, 60]])
+  assert.equal(list.largestShortfallsNow[3].raisedToMinimum, true)
+  // The page itself is as before: by order-by day, then SKU.
+  assert.deepEqual(list.rows.map((row) => row.sku), ['20000', '20001', '20002'])
+  // One item asked for: no summary.
+  assert.equal((await run({ sku: '20001' })).largestShortfallsNow, undefined)
 })

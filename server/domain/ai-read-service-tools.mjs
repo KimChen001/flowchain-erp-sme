@@ -95,6 +95,10 @@ const suggestionFacts = (suggestion) => ({
 // The preferred supplier's lead time and minimum order come from the item's
 // supplier link (preferredSupplierFor in reorder-list.mjs), so they are read
 // from the row's supplier, never from the row itself.
+// How many of the order-now items furthest below their reorder point the
+// reorder list names beside its page.
+const SHORTFALLS_SHOWN = 5
+
 const reorderList = defineAiTool({
   name: 'reorder_list',
   description: 'The reorder list as the inventory page shows it: the items to order now or soon, by the day they must be ordered, with the preferred supplier, its lead time and minimum order quantity, and the quantity it suggests, up to orderUpTo (orderUpToSource: recorded, or assumed as an app default). The stock position is on hand minus reserved, plus every open purchase order line (drafts included) and open purchase request, minus backorders (sales orders not reserved); a late line still counts and is marked late. Safety stock is judged on the stock available now (on hand less reserved), the reorder point on the stock position (adding open orders): an item can be below safety stock while its open orders cover the reorder point. safetyStock and belowSafetyStock give that judgement for each row. Flags name late lines and lines it could not count. counts gives, over every row of the list whatever SKU or supplier is asked, how many are to order now, due within 7 and within 30 days (order-now included), without an order-by date, and raised to the supplier minimum; orderByRange gives the earliest and latest order-by dates of every row: use them instead of counting or reading a range off the rows shown. Rows come a page at a time (shownFrom to shownTo of total); due narrows them and offset gives the next page. Two dates, never one for the other: orderByDate is the last day to place the order (最晚下单日); needByDate, on a row to order now, is when the goods would arrive if ordered today, today plus the lead time (需求日期); a row not due has none, so give it no need-by date. Filter by SKU or supplier. forecast: true adds the forecasting model\'s reorder point (forecastReorderPoint). Transfers between warehouses are not considered.',
@@ -203,7 +207,20 @@ const reorderList = defineAiTool({
     // the 195" could not be read).
     const offset = Math.min(Math.max(0, Number(args.offset) || 0), windowed.length)
     const page = aiToolList(windowed.slice(offset), args.limit)
+    // The items to order now that are furthest below their reorder point,
+    // over every row, not the page: rows due the same day come by SKU, so
+    // the first page of 65 items due today was 21xxx codes, and answers
+    // picked their "most urgent" from it (2026-11-20 question set: the
+    // cakestand, fourth furthest below, was never named).
+    const nowRows = rows.filter((row) => row.orderNow === true && Number.isFinite(Number(row.shortfall)))
+    const largestShortfallsNow = !args.sku && nowRows.length > 1
+      ? [...nowRows].sort((a, b) => Number(b.shortfall) - Number(a.shortfall) || text(a.sku).localeCompare(text(b.sku))).slice(0, SHORTFALLS_SHOWN).map((row) => ({
+        sku: row.sku, itemName: row.itemName || row.name || null, position: row.position ?? null, reorderPoint: row.reorderPoint ?? null, shortfall: row.shortfall, incoming: row.incoming ?? null,
+        requestQuantity: row.requestQuantity, raisedToMinimum: row.raisedToMinimum, ref: row.ref,
+      }))
+      : null
     return {
+      ...(largestShortfallsNow ? { largestShortfallsNow } : {}),
       asOf: facts.asOf, summary: list.summary && typeof list.summary === 'object' ? primitives(list.summary, Object.keys(list.summary)) : null, notJudged: array(list.notJudged).length, limitations: array(list.dataLimitations), counts,
       orderByRange: dated.length ? { earliest: dated[0], latest: dated.at(-1) } : null,
       forecastAvailable: Boolean(forecastClient),

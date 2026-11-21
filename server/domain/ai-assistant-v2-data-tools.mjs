@@ -1217,7 +1217,10 @@ const stockProjection = defineAiTool({
     let balance = projection.availableToday ?? 0
     const atRecordedRate = projection.weeks.map((week) => {
       balance += week.incoming - weekly
-      return { from: week.from, to: week.to, incoming: week.incoming, demand: weekly, endAvailable: balance, belowSafetyStock: safety !== null && safety !== undefined && balance < safety, short: balance < 0 }
+      // shortBy: how many units short at the week's end, as a positive
+      // figure (2026-11-20 question set: "the shortfall grows to about -71
+      // pcs" was copied from endAvailable, and most answers gave no figure).
+      return { from: week.from, to: week.to, incoming: week.incoming, demand: weekly, endAvailable: balance, belowSafetyStock: safety !== null && safety !== undefined && balance < safety, short: balance < 0, shortBy: balance < 0 ? -balance : 0 }
     })
     return {
       ...projection,
