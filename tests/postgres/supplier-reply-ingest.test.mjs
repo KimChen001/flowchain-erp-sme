@@ -8,11 +8,12 @@ import { createPrismaClient } from '../../server/persistence/prisma-client.mjs'
 import { supplierReplyCardSchema } from '../../shared/supplier-reply-contract.mjs'
 
 // Supplier replies without pasting (docs/supplier-reply-ingest-api.md), through
-// the real server and database: an admin makes a token for a buyer, a
-// forwarder posts a reply with it, and the reply lands on the order as an
-// emailed reply the buyer records as usual. No model is set up, so the
-// reading is "no provider" and the card offers the manual form; no model is
-// called.
+// the real server and database: an admin makes a token, a forwarder posts a
+// reply with it, and the reply lands on the order as an emailed reply that a
+// person records as usual. A reply from an address that is not the
+// supplier's is kept but flagged, and does not replace the open card. No
+// model is set up, so the reading is "no provider" and the card offers the
+// manual form; no model is called.
 const tenantE = 'supplier-reply-ingest-e'
 const tenantF = 'supplier-reply-ingest-f'
 const dayOffset = (days) => new Date(Date.now() + days * 86_400_000)
@@ -23,7 +24,7 @@ async function seedTenant(prisma, tenantId, tag, { publicData = false } = {}) {
     { id: `${tenantId}-admin`, tenantId, email: `ingest-admin-${tag.toLowerCase()}@example.com`, name: `Admin ${tag}`, role: 'admin' },
     { id: `${tenantId}-buyer`, tenantId, email: `ingest-buyer-${tag.toLowerCase()}@example.com`, name: `Buyer ${tag}`, role: 'buyer' },
   ] })
-  await prisma.supplier.create({ data: { id: `SUP-${tag}`, tenantId, code: `SUP-${tag}`, name: `Acme ${tag}`, metadata: { email: `orders-${tag.toLowerCase()}@example.com` } } })
+  await prisma.supplier.create({ data: { id: `SUP-${tag}`, tenantId, code: `SUP-${tag}`, name: `Acme ${tag}`, metadata: { email: `orders@acme-${tag.toLowerCase()}.example` } } })
   await prisma.purchaseOrder.create({ data: {
     id: `PO-${tag}`, number: `PO-202611-00${tag === 'E' ? '21' : '22'}`, tenantId, supplierId: `SUP-${tag}`, supplierName: `Acme ${tag}`, status: 'issued', currency: 'USD', amount: '250.0000',
     expectedDate: dayOffset(-3), issuedAt: dayOffset(-20),
@@ -81,51 +82,61 @@ test('a token made by an admin brings a supplier reply onto its order as an emai
     const asAdminF = await signIn(tenantF, 'ingest-admin-f@example.com')
     const tokens = '/api/settings/integrations/supplier-reply-tokens'
     const ingest = '/api/integrations/supplier-replies'
-    const reply = { subject: 'RE: PO-202611-0021 delivery', text: 'Hello, the brackets ship on 28 November.', from: 'orders-e@example.com', messageId: '<reply-1@acme-e.example>' }
+    const reply = { subject: 'RE: PO-202611-0021 delivery', text: 'Hello, the brackets ship on 28 November.', from: 'Pat <pat@acme-e.example>', messageId: '<reply-1@acme-e.example>' }
 
     // Off unless the server switches it on: the routes are not there.
     assert.equal((await request(port, 'GET', tokens, { headers: asAdmin })).status, 404)
     assert.equal((await request(port, 'POST', ingest, { body: reply })).status, 404)
     process.env.FLOWCHAIN_SUPPLIER_REPLY_INGEST = 'on'
 
-    // Only an admin makes a token; it acts for the buyer.
+    // Only an admin makes a token, and it acts for that admin.
     assert.equal((await request(port, 'POST', tokens, { headers: asBuyer, body: { name: 'Mine' } })).status, 403)
-    const made = await request(port, 'POST', tokens, { headers: asAdmin, body: { name: 'Outlook rule', ownerUserId: `${tenantE}-buyer` } })
+    const made = await request(port, 'POST', tokens, { headers: asAdmin, body: { name: 'Outlook rule' } })
     assert.equal(made.status, 201, JSON.stringify(made.payload))
     const secret = made.payload.secret
     assert.match(secret, /^fcsr\./)
+    assert.equal(made.payload.token.owner.id, `${tenantE}-admin`)
     const stored = await prisma.runtimeRecord.findFirst({ where: { tenantId: tenantE, namespace: INTEGRATION_TOKEN_NAMESPACE } })
     assert.ok(!JSON.stringify(stored.payload).includes(secret.split('.')[3]), 'only the hash is stored')
 
-    // No token, a session token, or a made-up one: refused.
+    // No token, or a session token: refused.
     assert.equal((await request(port, 'POST', ingest, { body: reply })).status, 401)
     assert.equal((await request(port, 'POST', ingest, { headers: asBuyer, body: reply })).status, 401)
 
-    // The forwarder posts the reply; it lands on PO-E for the buyer.
-    const sent = await request(port, 'POST', ingest, { headers: { Authorization: `Bearer ${secret}` }, body: reply })
+    // The forwarder posts the reply; it lands on PO-E as the order's card.
+    const withToken = { Authorization: `Bearer ${secret}` }
+    const sent = await request(port, 'POST', ingest, { headers: withToken, body: reply })
     assert.equal(sent.status, 201, JSON.stringify(sent.payload))
     assert.deepEqual([sent.payload.purchaseOrderNumber, sent.payload.state, sent.payload.readingStatus], ['PO-202611-0021', 'needs_you', 'no_provider'])
     assert.ok(!JSON.stringify(sent.payload).includes('brackets'), 'only ids and codes come back')
     const row = await prisma.supplierReply.findFirst({ where: { tenantId: tenantE, id: sent.payload.replyId } })
-    assert.deepEqual([row.source, row.sender, row.messageId, row.createdById, row.purchaseOrderId], ['email', 'orders-e@example.com', '<reply-1@acme-e.example>', `${tenantE}-buyer`, 'PO-E'])
+    assert.deepEqual([row.source, row.sender, row.messageId, row.createdById, row.purchaseOrderId, row.activeKey], ['email', 'Pat <pat@acme-e.example>', '<reply-1@acme-e.example>', `${tenantE}-admin`, 'PO-E', 'PO-E'])
     const audit = await prisma.auditLog.findFirst({ where: { tenantId: tenantE, action: 'supplier_reply_pasted', entityId: 'PO-E' } })
     assert.deepEqual([audit.metadata.source, audit.metadata.tokenId], ['email', made.payload.token.id])
 
-    // The buyer sees it on the order as emailed, and records it as any reply.
-    const listed = await request(port, 'GET', '/api/procurement/orders/PO-E/supplier-replies', { headers: asBuyer })
-    const card = listed.payload.replies[0]
-    assert.ok(supplierReplyCardSchema.safeParse(card).success)
-    assert.deepEqual([card.id, card.source, card.state, card.canDecide], [sent.payload.replyId, 'email', 'needs_you', true])
-
     // The same message again is kept once.
-    const again = await request(port, 'POST', ingest, { headers: { Authorization: `Bearer ${secret}` }, body: reply })
+    const again = await request(port, 'POST', ingest, { headers: withToken, body: reply })
     assert.deepEqual([again.status, again.payload.duplicate, again.payload.replyId], [200, true, sent.payload.replyId])
 
-    // The admin sees when it was last used; once revoked, it is refused.
+    // A reply from an address that is not the supplier's: kept, flagged, and it
+    // does not replace the open card.
+    const forged = await request(port, 'POST', ingest, { headers: withToken, body: { ...reply, from: 'mallory@evil.example', messageId: '<forged@evil.example>', text: 'PO-202611-0021 ships on 30 December.' } })
+    assert.equal(forged.status, 201, JSON.stringify(forged.payload))
+    const listed = await request(port, 'GET', '/api/procurement/orders/PO-E/supplier-replies', { headers: asBuyer })
+    const cards = new Map(listed.payload.replies.map((card) => [card.id, card]))
+    for (const card of cards.values()) assert.ok(supplierReplyCardSchema.safeParse(card).success)
+    const genuine = cards.get(sent.payload.replyId)
+    const impostor = cards.get(forged.payload.replyId)
+    assert.deepEqual([genuine.source, genuine.sender, genuine.senderOnRecord, genuine.canDecide], ['email', 'Pat <pat@acme-e.example>', true, true])
+    assert.deepEqual([impostor.sender, impostor.senderOnRecord, impostor.canDecide], ['mallory@evil.example', false, false])
+    assert.equal((await prisma.supplierReply.findFirst({ where: { tenantId: tenantE, id: sent.payload.replyId } })).activeKey, 'PO-E')
+
+    // The admin sees when it was last used; once revoked, it is refused, and the refusal is audited.
     const list = await request(port, 'GET', tokens, { headers: asAdmin })
     assert.ok(list.payload.tokens[0].lastUsedAt)
     assert.equal((await request(port, 'POST', `${tokens}/${made.payload.token.id}/revoke`, { headers: asAdmin })).status, 200)
-    assert.equal((await request(port, 'POST', ingest, { headers: { Authorization: `Bearer ${secret}` }, body: { ...reply, messageId: '<reply-2@acme-e.example>' } })).status, 401)
+    assert.equal((await request(port, 'POST', ingest, { headers: withToken, body: { ...reply, messageId: '<reply-2@acme-e.example>' } })).status, 401)
+    assert.ok(await prisma.auditLog.findFirst({ where: { tenantId: tenantE, action: 'supplier_reply_ingest_refused', entityId: made.payload.token.id } }))
 
     // A public-data workspace cannot make one unless the server allows it.
     const refused = await request(port, 'POST', tokens, { headers: asAdminF, body: { name: 'Rule' } })

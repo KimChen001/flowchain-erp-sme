@@ -96,7 +96,12 @@ test('only the numbering prefixes, the four invoice matching tolerances, PO appr
     'routes/settings-runtime.routes.mjs',
     'services/procurement-request-command-service.mjs',
     'services/supplier-follow-up-email-service.mjs',
+    'services/supplier-reply-ingest.mjs',
   ])
+  // Supplier reply ingestion reads only the AI switch, as pasting a reply does (draft, docs/supplier-reply-ingest-api.md).
+  const ingest = sources.find(file => file.path === 'services/supplier-reply-ingest.mjs').source
+  assert.deepEqual([...new Set([...ingest.matchAll(/\.ai\.([A-Za-z]+)/g)].map(match => match[1]))], ['modelAssistEnabled'])
+  assert.doesNotMatch(ingest, /\.(review|numbering|modules|advanced|documents)\./)
   // The assistant reads only the AI switch (ai-workspace-access.mjs).
   const access = sources.find(file => file.path === 'domain/ai-workspace-access.mjs').source
   assert.deepEqual([...new Set([...access.matchAll(/\.ai\.([A-Za-z]+)/g)].map(match => match[1]))], ['modelAssistEnabled'])

@@ -45,6 +45,9 @@ export type SupplierReplyCardData = {
   orderVersion: number;
   supplierName: string | null;
   source: "paste" | "email";
+  // An emailed reply's sender, and whether it is the supplier's email on record.
+  sender?: string | null;
+  senderOnRecord?: boolean | null;
   receivedOn: string;
   createdAt: string;
   state: SupplierReplyState;

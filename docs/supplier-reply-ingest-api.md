@@ -9,11 +9,20 @@ Today a person pastes a supplier's email reply onto a purchase order
 (docs/supplier-reply-dates-design.md). This endpoint lets a forwarder hand the
 same reply to FlowChain instead: a mail rule, Zapier, Power Automate, or a
 script. The forwarder posts the email with a workspace integration token, and
-the reply then takes the paste path unchanged:
+the reply then takes the paste path:
 
 1. the same one reading with no tools, and the same checks in code;
-2. the same card on the order, marked "emailed" instead of "pasted";
+2. the same card on the order, marked "By email", with the sender shown;
 3. a person still records it. The endpoint never changes an order.
+
+Two things differ from a paste, because anyone who can write to the forwarded
+mailbox can reach the endpoint:
+
+- **The sender is checked.** The card shows the sender, and says so when it is
+  not the supplier's email on record: the same address, or the same company
+  domain (never a public mailbox domain such as gmail.com).
+- **An emailed reply never replaces an open card.** It becomes the card only
+  when the order has none; otherwise it is kept beside it.
 
 ## Switching it on
 
@@ -21,11 +30,12 @@ the reply then takes the paste path unchanged:
 | --- | --- |
 | `FLOWCHAIN_SUPPLIER_REPLY_INGEST=on` | The routes exist. Without it all four answer 404. |
 | `FLOWCHAIN_SUPPLIER_REPLY_INGEST_PUBLIC_DATA=on` | Public-data workspaces may use it too. Without it they are refused. |
-| `FLOWCHAIN_SUPPLIER_REPLY_INGEST_PER_DAY` | Replies each workspace may send a day (default 50, as inbound mail in the reply design §4.11; at most 1000). |
+| `FLOWCHAIN_SUPPLIER_REPLY_INGEST_PER_DAY` | Emailed replies each workspace may keep in any 24 hours (default 50, the inbound mail limit of the reply design §4.11; at most 1000). |
 
 A workspace also needs:
 
-- a token, made by an admin (`settings.workspace.manage`);
+- a token, made by an admin (`settings.workspace.manage`) who may revise
+  purchase orders;
 - AI reading switched on, where the deployment requires the opt-in
   (`FLOWCHAIN_AI_WORKSPACE_OPT_IN`), as for pasting. Over the monthly cap or
   with no model set up, the reply is still kept and the card offers the
@@ -38,26 +48,32 @@ A workspace also needs:
 - Only a SHA-256 hash of the secret is stored, with its last four characters
   as a hint. Tokens are kept as runtime records
   (`integration.supplier-reply-token`), so no table is added.
-- A token acts for its owner: an active member who may revise purchase
-  orders, chosen by the admin (the admin by default). Every check of the
-  paste path runs as that member, so a token can do no more than its owner,
-  and only this one action.
-- A workspace holds at most five active tokens. Revoking is immediate.
+- **A token acts for the admin who makes it.** An admin cannot make one that
+  acts as another member. Every check of the paste path runs as that admin,
+  so a token can do no more than its admin, and only this one action.
+- **A token stops working** when it expires (90 days by default, 1 to 365 as
+  the admin chooses), when it is revoked, or when its admin is disabled or
+  changes role, as the local MCP token (#391) does.
+- A workspace holds at most five active tokens. They are counted and created
+  in one serializable transaction.
 - Every refused token gets the same 401, whether it is missing, malformed,
-  unknown, wrong or revoked.
+  unknown, wrong, expired or revoked.
+- Refusals are audited (`supplier_reply_ingest_refused`, codes and ids only)
+  once the token's workspace is known.
 
 ## Routes
 
 | Route | Who | What |
 | --- | --- | --- |
 | `POST /api/integrations/supplier-replies` | a token, never a session | Hand over one reply. |
-| `GET /api/settings/integrations/supplier-reply-tokens` | admins | The tokens: name, hint, owner, made, last used, revoked. Never the hash. |
-| `POST /api/settings/integrations/supplier-reply-tokens` | admins | `{ name, ownerUserId? }`: a new token, shown once. |
+| `GET /api/settings/integrations/supplier-reply-tokens` | admins | The tokens: name, hint, owner, made, expires, last used, revoked. Never the hash. |
+| `POST /api/settings/integrations/supplier-reply-tokens` | admins | `{ name, expiresInDays? }`: a new token for this admin, shown once. |
 | `POST /api/settings/integrations/supplier-reply-tokens/:id/revoke` | admins | Revoke one. |
 
 The first route is the only one past the session gate
-(server/bootstrap/api-access-gate.mjs). It reads only its bearer token; a
-browser session never counts there.
+(server/bootstrap/api-access-gate.mjs). It reads only its bearer token, and
+it reads the body only once the token is accepted. A browser session never
+counts there.
 
 ### Handing over a reply
 
@@ -69,7 +85,7 @@ Content-Type: application/json
 {
   "subject": "RE: PO-202611-0021 delivery",
   "text": "Hello, the brackets ship on 28 November.",
-  "from": "orders@supplier.example",
+  "from": "Pat <pat@supplier.example>",
   "messageId": "<reply-1@supplier.example>",
   "receivedOn": "2026-11-20",
   "purchaseOrder": "PO-202611-0021"
@@ -81,29 +97,38 @@ Content-Type: application/json
 - `purchaseOrder` is optional. Without it the subject and text are searched
   for order numbers (PREFIX-YYYYMM-NNNN). Exactly one open order must be
   named; an open order is chosen over a closed one.
-- `messageId` is optional. The same message sent twice is kept once.
+- `from` is the From header; it is checked against the supplier's email.
+- `messageId` is optional, printable ASCII. The same message sent twice is
+  kept once. The message is claimed before the reading, so a retry while the
+  first copy is read gets `duplicate: true, pending: true` and no second
+  reading. A reading that fails frees the message for a retry.
 - `receivedOn` is optional, today in the workspace by default, within the
   last 60 days.
 
 The answer carries ids and codes only:
 
 ```json
-{ "duplicate": false, "replyId": "…", "purchaseOrderId": "…", "purchaseOrderNumber": "PO-202611-0021", "state": "needs_you", "readingStatus": "read" }
+{ "duplicate": false, "pending": false, "replyId": "…", "purchaseOrderId": "…", "purchaseOrderNumber": "PO-202611-0021", "state": "needs_you", "readingStatus": "read" }
 ```
 
 | Status | Code | When |
 | --- | --- | --- |
 | 201 | | Kept and read; the card waits on the order. |
-| 200 | (`duplicate: true`) | This message was already handed over. |
+| 200 | (`duplicate: true`) | This message was already handed over, or is being read. |
+| 400 | `SUPPLIER_REPLY_INGEST_INVALID_BODY` | The body is not JSON. |
 | 401 | `INTEGRATION_TOKEN_INVALID` | Any token that is not accepted. |
 | 403 | `SUPPLIER_REPLY_INGEST_AI_OFF` | AI reading is off where the opt-in is required. |
 | 403 | `SUPPLIER_REPLY_INGEST_PUBLIC_DATA` | A public-data workspace, not allowed by the server. |
-| 403 | `INTEGRATION_TOKEN_OWNER_INACTIVE` | The member the token acts for is no longer active. |
-| 403 | `AUTHORIZATION_…` | The owner may no longer revise purchase orders. |
+| 403 | `AUTHORIZATION_…` | The admin may no longer revise purchase orders. |
 | 409 | `SUPPLIER_REPLY_ORDER_NOT_OPEN` | The order no longer takes dates. |
 | 422 | `SUPPLIER_REPLY_INGEST_NO_ORDER` / `…_ORDER_NOT_FOUND` / `…_SEVERAL_ORDERS` | No order, an unknown one, or more than one open one. |
 | 422 | `SUPPLIER_REPLY_INGEST_INVALID` | The body does not match the fields above. |
-| 429 | `SUPPLIER_REPLY_INGEST_RATE_LIMITED` | Over the daily limit; `Retry-After` says when to try again. |
+| 429 | `SUPPLIER_REPLY_INGEST_RATE_LIMITED` | The workspace kept its daily number of emailed replies; `Retry-After` says when one drops out of the 24 hours. |
+
+The daily number counts the emailed replies kept in the database, after the
+request is checked, so refused requests do not use it up and every server
+process sees the same count. Two requests at the same moment may each pass it
+by one.
 
 ## Not done in this draft
 
@@ -111,18 +136,12 @@ The answer carries ids and codes only:
   routes only.
 - **Answers wait for the reading.** The reading takes up to 45 seconds, so a
   forwarder with a shorter timeout may give up while the reply is still
-  kept. A queue would answer at once.
-- **The rate limit counts per server process.** Several processes would need
-  the count in the database.
-- **The sender is stored but not checked** against the supplier's email
-  address. The token is the trust boundary. Inbound mail (reply design
-  §4.11) shows "sender not on record" on the card; this would too.
-- **Tokens do not expire**, and refused calls are not audited. The local MCP
-  prototype (#391) expires its token after 30 days, ends it when the user
-  signs out or changes role, and audits every call, refusals included. If
-  both go ahead, they should share one token module and these rules.
+  kept; its retry is then a duplicate. A queue would answer at once.
 - **One order per reply.** An email about several orders is refused and must
   be sent once per order.
 - **Attachments are not read.** Only the plain-text body is used.
-- **Inbound mail** (step 3 of the design) is still separate and needs a
+- **No SPF or DKIM result.** The sender check uses the From address only;
+  inbound mail (reply design §4.11) would add the provider's SPF and DKIM
+  results.
+- **Inbound mail** (step 3 of the reply design) is still separate and needs a
   deployment.

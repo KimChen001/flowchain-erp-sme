@@ -3,42 +3,62 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { apiAccessDenial } from '../bootstrap/api-access-gate.mjs'
 import {
-  INTEGRATION_TOKEN_LIMIT, INTEGRATION_TOKEN_NAMESPACE, INTEGRATION_TOKEN_USE_NAMESPACE,
-  createIngestRateLimiter, formatIntegrationToken, hashIntegrationSecret, integrationSecretMatches, newIntegrationToken, parseIntegrationToken,
+  INTEGRATION_MESSAGE_NAMESPACE, INTEGRATION_TOKEN_LIMIT, INTEGRATION_TOKEN_NAMESPACE, INTEGRATION_TOKEN_USE_NAMESPACE,
+  formatIntegrationToken, hashIntegrationSecret, integrationSecretMatches, newIntegrationToken, parseIntegrationToken, senderAddress, senderOnRecord,
 } from './integration-tokens.mjs'
 import { handleSupplierReplyIngestRoute } from '../routes/supplier-reply-ingest.routes.mjs'
 import { createSupplierReplyIngestService, orderNumbersIn, supplierReplyIngestEnabled, supplierReplyIngestPerDay } from '../services/supplier-reply-ingest.mjs'
-import { supplierReplyPasteRequestSchema } from '../../shared/supplier-reply-contract.mjs'
+import { supplierReplyCardSchema, supplierReplyPasteRequestSchema } from '../../shared/supplier-reply-contract.mjs'
 
 // Supplier replies without pasting (docs/supplier-reply-ingest-api.md): a
 // workspace integration token, stored as a hash, lets a forwarder post a
-// reply; it then takes the paste path as the token's owner. Checked here with
-// an in-memory store, a stand-in paste path and stated actors; the paste path
-// itself is covered by tests/postgres/supplier-replies.test.mjs.
+// reply; it then takes the paste path as the admin who made the token.
+// Checked here with an in-memory store, a stand-in paste path and stated
+// actors; the paste path itself is covered by the Postgres tests
+// (tests/postgres/supplier-replies.test.mjs, supplier-reply-ingest.test.mjs).
 const read = (file) => readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8')
 const TENANT = 'tenant-ingest'
 const SECRET = 'A'.repeat(39) + 'wxyz'
 const ID = '0b6f5c1e-8d1a-4c51-9a3e-2f7d1c0e9b42'
+const NOW = Date.parse('2026-11-21T12:00:00Z')
+const DAY = 24 * 60 * 60 * 1000
 
 function store({ tenants = {}, users = [], orders = [], replies = [], publicData = [] } = {}) {
   const records = []
   const audit = []
   const key = (where) => where.tenantId_namespace_recordKey
   const found = (where) => records.find((row) => row.tenantId === key(where).tenantId && row.namespace === key(where).namespace && row.recordKey === key(where).recordKey) || null
+  const replyMatches = (reply, where) => reply.tenantId === where.tenantId
+    && (where.id === undefined || reply.id === where.id)
+    && (where.messageId === undefined || reply.messageId === where.messageId)
+    && (where.source === undefined || reply.source === where.source)
+    && (!where.createdAt?.gt || new Date(reply.createdAt) > where.createdAt.gt)
   for (const tenantId of publicData) records.push({ id: `note-${tenantId}`, tenantId, namespace: 'workspace.public-data', recordKey: 'note', payload: { dataset: 'uci', sourceWindow: { first: '2010-12-01', last: '2011-12-09' }, window: { first: '2025-12-01', last: '2026-11-20' }, shiftDays: 5470 }, createdAt: new Date() })
   const prisma = {
-    records, audit,
+    records, audit, replies, users,
     tenant: { findUnique: async ({ where }) => (tenants[where.id] ? { id: where.id, operationalSettings: tenants[where.id] } : null) },
     user: {
       findFirst: async ({ where }) => users.find((user) => user.id === where.id && user.tenantId === where.tenantId) || null,
       findMany: async ({ where }) => users.filter((user) => user.tenantId === where.tenantId && where.id.in.includes(user.id)),
     },
     purchaseOrder: { findMany: async ({ where }) => orders.filter((order) => order.tenantId === where.tenantId && where.number.in.includes(order.number)) },
-    supplierReply: { findFirst: async ({ where }) => replies.find((reply) => reply.tenantId === where.tenantId && reply.messageId === where.messageId) || null },
+    supplierReply: {
+      findFirst: async ({ where, orderBy }) => {
+        const rows = replies.filter((reply) => replyMatches(reply, where))
+        if (orderBy?.createdAt === 'asc') rows.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+        return rows[0] || null
+      },
+      count: async ({ where }) => replies.filter((reply) => replyMatches(reply, where)).length,
+    },
     runtimeRecord: {
       findUnique: async ({ where }) => found(where),
       findMany: async ({ where }) => records.filter((row) => row.tenantId === where.tenantId && row.namespace === where.namespace),
-      create: async ({ data }) => { records.push({ ...data, createdAt: new Date() }); return data },
+      create: async ({ data }) => {
+        if (records.some((row) => row.tenantId === data.tenantId && row.namespace === data.namespace && row.recordKey === data.recordKey)) throw Object.assign(new Error('Unique constraint failed'), { code: 'P2002' })
+        const row = { ...data, createdAt: new Date() }
+        records.push(row)
+        return row
+      },
       update: async ({ where, data }) => Object.assign(found(where), data),
       upsert: async ({ where, create, update }) => {
         const row = found(where)
@@ -46,6 +66,7 @@ function store({ tenants = {}, users = [], orders = [], replies = [], publicData
         records.push({ ...create, createdAt: new Date() })
         return create
       },
+      delete: async ({ where }) => { const row = found(where); records.splice(records.indexOf(row), 1); return row },
     },
     auditLog: { create: async ({ data }) => { audit.push(data); return data } },
     $transaction: async (work) => work(prisma),
@@ -56,20 +77,16 @@ function store({ tenants = {}, users = [], orders = [], replies = [], publicData
 const REVISE = 'procurement.purchase_order.revise'
 const MANAGE = 'settings.workspace.manage'
 const actors = {
-  admin: { id: 'admin', permissions: [MANAGE, REVISE] },
-  buyer: { id: 'buyer', permissions: [REVISE] },
-  viewer: { id: 'viewer', permissions: ['procurement.purchase_order.read'] },
+  admin: [MANAGE, REVISE],
+  'admin-no-revise': [MANAGE],
+  buyer: [REVISE],
 }
-const resolveActor = async (_prisma, identity) => {
-  const known = actors[identity.userId]
-  return { complete: true, authenticated: true, tenantId: identity.tenantId, user: { id: identity.userId }, roleIds: [], permissionCodes: new Set(known?.permissions || []) }
-}
-const session = (userId) => ({ authenticated: true, tenantId: TENANT, userId, role: 'manager' })
-const users = [
+const resolveActor = async (_prisma, identity) => ({ complete: true, authenticated: true, tenantId: identity.tenantId, user: { id: identity.userId }, roleIds: [], permissionCodes: new Set(actors[identity.userId] || []) })
+const session = (userId) => ({ authenticated: true, tenantId: TENANT, userId, role: 'admin' })
+const people = () => [
   { id: 'admin', tenantId: TENANT, name: 'Ada Admin', role: 'admin', status: 'active' },
+  { id: 'admin-no-revise', tenantId: TENANT, name: 'Ari Admin', role: 'admin', status: 'active' },
   { id: 'buyer', tenantId: TENANT, name: 'Bo Buyer', role: 'buyer', status: 'active' },
-  { id: 'viewer', tenantId: TENANT, name: 'Vi Viewer', role: 'viewer', status: 'active' },
-  { id: 'gone', tenantId: TENANT, name: 'Gone', role: 'buyer', status: 'disabled' },
 ]
 const orders = [
   { id: 'po-12', tenantId: TENANT, number: 'PO-202611-0012', status: 'issued' },
@@ -77,38 +94,37 @@ const orders = [
   { id: 'po-09', tenantId: TENANT, number: 'PO-202610-0009', status: 'closed' },
 ]
 
-function pasteRecorder() {
+// A stand-in paste path: records each call and keeps an emailed reply, as the
+// real one does (source, message id, created now).
+function pasteRecorder(prisma, clock) {
   const calls = []
   return {
     calls,
     pasteReply: async (orderId, body, context, options) => {
       calls.push({ orderId, body, context, options })
-      return { reply: { id: `reply-${calls.length}`, state: 'proposed', readingStatus: 'read', text: body.text, supplierName: 'Acme' } }
+      const reply = { id: `reply-${calls.length}`, tenantId: context.identity.tenantId, purchaseOrderId: orderId, source: 'email', messageId: options.origin.messageId || null, state: 'proposed', readingStatus: 'read', createdAt: new Date(clock()) }
+      prisma.replies.push(reply)
+      return { reply: { ...reply, text: body.text } }
     },
   }
 }
 
-function setup({ env = {}, tenantSettings = {}, publicData = [], replies = [], limit, nowMs } = {}) {
-  const prisma = store({ tenants: { [TENANT]: tenantSettings }, users, orders, replies, publicData })
-  const paste = pasteRecorder()
-  let clock = nowMs ?? Date.parse('2026-11-21T12:00:00Z')
-  const now = () => new Date(clock)
-  const service = createSupplierReplyIngestService({
-    prisma, replies: paste, env, now, resolveActor,
-    limiter: createIngestRateLimiter({ limit: limit ?? 60, now: () => clock }),
-  })
+function setup({ env = {}, tenantSettings = {}, publicData = [], replies = [] } = {}) {
+  const prisma = store({ tenants: { [TENANT]: tenantSettings }, users: people(), orders, replies, publicData })
+  let clock = NOW
+  const paste = pasteRecorder(prisma, () => clock)
+  const service = createSupplierReplyIngestService({ prisma, replies: paste, env, now: () => new Date(clock), resolveActor })
   return { prisma, paste, service, advance: (ms) => { clock += ms } }
 }
+const send = (service, authorization, body) => service.ingest({ authorization, readBody: async () => body })
 
-test('a token reads fcsr.<workspace>.<id>.<secret>; only the hash and a four-character hint are stored', () => {
-  const made = newIntegrationToken({ tenantId: TENANT, name: 'Mail rule', ownerUserId: 'buyer', createdById: 'admin', idFactory: () => ID, secretFactory: () => SECRET })
+test('a token reads fcsr.<workspace>.<id>.<secret>; only the hash, a hint and its expiry are stored', () => {
+  const made = newIntegrationToken({ tenantId: TENANT, name: 'Mail rule', owner: { id: 'admin', role: 'Admin' }, createdById: 'admin', now: new Date(NOW), idFactory: () => ID, secretFactory: () => SECRET })
   assert.equal(made.token, formatIntegrationToken({ tenantId: TENANT, tokenId: ID, secret: SECRET }))
   assert.match(made.token, /^fcsr\.[A-Za-z0-9_-]+\.[0-9a-f-]{36}\.[A-Za-z0-9_-]{43}$/)
   assert.deepEqual(parseIntegrationToken(`Bearer ${made.token}`), { tenantId: TENANT, tokenId: ID, secret: SECRET })
-  assert.equal(made.payload.hash, hashIntegrationSecret(SECRET))
-  assert.equal(made.payload.hint, 'wxyz')
+  assert.deepEqual([made.payload.hash, made.payload.hint, made.payload.ownerRole, made.payload.expiresAt], [hashIntegrationSecret(SECRET), 'wxyz', 'admin', '2027-02-19T12:00:00.000Z'])
   assert.ok(!JSON.stringify(made.payload).includes(SECRET), 'the secret is never stored')
-  assert.equal(made.payload.scope, 'supplier_replies.ingest')
   assert.ok(integrationSecretMatches(made.payload, SECRET))
   assert.ok(!integrationSecretMatches(made.payload, 'B'.repeat(43)))
   for (const bad of ['', 'Bearer', made.token.replace('fcsr.', 'fcxx.'), made.token.slice(0, -1), `${made.token}.extra`, made.token.replace(ID, 'not-an-id'), `fcsr.${Buffer.from(TENANT).toString('base64url')}=.${ID}.${SECRET}`]) {
@@ -116,19 +132,16 @@ test('a token reads fcsr.<workspace>.<id>.<secret>; only the hash and a four-cha
   }
 })
 
-test('the rate limit counts each workspace on its own and frees up as the window passes', () => {
-  let clock = 0
-  const limiter = createIngestRateLimiter({ limit: 2, windowMs: 1000, now: () => clock })
-  assert.ok(limiter.take('a').ok)
-  assert.ok(limiter.take('a').ok)
-  const refused = limiter.take('a')
-  assert.deepEqual([refused.ok, refused.retryAfterSeconds], [false, 1])
-  assert.ok(limiter.take('b').ok)
-  clock = 1000
-  assert.ok(limiter.take('a').ok)
-  assert.equal(supplierReplyIngestPerDay({}), 50)
-  assert.equal(supplierReplyIngestPerDay({ FLOWCHAIN_SUPPLIER_REPLY_INGEST_PER_DAY: '12' }), 12)
-  assert.equal(supplierReplyIngestPerDay({ FLOWCHAIN_SUPPLIER_REPLY_INGEST_PER_DAY: '0' }), 50)
+test('a sender is on record by the same address, or the same company domain but never a public mailbox domain', () => {
+  assert.equal(senderAddress('Pat Lee <Pat@Acme.example>'), 'pat@acme.example')
+  assert.equal(senderAddress('not an address'), null)
+  assert.equal(senderOnRecord('Pat <pat@acme.example>', 'orders@acme.example'), true)
+  assert.equal(senderOnRecord('orders@acme.example', 'Orders@ACME.example'), true)
+  assert.equal(senderOnRecord('mallory@evil.example', 'orders@acme.example'), false)
+  assert.equal(senderOnRecord('someone@gmail.com', 'acme.orders@gmail.com'), false)
+  assert.equal(senderOnRecord('acme.orders@gmail.com', 'acme.orders@gmail.com'), true)
+  assert.equal(senderOnRecord('pat@acme.example', null), false)
+  assert.equal(senderOnRecord(null, 'orders@acme.example'), false)
 })
 
 test('order numbers are found in the subject and text, first mention first, once each', () => {
@@ -137,39 +150,38 @@ test('order numbers are found in the subject and text, first mention first, once
   assert.equal(orderNumbersIn(Array.from({ length: 30 }, (_, at) => `PO-202611-${String(at).padStart(4, '0')}`).join(' ')).length, 20)
 })
 
-async function tokenFor(service, owner = 'buyer') {
-  return (await service.createToken(session('admin'), { name: 'Outlook rule', ownerUserId: owner })).secret
-}
+const tokenFor = async (service, body = { name: 'Outlook rule' }) => (await service.createToken(session('admin'), body)).secret
 
-test('admins make, list and revoke tokens; the token is shown once and never its hash', async () => {
+test('an admin makes, lists and revokes tokens that act for that admin; the token is shown once and never its hash', async () => {
   const { prisma, service } = setup()
-  const made = await service.createToken(session('admin'), { name: 'Outlook rule', ownerUserId: 'buyer' })
+  const made = await service.createToken(session('admin'), { name: 'Outlook rule' })
   assert.match(made.secret, /^fcsr\./)
-  assert.deepEqual([made.token.name, made.token.owner, made.token.active, made.token.hint], ['Outlook rule', { id: 'buyer', name: 'Bo Buyer' }, true, made.secret.slice(-4)])
+  assert.deepEqual([made.token.name, made.token.owner, made.token.active, made.token.hint, made.token.expiresAt], ['Outlook rule', { id: 'admin', name: 'Ada Admin' }, true, made.secret.slice(-4), '2027-02-19T12:00:00.000Z'])
   const stored = prisma.records.find((row) => row.namespace === INTEGRATION_TOKEN_NAMESPACE)
   assert.ok(!JSON.stringify(stored).includes(made.secret.split('.')[3]), 'only the hash is stored')
   assert.equal(prisma.audit.at(-1).action, 'integration_token_created')
   assert.ok(!JSON.stringify(prisma.audit).includes(made.secret.split('.')[3]))
-
   const listed = await service.listTokens(session('admin'))
   assert.deepEqual([listed.enabled, listed.limit, listed.tokens.length], [true, INTEGRATION_TOKEN_LIMIT, 1])
-  assert.ok(!('hash' in listed.tokens[0]) && !JSON.stringify(listed).includes(stored.payload.hash))
+  assert.ok(!JSON.stringify(listed).includes(stored.payload.hash))
 
-  // Only admins; the owner must be active and allowed to revise orders.
+  // Only admins; never on someone else's behalf; the admin must be able to revise orders.
   await assert.rejects(() => service.createToken(session('buyer'), { name: 'Mine' }), { status: 403 })
-  await assert.rejects(() => service.listTokens(session('viewer')), { status: 403 })
-  await assert.rejects(() => service.createToken(session('admin'), { name: 'Viewer', ownerUserId: 'viewer' }), { code: 'INTEGRATION_TOKEN_OWNER_CANNOT_REVISE' })
-  await assert.rejects(() => service.createToken(session('admin'), { name: 'Gone', ownerUserId: 'gone' }), { code: 'INTEGRATION_TOKEN_OWNER_INACTIVE' })
+  await assert.rejects(() => service.listTokens(session('buyer')), { status: 403 })
+  await assert.rejects(() => service.createToken(session('admin'), { name: 'For Bo', ownerUserId: 'buyer' }), { code: 'SUPPLIER_REPLY_INGEST_INVALID', status: 422 })
+  await assert.rejects(() => service.createToken(session('admin-no-revise'), { name: 'Rule' }), { code: 'INTEGRATION_TOKEN_OWNER_CANNOT_REVISE', status: 403 })
   await assert.rejects(() => service.createToken(session('admin'), { name: '' }), { code: 'SUPPLIER_REPLY_INGEST_INVALID' })
+  assert.equal((await service.createToken(session('admin'), { name: 'Short', expiresInDays: 7 })).token.expiresAt, '2026-11-28T12:00:00.000Z')
+  await assert.rejects(() => service.createToken(session('admin'), { name: 'Long', expiresInDays: 400 }), { code: 'SUPPLIER_REPLY_INGEST_INVALID' })
 
   // At most five active tokens.
-  for (let at = 1; at < INTEGRATION_TOKEN_LIMIT; at += 1) await service.createToken(session('admin'), { name: `Rule ${at}` })
+  for (let at = 2; at < INTEGRATION_TOKEN_LIMIT; at += 1) await service.createToken(session('admin'), { name: `Rule ${at}` })
   await assert.rejects(() => service.createToken(session('admin'), { name: 'One too many' }), { code: 'INTEGRATION_TOKEN_LIMIT', status: 409 })
+  assert.match(read('server/services/supplier-reply-ingest.mjs'), /\}, \{ isolationLevel: 'Serializable' \}\)/)
 
   const revoked = await service.revokeToken(session('admin'), made.token.id)
   assert.equal(revoked.token.active, false)
   assert.equal(prisma.audit.at(-1).action, 'integration_token_revoked')
-  // Revoking again changes nothing; a revoked token frees its place.
   const auditRows = prisma.audit.length
   await service.revokeToken(session('admin'), made.token.id)
   assert.equal(prisma.audit.length, auditRows)
@@ -177,83 +189,111 @@ test('admins make, list and revoke tokens; the token is shown once and never its
   await assert.rejects(() => service.revokeToken(session('admin'), 'no-such-token'), { code: 'INTEGRATION_TOKEN_NOT_FOUND', status: 404 })
 })
 
-test('a reply sent with a token takes the paste path as the token\'s owner, and only ids come back', async () => {
+test('a reply sent with a token takes the paste path as the admin, after the token is checked, and only ids come back', async () => {
   const { prisma, paste, service } = setup()
   const token = await tokenFor(service)
-  const result = await service.ingest({
-    authorization: `Bearer ${token}`,
-    body: { subject: 'RE: PO-202611-0012 delivery date', text: 'We will ship the brackets on 28 November.', from: 'orders@acme.example', messageId: '<m1@acme.example>', receivedOn: '2026-11-20', extra: 'dropped' },
-  })
+  const result = await send(service, `Bearer ${token}`, { subject: 'RE: PO-202611-0012 delivery date', text: 'We will ship the brackets on 28 November.', from: 'orders@acme.example', messageId: '<m1@acme.example>', receivedOn: '2026-11-20', extra: 'dropped' })
   assert.equal(result.status, 201)
-  assert.deepEqual(result.body, { duplicate: false, replyId: 'reply-1', purchaseOrderId: 'po-12', purchaseOrderNumber: 'PO-202611-0012', state: 'proposed', readingStatus: 'read' })
+  assert.deepEqual(result.body, { duplicate: false, pending: false, replyId: 'reply-1', purchaseOrderId: 'po-12', purchaseOrderNumber: 'PO-202611-0012', state: 'proposed', readingStatus: 'read' })
   const [call] = paste.calls
   assert.equal(call.orderId, 'po-12')
   assert.deepEqual(call.body, { text: 'We will ship the brackets on 28 November.', receivedOn: '2026-11-20' })
-  assert.deepEqual(call.context.identity, { authenticated: true, source: 'integration_token', tenantId: TENANT, userId: 'buyer', role: 'buyer' })
+  assert.deepEqual(call.context.identity, { authenticated: true, source: 'integration_token', tenantId: TENANT, userId: 'admin', role: 'admin' })
   assert.deepEqual(call.options.origin, { source: 'email', sender: 'orders@acme.example', messageId: '<m1@acme.example>', tokenId: token.split('.')[2] })
-  // When it was last used, in its own record; the token record is untouched.
-  const use = prisma.records.find((row) => row.namespace === INTEGRATION_TOKEN_USE_NAMESPACE)
-  assert.equal(use.payload.lastUsedAt, '2026-11-21T12:00:00.000Z')
+  // The message is claimed with the reply it became; last used in its own record.
+  assert.equal(prisma.records.find((row) => row.namespace === INTEGRATION_MESSAGE_NAMESPACE).payload.replyId, 'reply-1')
+  assert.equal(prisma.records.find((row) => row.namespace === INTEGRATION_TOKEN_USE_NAMESPACE).payload.lastUsedAt, '2026-11-21T12:00:00.000Z')
   assert.equal((await service.listTokens(session('admin'))).tokens[0].lastUsedAt, '2026-11-21T12:00:00.000Z')
 
   // The order named in the body wins; an open order beats a closed one.
-  await service.ingest({ authorization: token, body: { text: 'Shipping Monday.', purchaseOrder: 'po-202611-0013' } })
+  await send(service, token, { text: 'Shipping Monday.', purchaseOrder: 'po-202611-0013' })
   assert.equal(paste.calls.at(-1).orderId, 'po-13')
-  await service.ingest({ authorization: token, body: { text: 'PO-202610-0009 is closed; PO-202611-0012 ships Friday.' } })
+  await send(service, token, { text: 'PO-202610-0009 is closed; PO-202611-0012 ships Friday.' })
   assert.equal(paste.calls.at(-1).orderId, 'po-12')
+
+  // The body is not read until the token is accepted.
+  let bodyRead = false
+  await assert.rejects(() => service.ingest({ authorization: 'Bearer nope', readBody: async () => { bodyRead = true; return {} } }), { status: 401 })
+  assert.equal(bodyRead, false)
 })
 
-test('a reply is refused when it names no order, an unknown one, or two open ones', async () => {
-  const { paste, service } = setup()
+test('a reply is refused when it names no order, an unknown one, or two open ones, and each refusal is audited', async () => {
+  const { prisma, paste, service } = setup()
   const token = await tokenFor(service)
-  await assert.rejects(() => service.ingest({ authorization: token, body: { text: 'Shipping Friday.' } }), { code: 'SUPPLIER_REPLY_INGEST_NO_ORDER', status: 422 })
-  await assert.rejects(() => service.ingest({ authorization: token, body: { text: 'PO-202611-9999 ships Friday.' } }), { code: 'SUPPLIER_REPLY_INGEST_ORDER_NOT_FOUND', status: 422 })
-  await assert.rejects(() => service.ingest({ authorization: token, body: { text: 'PO-202611-0012 and PO-202611-0013 ship Friday.' } }), (error) => error.code === 'SUPPLIER_REPLY_INGEST_SEVERAL_ORDERS' && error.details.length === 2)
-  await assert.rejects(() => service.ingest({ authorization: token, body: { subject: 'PO-202611-0012' } }), { code: 'SUPPLIER_REPLY_INGEST_INVALID' })
+  await assert.rejects(() => send(service, token, { text: 'Shipping Friday.' }), { code: 'SUPPLIER_REPLY_INGEST_NO_ORDER', status: 422 })
+  await assert.rejects(() => send(service, token, { text: 'PO-202611-9999 ships Friday.' }), { code: 'SUPPLIER_REPLY_INGEST_ORDER_NOT_FOUND', status: 422 })
+  await assert.rejects(() => send(service, token, { text: 'PO-202611-0012 and PO-202611-0013 ship Friday.' }), (error) => error.code === 'SUPPLIER_REPLY_INGEST_SEVERAL_ORDERS' && error.details.length === 2)
+  await assert.rejects(() => send(service, token, { subject: 'PO-202611-0012' }), { code: 'SUPPLIER_REPLY_INGEST_INVALID' })
+  // A Message-ID must be printable ASCII.
+  await assert.rejects(() => send(service, token, { text: 'PO-202611-0012 ships Friday.', messageId: '<回复@acme.example>' }), { code: 'SUPPLIER_REPLY_INGEST_INVALID' })
   assert.equal(paste.calls.length, 0)
+  const refused = prisma.audit.filter((row) => row.action === 'supplier_reply_ingest_refused')
+  assert.deepEqual(refused.map((row) => row.metadata.code), ['SUPPLIER_REPLY_INGEST_NO_ORDER', 'SUPPLIER_REPLY_INGEST_ORDER_NOT_FOUND', 'SUPPLIER_REPLY_INGEST_SEVERAL_ORDERS', 'SUPPLIER_REPLY_INGEST_INVALID', 'SUPPLIER_REPLY_INGEST_INVALID'])
+  assert.ok(refused.every((row) => row.tenantId === TENANT && row.actorId === 'admin' && !JSON.stringify(row).includes('Friday')))
 })
 
-test('the same message twice is kept once', async () => {
-  const replies = [{ id: 'reply-earlier', tenantId: TENANT, messageId: '<same@acme.example>', purchaseOrderId: 'po-12', state: 'proposed', readingStatus: 'read' }]
-  const { paste, service } = setup({ replies })
+test('the same message twice is kept once, also while the first is still being read', async () => {
+  const replies = [{ id: 'reply-earlier', tenantId: TENANT, messageId: '<same@acme.example>', purchaseOrderId: 'po-12', source: 'email', state: 'proposed', readingStatus: 'read', createdAt: new Date(NOW - 1000) }]
+  const { prisma, paste, service } = setup({ replies })
   const token = await tokenFor(service)
-  const again = await service.ingest({ authorization: token, body: { text: 'PO-202611-0012 ships Friday.', messageId: '<same@acme.example>' } })
+  const again = await send(service, token, { text: 'PO-202611-0012 ships Friday.', messageId: '<same@acme.example>' })
   assert.deepEqual([again.status, again.body.duplicate, again.body.replyId], [200, true, 'reply-earlier'])
   assert.equal(paste.calls.length, 0)
+
+  // A retry while the first copy is read: the claim answers, with no second reading.
+  let release
+  const slow = { pasteReply: (orderId, body, context, options) => new Promise((resolve) => { release = () => resolve(paste.pasteReply(orderId, body, context, options)) }) }
+  const racing = createSupplierReplyIngestService({ prisma, replies: slow, env: {}, now: () => new Date(NOW), resolveActor })
+  const first = send(racing, token, { text: 'PO-202611-0012 ships Monday.', messageId: '<retry@acme.example>' })
+  await new Promise((resolve) => setImmediate(resolve))
+  const retry = await send(racing, token, { text: 'PO-202611-0012 ships Monday.', messageId: '<retry@acme.example>' })
+  assert.deepEqual([retry.status, retry.body.duplicate, retry.body.pending], [200, true, true])
+  release()
+  assert.equal((await first).status, 201)
+  assert.equal(paste.calls.length, 1)
+  const later = await send(racing, token, { text: 'PO-202611-0012 ships Monday.', messageId: '<retry@acme.example>' })
+  assert.deepEqual([later.body.duplicate, later.body.pending, later.body.replyId], [true, false, 'reply-1'])
+
+  // A failed reading frees the message for a retry.
+  const failing = createSupplierReplyIngestService({ prisma, replies: { pasteReply: async () => { throw Object.assign(new Error('closed'), { status: 409, code: 'SUPPLIER_REPLY_ORDER_NOT_OPEN' }) } }, env: {}, now: () => new Date(NOW), resolveActor })
+  await assert.rejects(() => send(failing, token, { text: 'PO-202611-0012 ships Tuesday.', messageId: '<free@acme.example>' }), { code: 'SUPPLIER_REPLY_ORDER_NOT_OPEN' })
+  assert.ok(!prisma.records.some((row) => row.namespace === INTEGRATION_MESSAGE_NAMESPACE && row.payload.tokenId && row.payload.replyId === null))
 })
 
-test('every unaccepted token gets the same 401: missing, malformed, unknown, wrong secret, revoked', async () => {
-  const { service } = setup()
+test('every unaccepted token gets the same 401: missing, malformed, unknown, wrong, expired, revoked, or its admin disabled or moved', async () => {
+  const { prisma, service, advance } = setup()
   const token = await tokenFor(service)
-  const [prefix, workspace, tokenId] = token.split('.')
+  const [prefix, workspace, tokenId, secret] = token.split('.')
   const body = { text: 'PO-202611-0012 ships Friday.' }
-  for (const authorization of [undefined, '', 'Bearer nope', `${prefix}.${workspace}.${tokenId}.${'B'.repeat(43)}`, `${prefix}.${workspace}.${ID}.${SECRET}`, `${prefix}.${Buffer.from('other-tenant').toString('base64url')}.${tokenId}.${token.split('.')[3]}`]) {
-    await assert.rejects(() => service.ingest({ authorization, body }), { code: 'INTEGRATION_TOKEN_INVALID', status: 401 }, String(authorization))
+  for (const authorization of [undefined, '', 'Bearer nope', `${prefix}.${workspace}.${tokenId}.${'B'.repeat(43)}`, `${prefix}.${workspace}.${ID}.${SECRET}`, `${prefix}.${Buffer.from('other-tenant').toString('base64url')}.${tokenId}.${secret}`]) {
+    await assert.rejects(() => send(service, authorization, body), { code: 'INTEGRATION_TOKEN_INVALID', status: 401 }, String(authorization))
   }
-  await service.revokeToken(session('admin'), tokenId)
-  await assert.rejects(() => service.ingest({ authorization: token, body }), { code: 'INTEGRATION_TOKEN_INVALID', status: 401 })
-})
+  // A wrong secret for a real token is audited in its workspace.
+  assert.ok(prisma.audit.some((row) => row.action === 'supplier_reply_ingest_refused' && row.metadata.tokenId === tokenId && row.metadata.code === 'INTEGRATION_TOKEN_INVALID'))
 
-test('the owner must still be active, and the paste path still checks their permission', async () => {
-  const { prisma, service } = setup()
-  const token = await tokenFor(service)
-  const record = prisma.records.find((row) => row.namespace === INTEGRATION_TOKEN_NAMESPACE)
-  record.payload = { ...record.payload, ownerUserId: 'gone' }
-  await assert.rejects(() => service.ingest({ authorization: token, body: { text: 'PO-202611-0012 ships Friday.' } }), { code: 'INTEGRATION_TOKEN_OWNER_INACTIVE', status: 403 })
-  // The paste path refuses an owner who may no longer revise orders, as it refuses a person.
-  assert.match(read('server/services/supplier-reply-service.mjs'), /const actor = await actorOf\(client, context\)\n    assertAuthorized\(\{ actor, permission: REVISE, tenantId: actor\.tenantId \}\)/)
+  const admin = prisma.users.find((user) => user.id === 'admin')
+  admin.role = 'manager'
+  await assert.rejects(() => send(service, token, body), { code: 'INTEGRATION_TOKEN_INVALID' })
+  admin.role = 'admin'
+  admin.status = 'disabled'
+  await assert.rejects(() => send(service, token, body), { code: 'INTEGRATION_TOKEN_INVALID' })
+  admin.status = 'active'
+  assert.equal((await send(service, token, body)).status, 201)
+
+  advance(91 * DAY)
+  await assert.rejects(() => send(service, token, body), { code: 'INTEGRATION_TOKEN_INVALID' })
+  const fresh = await tokenFor(service)
+  await service.revokeToken(session('admin'), fresh.split('.')[2])
+  await assert.rejects(() => send(service, fresh, body), { code: 'INTEGRATION_TOKEN_INVALID' })
 })
 
 test('public-data workspaces and workspaces without AI reading switched on are refused', async () => {
   const blocked = setup({ publicData: [TENANT] })
-  const token = await tokenFor(setup().service)
-  // A token for this workspace from another store reads as unknown here.
-  await assert.rejects(() => blocked.service.ingest({ authorization: token, body: { text: 'x' } }), { code: 'INTEGRATION_TOKEN_INVALID' })
   await assert.rejects(() => blocked.service.createToken(session('admin'), { name: 'Rule' }), { code: 'SUPPLIER_REPLY_INGEST_PUBLIC_DATA', status: 403 })
   const listed = await blocked.service.listTokens(session('admin'))
   assert.deepEqual([listed.enabled, listed.refusal], [false, 'SUPPLIER_REPLY_INGEST_PUBLIC_DATA'])
   const allowed = setup({ publicData: [TENANT], env: { FLOWCHAIN_SUPPLIER_REPLY_INGEST_PUBLIC_DATA: 'on' } })
-  assert.ok((await allowed.service.createToken(session('admin'), { name: 'Rule' })).secret)
+  assert.ok(await tokenFor(allowed.service))
 
   // Where the deployment requires the AI opt-in, the workspace's switch decides, as for pasting.
   const optIn = { FLOWCHAIN_AI_WORKSPACE_OPT_IN: 'required' }
@@ -261,22 +301,28 @@ test('public-data workspaces and workspaces without AI reading switched on are r
   await assert.rejects(() => off.service.createToken(session('admin'), { name: 'Rule' }), { code: 'SUPPLIER_REPLY_INGEST_AI_OFF', status: 403 })
   const on = setup({ env: optIn, tenantSettings: { ai: { modelAssistEnabled: true } } })
   const onToken = await tokenFor(on.service)
-  assert.equal((await on.service.ingest({ authorization: onToken, body: { text: 'PO-202611-0012 ships Friday.' } })).status, 201)
+  assert.equal((await send(on.service, onToken, { text: 'PO-202611-0012 ships Friday.' })).status, 201)
   // Switched off after the token was made: replies are refused until it is on again.
   on.prisma.tenant.findUnique = async () => ({ id: TENANT, operationalSettings: { ai: { modelAssistEnabled: false } } })
-  await assert.rejects(() => on.service.ingest({ authorization: onToken, body: { text: 'PO-202611-0012 ships Friday.' } }), { code: 'SUPPLIER_REPLY_INGEST_AI_OFF' })
+  await assert.rejects(() => send(on.service, onToken, { text: 'PO-202611-0012 ships Friday.' }), { code: 'SUPPLIER_REPLY_INGEST_AI_OFF' })
 })
 
-test('each workspace may send so many replies a day', async () => {
-  const { paste, service, advance } = setup({ limit: 2 })
+test('each workspace keeps at most so many emailed replies in 24 hours, counted from the replies kept', async () => {
+  assert.equal(supplierReplyIngestPerDay({}), 50)
+  assert.equal(supplierReplyIngestPerDay({ FLOWCHAIN_SUPPLIER_REPLY_INGEST_PER_DAY: '2' }), 2)
+  assert.equal(supplierReplyIngestPerDay({ FLOWCHAIN_SUPPLIER_REPLY_INGEST_PER_DAY: '0' }), 50)
+  const { paste, service, advance } = setup({ env: { FLOWCHAIN_SUPPLIER_REPLY_INGEST_PER_DAY: '2' } })
   const token = await tokenFor(service)
   const body = { text: 'PO-202611-0012 ships Friday.' }
-  await service.ingest({ authorization: token, body })
-  await service.ingest({ authorization: token, body })
-  await assert.rejects(() => service.ingest({ authorization: token, body }), (error) => error.code === 'SUPPLIER_REPLY_INGEST_RATE_LIMITED' && error.status === 429 && Number(error.details[0].code) > 0)
+  // Junk does not use up the limit: refused requests keep nothing.
+  for (let at = 0; at < 5; at += 1) await assert.rejects(() => send(service, token, { text: 'no order here' }), { code: 'SUPPLIER_REPLY_INGEST_NO_ORDER' })
+  await send(service, token, body)
+  advance(60 * 60 * 1000)
+  await send(service, token, body)
+  await assert.rejects(() => send(service, token, body), (error) => error.code === 'SUPPLIER_REPLY_INGEST_RATE_LIMITED' && error.status === 429 && Number(error.details[0].code) === 23 * 60 * 60)
   assert.equal(paste.calls.length, 2)
-  advance(24 * 60 * 60 * 1000)
-  assert.equal((await service.ingest({ authorization: token, body })).status, 201)
+  advance(23 * 60 * 60 * 1000)
+  assert.equal((await send(service, token, body)).status, 201)
 })
 
 function routeContext({ method, pathname, env, identity = null, headers = {}, body = {}, service }) {
@@ -298,8 +344,9 @@ test('the routes answer 404 unless the server switches them on; the ingest route
   assert.equal(supplierReplyIngestEnabled({ FLOWCHAIN_SUPPLIER_REPLY_INGEST: 'on' }), true)
   const calls = []
   const service = {
-    ingest: async (input) => { calls.push(input); return { status: 201, body: { replyId: 'r1' } } },
+    ingest: async (input) => { calls.push({ authorization: input.authorization, body: await input.readBody() }); return { status: 201, body: { replyId: 'r1' } } },
     listTokens: async (identity) => { calls.push(identity); return { tokens: [] } },
+    revokeToken: async (identity, tokenId) => { calls.push(tokenId); return { token: { id: tokenId } } },
   }
   for (const [method, pathname] of [['POST', '/api/integrations/supplier-replies'], ['GET', '/api/settings/integrations/supplier-reply-tokens'], ['POST', '/api/settings/integrations/supplier-reply-tokens/abc/revoke']]) {
     const { ctx } = routeContext({ method, pathname, env: {}, service })
@@ -313,6 +360,11 @@ test('the routes answer 404 unless the server switches them on; the ingest route
   assert.deepEqual(posted.sent, [{ status: 201, payload: { replyId: 'r1' } }])
   assert.equal(await handleSupplierReplyIngestRoute(routeContext({ method: 'GET', pathname: '/api/other', env, service }).ctx), false)
 
+  // A malformed % escape in the revoke path is a 404, not a server error.
+  const badEscape = routeContext({ method: 'POST', pathname: '/api/settings/integrations/supplier-reply-tokens/%E0%A4%A/revoke', env, identity: session('admin'), service })
+  assert.equal(await handleSupplierReplyIngestRoute(badEscape.ctx), true)
+  assert.deepEqual([badEscape.sent[0].status, badEscape.sent[0].payload.code], [404, 'INTEGRATION_TOKEN_NOT_FOUND'])
+
   // A 429 says when to try again.
   const limited = routeContext({ method: 'POST', pathname: '/api/integrations/supplier-replies', env, service: { ingest: async () => { throw Object.assign(new Error('Too many'), { status: 429, code: 'SUPPLIER_REPLY_INGEST_RATE_LIMITED', details: [{ field: 'retryAfterSeconds', code: '120' }] }) } } })
   await handleSupplierReplyIngestRoute(limited.ctx)
@@ -325,11 +377,20 @@ test('the routes answer 404 unless the server switches them on; the ingest route
   assert.equal(apiAccessDenial({ method: 'POST', pathname: '/api/settings/integrations/supplier-reply-tokens', identity: { authenticated: false } }).status, 401)
 })
 
-test('only the ingestion path marks a reply as emailed; a paste request cannot', () => {
+test('an emailed reply never replaces an open card, and its card shows the sender and whether it is on record', () => {
   const service = read('server/services/supplier-reply-service.mjs')
   assert.match(service, /source: origin\?\.source === 'email' \? 'email' : 'paste'/)
+  assert.match(service, /const takesOver = open && read\.readingStatus === 'read' && origin\?\.source !== 'email'/)
+  assert.match(service, /senderOnRecord: row\.source === 'email' \? senderOnRecord\(row\.sender, supplierEmail\) : null,/)
   // The paste route passes no origin, and the paste body allows text and receivedOn only.
   assert.doesNotMatch(read('server/routes/supplier-replies.routes.mjs'), /origin/)
   assert.deepEqual(Object.keys(supplierReplyPasteRequestSchema.shape), ['text', 'receivedOn'])
   assert.equal(supplierReplyPasteRequestSchema.safeParse({ text: 'Ships Friday.', source: 'email' }).success, false)
+  assert.ok('sender' in supplierReplyCardSchema.shape && 'senderOnRecord' in supplierReplyCardSchema.shape)
+  // The card: the sender in its head, and a note when the sender is not on record (English and Chinese).
+  const card = read('src/modules/purchasing/supplierReply/SupplierReplyCard.tsx')
+  assert.match(card, /card\.source === "email" && card\.sender \? t\("from", \{ sender: card\.sender \}\) : null/)
+  assert.match(card, /card\.source === "email" && card\.senderOnRecord === false \? <p [^>]*data-testid="supplier-reply-sender-not-on-record">\{t\("senderNotOnRecord"\)\}<\/p>/)
+  const copy = read('src/modules/purchasing/supplierReply/supplierReplyCopy.ts')
+  assert.match(copy, /senderNotOnRecord: \["The sender is not this supplier's email on record\.[^"]*", "发件人不是该供应商记录中的邮箱。[^"]*"\],/)
 })
