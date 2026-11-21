@@ -167,7 +167,7 @@ export function SupplierReliabilityCard({ suppliers, loadKey = 0, hidden = false
         </div>
       </div>
       {failed ? (
-        <p role="alert" className="px-5 py-4 text-xs" style={{ color: A.red }}>{t("Promised-date changes and replies could not be loaded. Refresh to try again.")}</p>
+        <p role="alert" className="px-5 py-4 text-xs" style={{ color: A.danger }}>{t("Promised-date changes and replies could not be loaded. Refresh to try again.")}</p>
       ) : !data ? (
         <div className="p-6 text-center text-xs" style={{ color: A.sub }}>{t("Loading…")}</div>
       ) : rows.listed.length === 0 ? (

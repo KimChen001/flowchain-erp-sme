@@ -203,11 +203,11 @@ export function ProcurementWorkbench(_props: { onNavigate?: ProcurementNavigate 
       <div className={`grid grid-cols-2 gap-3 ${canOpenReorder ? "lg:grid-cols-5" : "lg:grid-cols-4"}`}>
         <ActionableMetricCard label={tr("allWork")} value={value("all")} description={tr("allWorkNote")} to={queueLink("all")} icon={ListChecks} color={A.blue} />
         <ActionableMetricCard label={tr("approval")} value={value("approval")} description={tr("approvalNote")} to={queueLink("approval")} icon={ClipboardCheck} color={A.orange} />
-        <ActionableMetricCard label={tr("tracking")} value={value("tracking")} description={tr("trackingNote")} to={queueLink("tracking")} icon={Truck} color={A.purple} />
+        <ActionableMetricCard label={tr("tracking")} value={value("tracking")} description={tr("trackingNote")} to={queueLink("tracking")} icon={Truck} color={A.blue} />
         <ActionableMetricCard label={tr("issues")} value={value("issues")} description={tr("issuesNote")} to={queueLink("issues")} icon={AlertCircle} color={A.red} />
         {/* What to order next comes from the reorder list, the inventory page that ranks it. */}
         {canOpenReorder && (
-          <ActionableMetricCard label={tr("reorder")} value={reorder ? String(reorder.orderNow) : "—"} description={tr("reorderNote").replace("{now}", reorder ? String(reorder.orderNow) : "—").replace("{n}", reorder ? String(reorder.listed) : "—")} to="/app/inventory/reorder" icon={PackageSearch} color={A.green} />
+          <ActionableMetricCard label={tr("reorder")} value={reorder ? String(reorder.orderNow) : "—"} description={tr("reorderNote").replace("{now}", reorder ? String(reorder.orderNow) : "—").replace("{n}", reorder ? String(reorder.listed) : "—")} to="/app/inventory/reorder" icon={PackageSearch} color={A.orange} />
         )}
       </div>
 

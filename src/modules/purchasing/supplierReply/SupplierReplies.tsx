@@ -128,13 +128,13 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
           <span>{t("receivedOn")}</span>
           <input type="date" className="rounded border bg-white px-1 py-0.5" max={workspaceToday || undefined} value={receivedOn || workspaceToday} onChange={(event) => setReceivedOn(event.target.value)} data-testid="supplier-reply-received-on" />
         </label>
-        <span style={{ color: length > SUPPLIER_REPLY_PASTE_LIMIT ? A.red : A.sub }} data-testid="supplier-reply-count">{t("characters", { n: length.toLocaleString(), limit: SUPPLIER_REPLY_PASTE_LIMIT.toLocaleString() })}</span>
+        <span style={{ color: length > SUPPLIER_REPLY_PASTE_LIMIT ? A.danger : A.sub }} data-testid="supplier-reply-count">{t("characters", { n: length.toLocaleString(), limit: SUPPLIER_REPLY_PASTE_LIMIT.toLocaleString() })}</span>
         <div className="ml-auto flex gap-2">
           <button type="button" className={BUTTON.outline} onClick={() => (entry === "today" && current ? setPasteAgain(false) : setOpen(false))}>{t("cancel")}</button>
           <button type="button" disabled={busy || !text.trim() || length > SUPPLIER_REPLY_PASTE_LIMIT} className={BUTTON.primary} data-testid="supplier-reply-read" onClick={() => void paste()}>{busy ? t("reading") : t("read")}</button>
         </div>
       </div>
-      {length > SUPPLIER_REPLY_PASTE_LIMIT ? <p style={{ color: A.red }} role="alert">{t("tooLong", { limit: SUPPLIER_REPLY_PASTE_LIMIT.toLocaleString() })}</p> : null}
+      {length > SUPPLIER_REPLY_PASTE_LIMIT ? <p style={{ color: A.danger }} role="alert">{t("tooLong", { limit: SUPPLIER_REPLY_PASTE_LIMIT.toLocaleString() })}</p> : null}
     </div>
   ) : null;
 

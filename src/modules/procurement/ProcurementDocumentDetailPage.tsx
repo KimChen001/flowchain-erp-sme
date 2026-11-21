@@ -502,7 +502,7 @@ export function ProcurementDocumentDetailPage({
               </div>
             )}
             {varianceApproved && (
-              <div className="mt-4 rounded-lg bg-emerald-50 px-3 py-3 text-sm text-emerald-900" data-testid="three-way-match-variance-approved">
+              <div className="mt-4 rounded-lg bg-teal-50 px-3 py-3 text-sm text-teal-900" data-testid="three-way-match-variance-approved">
                 {invoiceNumber ? copy("Differences approved on {invoice}.", { invoice: invoiceNumber }) : copy("Differences approved on the supplier invoice.")}
               </div>
             )}

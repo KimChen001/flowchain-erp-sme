@@ -160,10 +160,10 @@ export default function ItemSupplierPricesPage() {
           </div>
         </div>
         {!pricesVisible && <p className="px-5 pt-3 text-[11px]" style={{ color: A.sub }} data-testid="item-supplier-prices-hidden">{copy("Reference prices are hidden for your role.")}</p>}
-        {truncated && <p className="px-5 pt-1 text-[11px]" style={{ color: A.orange }}>{copy("Not every link could be read at once. Choose a supplier or an item to see all of its links.")}</p>}
+        {truncated && <p className="px-5 pt-1 text-[11px] text-amber-700">{copy("Not every link could be read at once. Choose a supplier or an item to see all of its links.")}</p>}
         {error ? (
           <div className="p-8 text-center">
-            <div className="text-sm" style={{ color: A.red }}>{copy("Could not load supplier prices.")}</div>
+            <div className="text-sm" style={{ color: A.danger }}>{copy("Could not load supplier prices.")}</div>
             <button type="button" onClick={() => load(page)} className="mt-3 text-xs text-blue-600">{copy("Try again")}</button>
           </div>
         ) : loading && rows.length === 0 ? (

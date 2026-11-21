@@ -1304,8 +1304,8 @@ export default function CanonicalProcurementPanel({
           {/* "—" until the requests load, as on the other lists (design audit U-15). */}
           <ActionableMetricCard label={statusLabel("draft")} value={count("draft")} description={tr("draftsNote")} to={statusLink("draft")} icon={FileText} color={A.gray1} />
           <ActionableMetricCard label={statusLabel("submitted")} value={count("submitted")} description={tr("awaitingApprovalNote")} to={statusLink("submitted")} icon={ClipboardCheck} color={A.orange} />
-          <ActionableMetricCard label={statusLabel("approved")} value={count("approved")} description={tr("readyForPoNote")} to={statusLink("approved")} icon={CheckCircle2} color={A.blue} />
-          <ActionableMetricCard label={statusLabel("converted")} value={count("converted")} description={tr("convertedNote")} to={statusLink("converted")} icon={Truck} color={A.purple} />
+          <ActionableMetricCard label={statusLabel("approved")} value={count("approved")} description={tr("readyForPoNote")} to={statusLink("approved")} icon={CheckCircle2} color={A.success} />
+          <ActionableMetricCard label={statusLabel("converted")} value={count("converted")} description={tr("convertedNote")} to={statusLink("converted")} icon={Truck} color={A.success} />
         </div>
 
         <ListSearchCard
