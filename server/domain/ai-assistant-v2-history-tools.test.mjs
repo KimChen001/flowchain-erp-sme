@@ -302,7 +302,7 @@ test('list_shipments counts shipments and orders shipped per month over the whol
   const reads = []
   const prisma = {
     salesOrder: { findFirst: async () => null },
-    shipmentDocument: { findMany: async ({ where, select }) => { reads.push({ where, select }); return shipments.filter((row) => (!where.postingStatus?.in || where.postingStatus.in.includes(row.postingStatus)) && (typeof where.postingStatus !== 'string' || row.postingStatus === where.postingStatus) && (!where.postedAt || row.postedAt >= where.postedAt.gte)) } },
+    shipmentDocument: { findMany: async ({ where, select }) => { reads.push({ where, select }); const inScope = where.lines?.some?.allocations?.some?.warehouseId?.in; return shipments.filter((row) => (!where.postingStatus?.in || where.postingStatus.in.includes(row.postingStatus)) && (typeof where.postingStatus !== 'string' || row.postingStatus === where.postingStatus) && (!where.postedAt || row.postedAt >= where.postedAt.gte) && (!inScope || row.lines.some((line) => line.allocations.some((entry) => inScope.includes(entry.warehouseId))))) } },
   }
   const context = (warehouseIds) => ({ actor: { permissionCodes: new Set(['shipment.read']), tenantId: 't1' }, tenantId: 't1', prisma, routeContext: { reportReadAccess: { warehouseIds } } })
   const facts = { today: '2026-11-20', timezone: 'Europe/London' }
@@ -330,6 +330,15 @@ test('list_shipments counts shipments and orders shipped per month over the whol
   const november = async (warehouseIds) => (await tool('list_shipments').run({ days: 60 }, { facts, context: context(warehouseIds) })).byMonth.find((row) => row.month === '2026-11').shipments
   assert.deepEqual([await november(['WH-1']), await november(null)], [1, 2])
   shipments.pop()
+  // The count asks for two fields only; the scope is a filter, not loaded lines.
+  const monthly = reads.filter((entry) => !entry.select?.lines && !entry.select?.shipmentNumber).at(-1)
+  assert.deepEqual(Object.keys(monthly.select).sort(), ['postedAt', 'salesOrderId'])
+  // A read that fails says so.
+  const findMany = prisma.shipmentDocument.findMany
+  prisma.shipmentDocument.findMany = async (query) => (query.select?.shipmentNumber ? findMany(query) : Promise.reject(new Error('down')))
+  const failed = await tool('list_shipments').run({ days: 60 }, { facts, context: context(null) })
+  assert.deepEqual([failed.byMonth, failed.byMonthUnavailable], [undefined, 'read_failed'])
+  prisma.shipmentDocument.findMany = findMany
   delete prisma.warehouse
   assert.equal((await tool('list_shipments').run({ days: 60, sku: 'X' }, { facts, context: context(null) })).byMonth, undefined)
 })
