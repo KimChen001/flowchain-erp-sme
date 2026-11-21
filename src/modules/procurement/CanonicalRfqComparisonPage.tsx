@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, CheckCircle2, CircleAlert, RefreshCw, Scale, ShieldCheck, TriangleAlert } from "lucide-react";
 import { Link } from "react-router";
-import { A, Card, Chip, useConfirm } from "../../components/ui";
-import { listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass } from "../../components/ui/listLayout";
+import { A, Card, useConfirm } from "../../components/ui";
+import { StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
 import { listTableCardsRef, tableBodyTextClass, tableScrollClass, tdClass, thClass } from "../../components/ui/workbenchTable";
 import { typography } from "../../components/ui/typography";
 import { ApiError } from "../../lib/api-client";
@@ -126,7 +126,7 @@ const LIMITATION_LABELS: Record<string, readonly [string, string] | null> = {
 
 function eligibilityChip(eligibility: RfqComparisonEligibility, language: string) {
   const eligible = eligibility === "eligible";
-  return <Chip label={localLabel(ELIGIBILITY_LABELS, eligibility, language, eligibility)} color={eligible ? A.blue : A.sub} bg={eligible ? "#eff6ff" : "#f1f5f9"} />;
+  return <StatusChip label={localLabel(ELIGIBILITY_LABELS, eligibility, language, eligibility)} tone={eligible ? "info" : "neutral"} />;
 }
 
 function Availability({ comparison }: { comparison: RfqSupplierComparison }) {
@@ -167,7 +167,7 @@ function ResponseSummary({ responses }: { responses: RfqComparisonResponse[] }) 
               return <tr className={`${listRowClass} align-top`} style={listRowStyle(index, responses.length)} data-testid={`rfq-comparison-response-${response.supplierId}`} key={`${response.supplierId}:${response.quotationId}`}>
                 <td className={tdClass}><div className="font-medium">{response.supplierName || tr("未提供名称", "Name not provided")}</div><div className="mt-1" style={{ color: A.sub }}>{response.supplierId}</div></td>
                 <td className={tdClass}><div>{response.quotationId}</div><div className="mt-1" style={{ color: A.sub }}>{revision ? tr(`报价修订 ${revision.revisionNumber}`, `Quote revision ${revision.revisionNumber}`) : tr("缺少报价修订", "Quote revision missing")}</div></td>
-                <td className={tdClass}>{revision?.status ? localLabel(REVISION_STATUS_LABELS, revision.status, language, revision.statusRaw || tr("未知", "Unknown")) : tr("不可用", "Unavailable")}</td>
+                <td className={tdClass}>{revision?.status ? <StatusChip label={localLabel(REVISION_STATUS_LABELS, revision.status, language, revision.statusRaw || tr("未知", "Unknown"))} tone={statusToneOf(revision.status)} /> : tr("不可用", "Unavailable")}</td>
                 <td className={`px-4 py-3 ${response.comparisonEligibility === "eligible" ? "" : "bg-slate-50/70 text-slate-500"}`}>{eligibilityChip(response.comparisonEligibility, language)}{response.eligibilityReasons.length > 0 && <div className="mt-2 text-[11px]" style={{ color: A.sub }}>{response.eligibilityReasons.map((reason) => localLabel(ELIGIBILITY_REASON_LABELS, reason, language, reason)).join(" · ")}</div>}</td>
                 <td className="px-4 py-3 font-medium tabular-nums">{exactAmount(revision?.quotedAmount, revision?.currency)}</td>
                 <td className={tdClass}>{date(revision?.submittedAt)}</td>
@@ -341,8 +341,8 @@ function LoadedComparison({ comparison, award, canAward, onAward }: { comparison
       <RfqNoOrderNote />
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0"><h1 className="fc-page-title">{comparison.rfqTitle || rfqNumber}</h1><div className="mt-1 text-xs" style={{ color: A.sub }}>{tr("只读供应商报价比较", "Supplier quotation comparison")} · <span className="font-semibold tabular-nums" style={{ color: A.blue }}>{rfqNumber}</span></div><p className="mt-2 text-xs" style={{ color: A.sub }}>{tr("本页不排名、不推荐、不授标，也不创建采购订单。", "This page does not rank or recommend suppliers. A formal award requires a separate authorized human decision and does not create a purchase order.")}</p></div>
-          <div className="flex flex-wrap gap-2"><Chip label={tr("只读比较", "Read-only comparison")} color={A.blue} bg="#eff6ff" /><Chip label={localLabel(RFQ_STATUS_LABELS, comparison.rfqStatus || "", language, comparison.rfqStatusRaw || tr("状态未知", "Unknown status"))} color={A.sub} bg="#f1f5f9" /></div>
+          <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h1 className="fc-page-title">{comparison.rfqTitle || rfqNumber}</h1><StatusChip label={localLabel(RFQ_STATUS_LABELS, comparison.rfqStatus || "", language, comparison.rfqStatusRaw || tr("状态未知", "Unknown status"))} tone={statusToneOf(comparison.rfqStatus)} testId="rfq-comparison-status" /></div><div className="mt-1 text-xs" style={{ color: A.sub }}>{tr("只读供应商报价比较", "Supplier quotation comparison")} · <span className="font-semibold tabular-nums" style={{ color: A.blue }}>{rfqNumber}</span></div><p className="mt-2 text-xs" style={{ color: A.sub }}>{tr("本页不排名、不推荐、不授标，也不创建采购订单。", "This page does not rank or recommend suppliers. A formal award requires a separate authorized human decision and does not create a purchase order.")}</p></div>
+          <span className="inline-flex items-center gap-1 text-xs font-medium" style={{ color: A.sub }}><ShieldCheck size={13} aria-hidden="true" />{tr("只读比较", "Read-only comparison")}</span>
         </div>
         <OverviewFieldGrid className="mt-5" fields={[[tr("询价单编号", "RFQ number"), rfqNumber], [tr("询价单币种", "RFQ currency"), comparison.rfqCurrency || "—"], [tr("有效报价", "Eligible quotations"), String(comparison.summary.eligibleResponseCount)], [tr("有报价修订的响应", "Responses with a quote revision"), String(comparison.summary.authoritativeResponseCount)], [tr("参与供应商", "Participating suppliers"), String(comparison.participationSummary.participantCount)], [tr("全部报价记录", "All quotation records"), String(comparison.summary.quotationCount)], [tr("显示顺序", "Display order"), tr("按供应商编号", "By supplier ID")], [tr("生成时间", "Generated at"), date(comparison.generatedAt)]].map(([label, value]) => ({ label, value }))} />
       </Card>
@@ -362,7 +362,7 @@ function LoadedComparison({ comparison, award, canAward, onAward }: { comparison
 
       <Card className="overflow-hidden" data-testid="rfq-comparison-commercial-terms">
         <div className="border-b p-4"><h2 className="fc-section-title" style={{ color: A.label }}>{tr("商业条款", "Commercial terms")}</h2></div>
-        {comparison.responses.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前没有可展示的供应商商业条款。", "No supplier commercial terms are available.")}</div> : <div className={tableScrollClass} ref={listTableCardsRef}><table className={`w-full min-w-[900px] text-left ${tableBodyTextClass}`}><thead><tr style={listHeadRowStyle}>{[tr("供应商", "Supplier"), tr("付款条款", "Payment terms"), tr("有效期", "Valid until"), tr("交付日期", "Delivery date"), tr("原币报价", "Original-currency quote"), tr("资格", "Eligibility")].map((label) => <th className={thClass} style={{ color: A.gray1 }} key={label}>{label}</th>)}</tr></thead><tbody>{comparison.responses.map((response, index) => <tr className={listRowClass} style={listRowStyle(index, comparison.responses.length)} key={response.supplierId}><td className="px-4 py-3 font-medium">{response.supplierName || response.supplierId}</td><td className={tdClass}>{response.latestRevision?.paymentTerms || "—"}</td><td className={tdClass}>{dateOnly(response.latestRevision?.validUntil)}</td><td className={tdClass}>{dateOnly(response.latestRevision?.deliveryDate)}</td><td className="px-4 py-3 tabular-nums">{exactAmount(response.latestRevision?.quotedAmount, response.latestRevision?.currency)}</td><td className={tdClass}>{localLabel(ELIGIBILITY_LABELS, response.comparisonEligibility, language, response.comparisonEligibility)}</td></tr>)}</tbody></table></div>}
+        {comparison.responses.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前没有可展示的供应商商业条款。", "No supplier commercial terms are available.")}</div> : <div className={tableScrollClass} ref={listTableCardsRef}><table className={`w-full min-w-[900px] text-left ${tableBodyTextClass}`}><thead><tr style={listHeadRowStyle}>{[tr("供应商", "Supplier"), tr("付款条款", "Payment terms"), tr("有效期", "Valid until"), tr("交付日期", "Delivery date"), tr("原币报价", "Original-currency quote"), tr("资格", "Eligibility")].map((label) => <th className={thClass} style={{ color: A.gray1 }} key={label}>{label}</th>)}</tr></thead><tbody>{comparison.responses.map((response, index) => <tr className={listRowClass} style={listRowStyle(index, comparison.responses.length)} key={response.supplierId}><td className="px-4 py-3 font-medium">{response.supplierName || response.supplierId}</td><td className={tdClass}>{response.latestRevision?.paymentTerms || "—"}</td><td className={tdClass}>{dateOnly(response.latestRevision?.validUntil)}</td><td className={tdClass}>{dateOnly(response.latestRevision?.deliveryDate)}</td><td className="px-4 py-3 tabular-nums">{exactAmount(response.latestRevision?.quotedAmount, response.latestRevision?.currency)}</td><td className={tdClass}>{eligibilityChip(response.comparisonEligibility, language)}</td></tr>)}</tbody></table></div>}
       </Card>
 
       <Card className="p-4" data-testid="rfq-comparison-non-response">

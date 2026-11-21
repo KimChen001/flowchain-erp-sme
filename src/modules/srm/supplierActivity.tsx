@@ -159,7 +159,7 @@ export function SupplierActivityCards({ supplierId, titles, empty }: { supplierI
                     <td className={tdIdClass}><EntityLink kind="purchase_order" id={row.id} number={row.orderNumber} className={tableLinkClass} /></td>
                     <td className={tdNowrapClass}>{f.day(row.date)}</td>
                     <td className={tdNowrapClass}><Status code={row.status} label={f.status(row.status)} /></td>
-                    <td className={tdNowrapClass}>{f.day(row.promisedDate)}{row.overdueDays > 0 ? <span className="ml-2" style={{ color: A.red }}>{t("overdueBy", { n: row.overdueDays })}</span> : null}</td>
+                    <td className={tdNowrapClass}>{f.day(row.promisedDate)}{row.overdueDays > 0 ? <div className="mt-0.5"><StatusChip label={t("overdueBy", { n: f.number(row.overdueDays) })} tone="danger" /></div> : null}</td>
                     {data?.visibility.orderAmounts ? <td className={tdNumericRightClass}>{f.money(row.amount, row.currency)}</td> : null}
                   </tr>
                 ))}

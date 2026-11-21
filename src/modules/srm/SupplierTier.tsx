@@ -68,7 +68,7 @@ export function TierChip({ tier, short = false, testId = "supplier-tier-chip" }:
       : tier === 3
         ? { background: "#F1F5F9", color: "#334155", border: "1px solid #E2E8F0" }
         : { background: "transparent", color: "#64748B", border: "1px dashed #CBD5E1" };
-  return <span data-testid={testId} data-tier={tier ?? "none"} className="inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold" style={style}>
+  return <span data-testid={testId} data-tier={tier ?? "none"} className="fc-status-chip whitespace-nowrap" style={style}>
     {t(short ? shortTierLabel(tier) : tierLabel(tier))}
   </span>;
 }
