@@ -144,7 +144,7 @@ const cardStyle = { borderColor: A.border, boxShadow: "0 1px 2px rgba(15,23,42,0
 const sectionTitleStyle = { color: A.label };
 
 const HEADER_BUTTON = {
-  primary: `${listButtonClass.primary} disabled:opacity-50`,
+  primary: listButtonClass.primary,
   secondary: `${listButtonClass.secondary} disabled:opacity-50`,
   danger: listButtonClass.danger,
 };

@@ -20,7 +20,7 @@ import type { SupplierReplyCardData, SupplierReplyDismissReason, SupplierReplyLi
 // answers the supplier; recording writes promised dates only, as the person,
 // with the supplier's sentence as the reason (the server does that).
 
-const BUTTON = { primary: `${listButtonClass.primary} !text-[12px]`, secondary: `${listButtonClass.secondary} !text-[12px]` };
+const BUTTON = { primary: `${listButtonClass.primary} !text-[12px]`, secondary: `${listButtonClass.secondary} !text-[12px]`, outline: `${listButtonClass.outline} !text-[12px]` };
 const DISMISS_REASONS: SupplierReplyDismissReason[] = ["wrong_reading", "supplier_will_confirm", "other"];
 // A reading of an ambiguous date, on the grey form line: white, and blue once picked.
 const readingClass = (picked: boolean) => `inline-flex h-7 items-center rounded-lg border px-2 text-[12px] font-medium disabled:opacity-60 ${picked ? "border-blue-500 bg-blue-50 text-blue-700" : "border-slate-200 bg-white text-slate-800 hover:bg-slate-100"}`;
@@ -295,7 +295,7 @@ export function SupplierReplyCard({ card, onChanged, onRefused, notice = null, m
             </select>
           </label>
           <input className="min-w-48 flex-1 rounded border px-2 py-0.5" maxLength={SUPPLIER_REPLY_NOTE_LIMIT} aria-label={t("notePlaceholder")} placeholder={t("notePlaceholder")} value={note} onChange={(event) => setNote(event.target.value)} />
-          <button type="button" className={BUTTON.secondary} onClick={() => setDismissing(false)}>{t("cancel")}</button>
+          <button type="button" className={BUTTON.outline} onClick={() => setDismissing(false)}>{t("cancel")}</button>
           <button type="button" disabled={busy || !dismissReady(reason, note)} className={BUTTON.primary} data-testid="supplier-reply-dismiss-save" onClick={() => void dismiss()}>{t("save")}</button>
         </div>
       ) : null}

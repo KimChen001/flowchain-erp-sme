@@ -109,7 +109,7 @@ export function PurchaseOrderPromiseDates({ poId, onChanged }: { poId: string; o
         <div className="mt-3 grid gap-2 rounded-lg bg-slate-50 p-3 md:grid-cols-[10rem_1fr_auto]" data-testid="po-promise-form">
           <label className="text-[11px] font-medium text-slate-600">{tr("newDate")}<input aria-label={tr("newDate")} placeholder="YYYY-MM-DD" inputMode="numeric" maxLength={10} value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} className="mt-1 block h-8 w-full rounded border px-2" /></label>
           <label className="text-[11px] font-medium text-slate-600">{tr("reason")}<input aria-label={tr("reason")} placeholder={tr("reasonPlaceholder")} value={form.reason} onChange={(event) => setForm({ ...form, reason: event.target.value })} className="mt-1 block h-8 w-full rounded border px-2" /></label>
-          <div className="flex items-end gap-2"><button type="button" onClick={() => setForm(null)} className={listButtonClass.secondary}>{tr("cancel")}</button><button type="button" disabled={busy} onClick={() => void submit()} className={`${listButtonClass.primary} disabled:opacity-50`}>{tr("save")}</button></div>
+          <div className="flex items-end gap-2"><button type="button" onClick={() => setForm(null)} className={listButtonClass.outline}>{tr("cancel")}</button><button type="button" disabled={busy} onClick={() => void submit()} className={listButtonClass.primary}>{tr("save")}</button></div>
         </div>
       )}
       <div className="mt-3">

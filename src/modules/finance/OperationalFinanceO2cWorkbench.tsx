@@ -1419,7 +1419,7 @@ function InvoiceDetail() {
               </Link>
             )}
             {actions.includes("cancel") && (
-              <button type="button" data-testid="customer-invoice-cancel" className={`${listButtonClass.secondary} text-red-700`} onClick={() => void cancel()}>
+              <button type="button" data-testid="customer-invoice-cancel" className={listButtonClass.danger} onClick={() => void cancel()}>
                 {data.status === "draft" ? say("cancelDraft") : say("cancelInvoice")}
               </button>
             )}
