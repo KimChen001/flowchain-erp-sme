@@ -133,7 +133,7 @@ export function TierForm({ supplier, onSaved, onCancel, className = "" }: { supp
     {generalErrors.map((error, index) => <p key={index} role="alert" className="text-xs text-red-600">{t(error.message || "Could not save. Please try again.")}</p>)}
     <div className="flex gap-2">
       <button type="button" onClick={onCancel} className={listButtonClass.secondary}>{t("Cancel")}</button>
-      <button type="submit" disabled={saving} data-testid="supplier-tier-save" className={`${listButtonClass.primary} disabled:opacity-60`}>{t(saving ? "Saving…" : reviewing ? "Record review" : "Save tier")}</button>
+      <button type="submit" disabled={saving} data-testid="supplier-tier-save" className={listButtonClass.primary}>{t(saving ? "Saving…" : reviewing ? "Record review" : "Save tier")}</button>
     </div>
   </form>;
 }
@@ -208,7 +208,7 @@ export function SupplierTierPanel({ supplier, canEdit, onChanged }: { supplier: 
       {generalErrors.map((error, index) => <p key={index} role="alert" className="text-xs text-red-600">{t(error.message || "Could not save. Please try again.")}</p>)}
       <div className="flex gap-2">
         <button type="button" onClick={() => setEditing(null)} className={listButtonClass.secondary}>{t("Cancel")}</button>
-        <button type="submit" disabled={saving || owners === null} className={`${listButtonClass.primary} disabled:opacity-60`}>{t(saving ? "Saving…" : "Save owner")}</button>
+        <button type="submit" disabled={saving || owners === null} className={listButtonClass.primary}>{t(saving ? "Saving…" : "Save owner")}</button>
       </div>
     </form>}
 
