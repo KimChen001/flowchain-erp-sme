@@ -111,6 +111,7 @@ const PUBLIC_MAIL_DOMAINS = new Set([
   'web.de', 't-online.de', 'freenet.de', 'libero.it', 'virgilio.it', 'laposte.net', 'orange.fr', 'free.fr', 'wanadoo.fr', 'sfr.fr',
   'btinternet.com', 'sky.com', 'comcast.net', 'verizon.net', 'att.net', 'sbcglobal.net', 'cox.net', 'optonline.net', 'earthlink.net',
   'inbox.ru', 'list.ru', 'bk.ru', 'rambler.ru', 'naver.com', 'daum.net', 'hanmail.net', 'rediffmail.com', 'fastmail.com', 'hey.com', 'tutanota.com',
+  'wp.pl', 'o2.pl', 'interia.pl', 'onet.pl', 'seznam.cz', 'centrum.cz', 'virginmedia.com', 'blueyonder.co.uk', 'talktalk.net', 'uol.com.br', 'bol.com.br', 'terra.com.br',
   'qq.com', 'vip.qq.com', 'foxmail.com', '163.com', 'vip.163.com', '126.com', 'yeah.net', '139.com', '189.cn', 'wo.cn', 'sina.com', 'sina.cn', 'sohu.com', 'tom.com', '21cn.com', 'aliyun.com',
 ])
 const PUBLIC_MAIL_BRANDS = new Set(['yahoo', 'hotmail', 'outlook', 'live', 'gmx', 'yandex', 'ya', 'zoho', 'zohomail', 'proton', 'protonmail', 'aol', 'icloud', 'mail', 'email', 'inbox'])

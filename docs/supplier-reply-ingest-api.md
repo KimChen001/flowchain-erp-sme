@@ -28,6 +28,22 @@ mailbox can reach the endpoint:
   not on record never becomes the card at all. It is kept and listed with a
   note; a person who knows it is genuine pastes it on the order.
 
+## Before turning it on: the From address is not authenticated
+
+The sender check reads the From value the forwarder sends. FlowChain gets no
+SPF, DKIM or DMARC result, so a mail with a forged
+`From: orders@supplier.example` counts as on record and can become the
+order's card. Before turning this on, one of these must hold:
+
+- the forwarded mailbox enforces DMARC (rejects or quarantines mail that
+  fails it), so forged From addresses of domains that publish DMARC do not
+  reach the forwarder; or
+- the owner accepts the risk, knowing that a person still records every
+  reply and that a forged reply only proposes dates, never records them.
+
+Inbound mail (reply design §4.11) would take the provider's SPF and DKIM
+results instead.
+
 ## Switching it on
 
 | Setting | Effect |
@@ -68,8 +84,9 @@ A workspace also needs:
   once the token's workspace is known: the first refusal of a token in an
   hour is an audit row, and the rest of that hour are counted by code in a
   runtime record (`integration.supplier-reply-refusals`), so posting wrong
-  secrets cannot flood the audit log. No actor is recorded until the secret
-  is right.
+  secrets cannot flood the audit log. The count stops at 100 a token-hour
+  (past that a refusal costs one read and no write, and the count means "at
+  least 100"). No actor is recorded until the secret is right.
 
 ## Routes
 
@@ -113,7 +130,9 @@ Content-Type: application/json
   first copy is read gets `duplicate: true, pending: true` and no second
   reading. A reading that fails frees the message for a retry, and a claim
   left by a reading that never finished (the process stopped) is taken over
-  by a retry after three minutes.
+  by a retry after three minutes. A claim is freed or completed only while it
+  is unchanged since its request made or took it, so a reading that outlived
+  its claim cannot touch the claim of the retry that took it over.
 - `receivedOn` is optional, today in the workspace by default, within the
   last 60 days.
 

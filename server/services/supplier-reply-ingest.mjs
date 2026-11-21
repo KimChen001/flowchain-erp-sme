@@ -17,6 +17,7 @@
 // emailed replies in any 24 hours (50 by default, the inbound mail limit of
 // docs/supplier-reply-dates-design.md §4.11), counted in the database after
 // the request is checked, so junk requests do not use it up.
+import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { assertAuthorized, can } from '../auth/authorization-service.mjs'
 import { aiOptInRequired } from '../domain/ai-workspace-access.mjs'
@@ -41,6 +42,9 @@ const HOUR_MS = 60 * 60 * 1000
 export const INGEST_CLAIM_STALE_MS = 3 * 60 * 1000
 // Refusals per token are audited once an hour; the hour's record counts the rest.
 export const INGEST_REFUSAL_NAMESPACE = 'integration.supplier-reply-refusals'
+// The hour's count stops here: past it, a refusal costs one read and no
+// write, and the count says "at least".
+export const INGEST_REFUSAL_COUNT_LIMIT = 100
 
 export class SupplierReplyIngestError extends Error {
   constructor(code, message, status = 400, details = []) {
@@ -140,6 +144,8 @@ export function createSupplierReplyIngestService({ prisma, replies, env = proces
       const where = recordKey(tenantId, INGEST_REFUSAL_NAMESPACE, key)
       const held = await prisma.runtimeRecord.findUnique({ where })
       if (held) {
+        const total = Object.values(held.payload?.counts || {}).reduce((sum, count) => sum + (Number(count) || 0), 0)
+        if (total >= INGEST_REFUSAL_COUNT_LIMIT) return
         const counts = { ...(held.payload?.counts || {}) }
         counts[error.code] = (Number(counts[error.code]) || 0) + 1
         await prisma.runtimeRecord.update({ where, data: { payload: { ...held.payload, counts } } })
@@ -251,11 +257,19 @@ export function createSupplierReplyIngestService({ prisma, replies, env = proces
 
     // Claim the message before the reading: a retry while it is read finds
     // the claim and is told it is a duplicate, without a second reading.
+    // A claim is this request's while the record is unchanged since it was
+    // made or taken over (its updatedAt): freeing or completing it matches on
+    // that, so a reading that outlived its claim cannot touch the claim of the
+    // retry that took it over.
     let claim = null
+    let claimVersion = null
+    const claimToken = randomUUID()
+    const ownClaim = () => ({ tenantId, namespace: INTEGRATION_MESSAGE_NAMESPACE, recordKey: claim.recordKey, updatedAt: claimVersion })
     if (messageId) {
       const key = integrationMessageKey(messageId)
       try {
-        claim = await prisma.runtimeRecord.create({ data: { id: `${INTEGRATION_MESSAGE_NAMESPACE}:${tenantId}:${key}`, tenantId, namespace: INTEGRATION_MESSAGE_NAMESPACE, recordKey: key, payload: { replyId: null, tokenId, claimedAt: now().toISOString() } } })
+        claim = await prisma.runtimeRecord.create({ data: { id: `${INTEGRATION_MESSAGE_NAMESPACE}:${tenantId}:${key}`, tenantId, namespace: INTEGRATION_MESSAGE_NAMESPACE, recordKey: key, payload: { replyId: null, tokenId, claimToken, claimedAt: now().toISOString() } } })
+        claimVersion = new Date(claim.updatedAt)
       } catch (error) {
         if (error?.code !== 'P2002') throw error
         const held = await prisma.runtimeRecord.findUnique({ where: recordKey(tenantId, INTEGRATION_MESSAGE_NAMESPACE, key) })
@@ -264,10 +278,13 @@ export function createSupplierReplyIngestService({ prisma, replies, env = proces
         if (!held || !(now().getTime() - claimedAt > INGEST_CLAIM_STALE_MS)) return duplicateOf(tenantId, null, true)
         // Left from a reading that never finished: take it over, only if no
         // other retry took it first (the record is unchanged since it was read).
-        const payload = { replyId: null, tokenId, claimedAt: now().toISOString(), takenOverFrom: held.payload?.claimedAt || null }
+        const payload = { replyId: null, tokenId, claimToken, claimedAt: now().toISOString(), takenOverFrom: held.payload?.claimedAt || null }
         const taken = await prisma.runtimeRecord.updateMany({ where: { tenantId, namespace: INTEGRATION_MESSAGE_NAMESPACE, recordKey: key, updatedAt: held.updatedAt }, data: { payload } })
         if (taken.count !== 1) return duplicateOf(tenantId, null, true)
-        claim = { ...held, payload }
+        // Read back for its new updatedAt, and to be sure it is still ours.
+        claim = await prisma.runtimeRecord.findUnique({ where: recordKey(tenantId, INTEGRATION_MESSAGE_NAMESPACE, key) })
+        if (claim?.payload?.claimToken !== claimToken) return duplicateOf(tenantId, null, true)
+        claimVersion = new Date(claim.updatedAt)
       }
     }
 
@@ -278,11 +295,11 @@ export function createSupplierReplyIngestService({ prisma, replies, env = proces
       })
     } catch (error) {
       // Not kept: free the message so a retry can try again.
-      if (claim) await prisma.runtimeRecord.delete({ where: recordKey(tenantId, INTEGRATION_MESSAGE_NAMESPACE, claim.recordKey) }).catch(() => null)
+      if (claim) await prisma.runtimeRecord.deleteMany({ where: ownClaim() }).catch(() => null)
       throw error
     }
     const reply = pasted.reply
-    if (claim) await prisma.runtimeRecord.update({ where: recordKey(tenantId, INTEGRATION_MESSAGE_NAMESPACE, claim.recordKey), data: { payload: { ...claim.payload, replyId: reply.id } } }).catch(() => null)
+    if (claim) await prisma.runtimeRecord.updateMany({ where: ownClaim(), data: { payload: { ...claim.payload, replyId: reply.id } } }).catch(() => null)
     // Ids and codes only: the card itself is for the person who records it.
     return { status: 201, body: { duplicate: false, pending: false, replyId: reply.id, purchaseOrderId: order.id, purchaseOrderNumber: order.number, state: reply.state, readingStatus: reply.readingStatus } }
   }

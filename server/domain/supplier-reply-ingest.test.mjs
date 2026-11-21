@@ -7,7 +7,7 @@ import {
   formatIntegrationToken, hashIntegrationSecret, integrationMessageKey, integrationSecretMatches, newIntegrationToken, parseIntegrationToken, publicMailDomain, senderAddress, senderOnRecord,
 } from './integration-tokens.mjs'
 import { handleSupplierReplyIngestRoute } from '../routes/supplier-reply-ingest.routes.mjs'
-import { INGEST_CLAIM_STALE_MS, INGEST_REFUSAL_NAMESPACE, createSupplierReplyIngestService, orderNumbersIn, supplierReplyIngestEnabled, supplierReplyIngestPerDay } from '../services/supplier-reply-ingest.mjs'
+import { INGEST_CLAIM_STALE_MS, INGEST_REFUSAL_COUNT_LIMIT, INGEST_REFUSAL_NAMESPACE, createSupplierReplyIngestService, orderNumbersIn, supplierReplyIngestEnabled, supplierReplyIngestPerDay } from '../services/supplier-reply-ingest.mjs'
 import { supplierReplyCardSchema, supplierReplyPasteRequestSchema } from '../../shared/supplier-reply-contract.mjs'
 
 // Supplier replies without pasting (docs/supplier-reply-ingest-api.md): a
@@ -51,13 +51,14 @@ function store({ tenants = {}, users = [], orders = [], replies = [], publicData
       count: async ({ where }) => replies.filter((reply) => replyMatches(reply, where)).length,
     },
     runtimeRecord: {
-      findUnique: async ({ where }) => found(where),
-      findMany: async ({ where }) => records.filter((row) => row.tenantId === where.tenantId && row.namespace === where.namespace),
+      // Copies, as Prisma returns them.
+      findUnique: async ({ where }) => { const row = found(where); return row ? structuredClone(row) : null },
+      findMany: async ({ where }) => records.filter((row) => row.tenantId === where.tenantId && row.namespace === where.namespace).map((row) => structuredClone(row)),
       create: async ({ data }) => {
         if (records.some((row) => row.tenantId === data.tenantId && row.namespace === data.namespace && row.recordKey === data.recordKey)) throw Object.assign(new Error('Unique constraint failed'), { code: 'P2002' })
         const row = { ...data, createdAt: new Date(), updatedAt: new Date(Date.now() + records.length) }
         records.push(row)
-        return row
+        return structuredClone(row)
       },
       update: async ({ where, data }) => Object.assign(found(where), data, { updatedAt: new Date(Date.now() + records.length + 1) }),
       updateMany: async ({ where, data }) => {
@@ -73,6 +74,12 @@ function store({ tenants = {}, users = [], orders = [], replies = [], publicData
         return create
       },
       delete: async ({ where }) => { const row = found(where); records.splice(records.indexOf(row), 1); return row },
+      deleteMany: async ({ where }) => {
+        const at = records.findIndex((entry) => entry.tenantId === where.tenantId && entry.namespace === where.namespace && entry.recordKey === where.recordKey && entry.updatedAt.getTime() === new Date(where.updatedAt).getTime())
+        if (at < 0) return { count: 0 }
+        records.splice(at, 1)
+        return { count: 1 }
+      },
     },
     auditLog: { create: async ({ data }) => { audit.push(data); return data } },
     $transaction: async (work) => work(prisma),
@@ -156,7 +163,7 @@ test('a sender is on record by the same address, or the same company domain but 
   ]) assert.equal(senderAddress(from), address, from)
   assert.equal(senderOnRecord('"<orders@acme.example>" <x@evil.example>', 'orders@acme.example'), false)
   assert.equal(senderOnRecord('x@evil.example (<orders@acme.example>)', 'orders@acme.example'), false)
-  for (const domain of ['gmail.com', 'yahoo.co.uk', 'hotmail.co.uk', 'live.co.uk', 'yandex.ru', 'zoho.com', 'mail.ru', 'gmx.de', 'web.de', '139.com', 'qq.com']) assert.equal(publicMailDomain(domain), true, domain)
+  for (const domain of ['gmail.com', 'yahoo.co.uk', 'hotmail.co.uk', 'live.co.uk', 'yandex.ru', 'zoho.com', 'mail.ru', 'gmx.de', 'web.de', '139.com', 'qq.com', 'wp.pl', 'seznam.cz', 'virginmedia.com', 'uol.com.br']) assert.equal(publicMailDomain(domain), true, domain)
   for (const domain of ['acme.example', 'mail.acme.example', 'acme.co.uk']) assert.equal(publicMailDomain(domain), false, domain)
   assert.equal(senderOnRecord('someone@yahoo.co.uk', 'acme@yahoo.co.uk'), false)
   assert.equal(senderOnRecord('Pat <pat@acme.example>', 'orders@acme.example'), true)
@@ -291,6 +298,20 @@ test('the same message twice is kept once, also while the first is still being r
   assert.deepEqual([taken.status, taken.body.duplicate], [201, false])
   assert.equal(prisma.records.find((row) => row.recordKey === key).payload.replyId, taken.body.replyId)
 
+  // A reading that outlived its claim cannot free or complete the claim of the
+  // retry that took it over.
+  let fail
+  const outlived = createSupplierReplyIngestService({ prisma, replies: { pasteReply: () => new Promise((_resolve, reject) => { fail = () => reject(Object.assign(new Error('late'), { status: 409, code: 'SUPPLIER_REPLY_CONFLICT' })) }) }, env: {}, now: () => new Date(NOW), resolveActor })
+  const late = send(outlived, token, { text: 'PO-202611-0012 ships Wednesday.', messageId: '<outlived@acme.example>' })
+  await new Promise((resolve) => setImmediate(resolve))
+  const outlivedKey = integrationMessageKey('<outlived@acme.example>')
+  prisma.records.find((row) => row.recordKey === outlivedKey).payload.claimedAt = new Date(NOW - INGEST_CLAIM_STALE_MS - 1000).toISOString()
+  const takeover = await send(service, token, { text: 'PO-202611-0012 ships Wednesday.', messageId: '<outlived@acme.example>' })
+  assert.equal(takeover.status, 201)
+  fail()
+  await assert.rejects(late, { code: 'SUPPLIER_REPLY_CONFLICT' })
+  assert.equal(prisma.records.find((row) => row.recordKey === outlivedKey)?.payload.replyId, takeover.body.replyId)
+
   // A failed reading frees the message for a retry.
   const failing = createSupplierReplyIngestService({ prisma, replies: { pasteReply: async () => { throw Object.assign(new Error('closed'), { status: 409, code: 'SUPPLIER_REPLY_ORDER_NOT_OPEN' }) } }, env: {}, now: () => new Date(NOW), resolveActor })
   await assert.rejects(() => send(failing, token, { text: 'PO-202611-0012 ships Tuesday.', messageId: '<free@acme.example>' }), { code: 'SUPPLIER_REPLY_ORDER_NOT_OPEN' })
@@ -309,8 +330,11 @@ test('every unaccepted token gets the same 401: missing, malformed, unknown, wro
   // hour, with no actor: nobody is known before the secret is checked.
   const wrong = prisma.audit.filter((row) => row.action === 'supplier_reply_ingest_refused' && row.metadata.tokenId === tokenId)
   assert.deepEqual(wrong.map((row) => [row.metadata.code, row.actorId]), [['INTEGRATION_TOKEN_INVALID', null]])
-  for (let at = 0; at < 20; at += 1) await assert.rejects(() => send(service, `${prefix}.${workspace}.${tokenId}.${'C'.repeat(43)}`, body), { status: 401 })
+  for (let at = 0; at < INGEST_REFUSAL_COUNT_LIMIT + 20; at += 1) await assert.rejects(() => send(service, `${prefix}.${workspace}.${tokenId}.${'C'.repeat(43)}`, body), { status: 401 })
   assert.equal(prisma.audit.filter((row) => row.action === 'supplier_reply_ingest_refused' && row.metadata.tokenId === tokenId).length, 1)
+  // The hour's count stops at its limit: past it, nothing more is written.
+  const counted = prisma.records.find((row) => row.namespace === INGEST_REFUSAL_NAMESPACE && row.payload.tokenId === tokenId)
+  assert.equal(Object.values(counted.payload.counts).reduce((sum, count) => sum + count, 0), INGEST_REFUSAL_COUNT_LIMIT)
 
   // The admin's permissions now are checked on each use: losing workspace
   // management or order revision through a role assignment ends the token.
