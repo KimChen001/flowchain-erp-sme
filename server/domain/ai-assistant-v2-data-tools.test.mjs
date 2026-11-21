@@ -74,7 +74,9 @@ test('on facts read without the open requests, the assistant keeps the read tool
 test('the open purchase requests are read only when asked for, so the existing facts stay as they are', async () => {
   const scenario = aiSkillScenario()
   const plain = await readAiSkillFacts(await loadAiSkillContext(scenario.ctx))
-  assert.deepEqual(Object.keys(plain.purchaseRequests), ['awaitingApproval'])
+  // Every request waiting, and those this reader may approve (product review
+  // 2026-11-20, item 8).
+  assert.deepEqual(Object.keys(plain.purchaseRequests), ['awaitingApproval', 'toApprove'])
   const { facts } = await v2()
   assert.deepEqual(facts.purchaseRequests.awaitingApproval, plain.purchaseRequests.awaitingApproval)
   assert.deepEqual(facts.purchaseRequests.open.map((row) => [row.id, row.status]), [['PR-001', 'submitted'], ['PR-002', 'draft']])
@@ -607,7 +609,10 @@ test('suggest_purchase_lines names as cover only the requests whose lines count 
 })
 
 test('suggest_purchase_lines reads the suppliers of the items it returns only', async () => {
-  const { scenario, run } = await v2({ supplierLinks: [link(), { id: 'ITEM-002::SUP-001', payload: { itemId: 'ITEM-002', supplierId: 'SUP-001', preferred: true, active: true, approved: true, leadTimeDays: 5 } }], change: (data) => { highReorderPoint(data); data.items[1].reorderPoint = 500; data.balances[1].reorderPoint = 500 } })
+  // The reorder list judges both items to order now (the fixture's reader
+  // sees only some warehouses, so the list itself would judge neither).
+  const reorderList = { read: async () => ({ rows: [{ sku: 'LDM-001', orderNow: true }, { sku: 'LDM-002', orderNow: true }] }) }
+  const { scenario, run } = await v2({ ctx: { aiReadServices: { reorderList } }, supplierLinks: [link(), { id: 'ITEM-002::SUP-001', payload: { itemId: 'ITEM-002', supplierId: 'SUP-001', preferred: true, active: true, approved: true, leadTimeDays: 5 } }], change: (data) => { highReorderPoint(data); data.items[1].reorderPoint = 500; data.balances[1].reorderPoint = 500 } })
   assert.equal((await run('suggest_purchase_lines')).result.total, 2)
   scenario.calls.prisma.length = 0
   const one = (await run('suggest_purchase_lines', { limit: 1 })).result

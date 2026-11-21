@@ -12,6 +12,8 @@ import { AI_SKILL_RECENT_DAYS, aiSkillDaysBetween } from './ai-skill-signals.mjs
 import { itemStockUnit, preferredSupplierFor, requestMinimumOf } from './reorder-list.mjs'
 import { listItemSupplierRecords } from './master-data-commands.mjs'
 import { OPEN_PURCHASE_REQUEST_STATUSES } from '../../shared/purchase-suggestion.mjs'
+import { can } from '../auth/authorization-service.mjs'
+import { APPROVAL_KINDS, approverStanding, mayApprove } from './self-approval.mjs'
 
 // The facts every workspace skill reads, through the same definitions the
 // reports use, so an answer can never disagree with a report:
@@ -555,6 +557,16 @@ export async function readAiSkillFacts(skillContext, { openPurchaseRequests = fa
         return { id: text(row.id), number: text(row.number || row.id), priority: text(row.priority) || null, requiredDate: text(row.requiredDate).slice(0, 10) || null, sku: text(line.sku) || null, skus: [...new Set(array(row.lines).map((entry) => text(entry.sku)).filter(Boolean))], itemIds: [...new Set(array(row.lines).map((entry) => text(entry.itemId)).filter(Boolean))], quantity: amount(line.quantity), unit: text(line.unit) || null }
       }),
     }
+    // The requests this reader may approve, as Today shows them (design
+    // audit L11-12): with the approve permission, and not one they raised
+    // unless no one else may approve it. "Needs attention" lists only these;
+    // a question about the requests waiting reads awaitingApproval, every one
+    // (product review 2026-11-20, item 8).
+    const holds = (permission) => can({ actor, permission, tenantId })
+    const standing = holds(APPROVAL_KINDS.purchase_request.permission) ? await approverStanding(prisma, actor, holds, ['purchase_request']) : null
+    const approvable = new Set(array(business.purchaseRequests).filter((row) => text(row.status) === 'submitted'
+      && mayApprove(standing, 'purchase_request', Array.isArray(row.approvalAuthorIds) ? row.approvalAuthorIds : [row.requesterId, row.requester])).map((row) => text(row.id)))
+    facts.purchaseRequests.toApprove = facts.purchaseRequests.awaitingApproval.filter((row) => approvable.has(row.id))
     if (openPurchaseRequests) {
       facts.purchaseRequests.open = array(business.purchaseRequests).filter((row) => OPEN_PURCHASE_REQUEST_STATUSES.includes(text(row.status))).map((row) => ({
         id: text(row.id), number: text(row.number || row.id), status: text(row.status), priority: text(row.priority) || null, requiredDate: text(row.requiredDate).slice(0, 10) || null,
