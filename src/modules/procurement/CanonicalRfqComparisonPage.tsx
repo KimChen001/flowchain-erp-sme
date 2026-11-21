@@ -126,7 +126,7 @@ const LIMITATION_LABELS: Record<string, readonly [string, string] | null> = {
 
 function eligibilityChip(eligibility: RfqComparisonEligibility, language: string) {
   const eligible = eligibility === "eligible";
-  return <StatusChip label={localLabel(ELIGIBILITY_LABELS, eligibility, language, eligibility)} tone={eligible ? "info" : "neutral"} />;
+  return <StatusChip label={localLabel(ELIGIBILITY_LABELS, eligibility, language, eligibility)} tone={eligible ? "info" : eligibility === "authority_missing" ? "warning" : "neutral"} />;
 }
 
 function Availability({ comparison }: { comparison: RfqSupplierComparison }) {
