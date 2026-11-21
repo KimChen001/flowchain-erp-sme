@@ -318,7 +318,12 @@ test('list_shipments counts shipments and orders shipped per month over the whol
   const london = await tool('list_shipments').run({ days: 60 }, { facts, context: context(null) })
   assert.deepEqual(london.byMonth.map((row) => [row.month, row.shipments]), [['2026-10', 4], ['2026-11', 1]])
   shipments.pop()
-  // A reader of some warehouses, or one SKU: no monthly count.
+  // A reader of some warehouses, or one SKU: no monthly count. A scope that
+  // holds every warehouse reads as all (2026-11-21 live run).
+  prisma.warehouse = { findMany: async () => [{ id: 'WH-1' }, { id: 'WH-2' }] }
   assert.equal((await tool('list_shipments').run({ days: 60 }, { facts, context: context(['WH-1']) })).byMonth, undefined)
+  prisma.warehouse = { findMany: async () => [{ id: 'WH-1' }] }
+  assert.equal((await tool('list_shipments').run({ days: 60 }, { facts, context: context(['WH-1']) })).byMonth.length, 2)
+  delete prisma.warehouse
   assert.equal((await tool('list_shipments').run({ days: 60, sku: 'X' }, { facts, context: context(null) })).byMonth, undefined)
 })

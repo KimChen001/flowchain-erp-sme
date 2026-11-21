@@ -99,7 +99,11 @@ const listShipments = defineAiTool({
     // many sales orders did we ship in October?" got "200 rows shown of
     // 3,380+, no total per month"). For a reader of every warehouse, without
     // a SKU; reversed shipments are not counted.
-    const byMonth = !salesOrderId && !args.sku && !scope ? await shipmentsByMonth(prisma, tenantId, { from, today: text(facts.today), timeZone: facts.timezone }) : null
+    // A scope that holds every warehouse of the workspace reads as all of them
+    // (2026-11-21 live run: the walkthrough users have one scope row each, so
+    // byMonth never came, and "can't give a count" was the answer).
+    const everyWarehouse = !scope || await scopeHoldsEveryWarehouse(prisma, tenantId, scope)
+    const byMonth = !salesOrderId && !args.sku && everyWarehouse ? await shipmentsByMonth(prisma, tenantId, { from, today: text(facts.today), timeZone: facts.timezone }) : null
     return {
       ...(salesOrderId ? { order: text(args.order) } : { days, from: addCalendarDays(from, 1), to: text(facts.today) }),
       ...(args.sku ? { sku: args.sku } : {}),
@@ -109,6 +113,13 @@ const listShipments = defineAiTool({
     }
   },
 })
+
+// Whether a set of warehouse ids holds every warehouse of the workspace.
+async function scopeHoldsEveryWarehouse(prisma, tenantId, scope) {
+  if (typeof prisma?.warehouse?.findMany !== 'function') return false
+  const warehouses = await prisma.warehouse.findMany({ where: { tenantId }, select: { id: true } }).catch(() => null)
+  return Array.isArray(warehouses) && warehouses.length > 0 && warehouses.every((row) => scope.has(text(row.id)))
+}
 
 // Posted shipments per calendar month of the workspace's time zone, from the
 // day after `from` to today: { month, shipments, salesOrders } oldest first,
