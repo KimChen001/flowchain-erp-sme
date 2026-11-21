@@ -21,14 +21,31 @@ const SALES_ORDERS_READ_MAX = 200
 // that the demand names (openIds), and those it names outside the listed
 // ones, read by id (up to SALES_ORDERS_READ_MAX) for a reader of every
 // warehouse; a reader of some keeps the listed ones.
+// notRead: the open orders past that bound, which the list says it left out.
 export async function openSalesOrdersOf({ listed = [], openIds = new Set(), prisma = null, tenantId = '', someWarehouses = false } = {}) {
   const rows = array(listed)
   const listedIds = new Set(rows.map((row) => text(row.salesOrderId || row.id)))
-  const missing = someWarehouses ? [] : [...openIds].map(text).filter((id) => id && !listedIds.has(id)).slice(0, SALES_ORDERS_READ_MAX)
+  const outside = someWarehouses ? [] : [...openIds].map(text).filter((id) => id && !listedIds.has(id))
+  const missing = outside.slice(0, SALES_ORDERS_READ_MAX)
   const read = missing.length && typeof prisma?.salesOrder?.findMany === 'function'
     ? await prisma.salesOrder.findMany({ where: { tenantId, id: { in: missing } }, include: { lines: true } }).catch(() => [])
     : []
-  return [...rows, ...array(read)].filter((row) => openIds.has(text(row.salesOrderId || row.id)))
+  const orders = [...rows, ...array(read)].filter((row) => openIds.has(text(row.salesOrderId || row.id)))
+  return Object.assign(orders, { notRead: Math.max(0, outside.length - missing.length) })
+}
+
+// The reason and day of each rejected or cancelled request's last step, from
+// its record (metadata.lastReason, written by the reject and cancel commands,
+// which need a reason), by id. Read here for the assistant only: the shared
+// request mapper and its routes are unchanged (#430 review).
+async function closedRequestReasons(prisma, tenantId, ids) {
+  if (!ids.length || typeof prisma?.purchaseRequest?.findMany !== 'function') return new Map()
+  const rows = await prisma.purchaseRequest.findMany({ where: { tenantId, id: { in: ids } }, select: { id: true, metadata: true } }).catch(() => [])
+  return new Map(array(rows).map((row) => {
+    const meta = row.metadata && typeof row.metadata === 'object' ? row.metadata : {}
+    const last = array(meta.timeline).at(-1)
+    return [text(row.id), { reason: text(meta.lastReason) || null, decidedOn: text(last?.at).slice(0, 10) || null }]
+  }))
 }
 
 // The facts every workspace skill reads, through the same definitions the
@@ -548,6 +565,7 @@ export async function readAiSkillFacts(skillContext, { openPurchaseRequests = fa
       // id, up to SALES_ORDERS_READ_MAX, for a reader of every warehouse (a
       // reader of some keeps the scoped list as it was).
       const orders = await openSalesOrdersOf({ listed: business.salesOrders, openIds: open, prisma, tenantId, someWarehouses: Boolean(access.warehouseIds) })
+      if (orders.notRead) facts.salesOrdersNotRead = orders.notRead
       facts.salesOrders = orders.map((row) => ({
         id: text(row.salesOrderId || row.id), number: text(row.orderNumber || row.salesOrderId || row.id), customer: text(row.customerName) || null, promisedDate: dayOf(row.promisedDate),
         // How far the order is: on hold, partly shipped, or not shipped yet.
@@ -597,8 +615,10 @@ export async function readAiSkillFacts(skillContext, { openPurchaseRequests = fa
       // reason the person gave (a reason is required for both). The open list
       // has none, so "were any rejected, and why?" was answered "none"
       // (2026-11-20 question set).
-      facts.purchaseRequests.closed = array(business.purchaseRequests).filter((row) => ['rejected', 'cancelled'].includes(text(row.status))).map((row) => ({
-        id: text(row.id), number: text(row.number || row.id), status: text(row.status), reason: text(row.lastReason) || null, decidedOn: text(row.lastActionAt).slice(0, 10) || null,
+      const closedRows = array(business.purchaseRequests).filter((row) => ['rejected', 'cancelled'].includes(text(row.status)))
+      const reasons = await closedRequestReasons(prisma, tenantId, closedRows.map((row) => text(row.id)).filter(Boolean))
+      facts.purchaseRequests.closed = closedRows.map((row) => ({
+        id: text(row.id), number: text(row.number || row.id), status: text(row.status), reason: reasons.get(text(row.id))?.reason ?? null, decidedOn: reasons.get(text(row.id))?.decidedOn ?? null,
         skus: [...new Set(array(row.lines).map((line) => text(line.sku)).filter(Boolean))],
       })).sort((a, b) => text(b.decidedOn).localeCompare(text(a.decidedOn)) || a.number.localeCompare(b.number))
     }

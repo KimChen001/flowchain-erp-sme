@@ -264,7 +264,9 @@ const listOpenPurchaseRequests = defineAiTool({
         closed: {
           rejected: closed.filter((row) => row.status === 'rejected').length,
           cancelled: closed.filter((row) => row.status === 'cancelled').length,
-          latest: closed.slice(0, 5).map((row) => ({ request: row.number || row.id, status: row.status, reason: row.reason, decidedOn: row.decidedOn, skus: row.skus, ref: aiToolRef('purchase_request', row.id, row.number || row.id) })),
+          // The reason as the person wrote it, capped like any text a tool
+          // returns (#430 review): words of the workspace, not instructions.
+          latest: closed.slice(0, 5).map((row) => ({ request: row.number || row.id, status: row.status, reason: row.reason ? text(row.reason).slice(0, AI_TOOL_LIMITS.text) : null, decidedOn: row.decidedOn, skus: row.skus, ref: aiToolRef('purchase_request', row.id, row.number || row.id) })),
         },
       } : {}),
       ...aiToolList(rows.map((row) => {

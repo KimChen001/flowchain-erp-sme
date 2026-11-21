@@ -48,28 +48,43 @@ test('list_sales_orders gives each line still to ship and reserved; a reserved o
   assert.deepEqual(byNumber['SO-003'].lines, [{ sku: 'LDM-001', stillToShip: 0, reserved: 0, notShippedOrReserved: 0 }, { sku: 'LDM-002', stillToShip: 6, reserved: 6, notShippedOrReserved: 0 }])
 })
 
-test('a request\'s last decision reason and day come from its metadata', () => {
-  const mapped = mapPurchaseRequest({ id: 'PR-7', number: 'PR-202611-0007', status: 'rejected', metadata: { lastAction: 'reject', lastReason: 'Not needed now: stock and open orders cover it [assumed].', timeline: [{ action: 'submit', at: '2026-11-10T09:00:00Z' }, { action: 'reject', at: '2026-11-12T10:30:00Z' }] }, lines: [] })
-  assert.deepEqual([mapped.lastAction, mapped.lastReason, mapped.lastActionAt], ['reject', 'Not needed now: stock and open orders cover it [assumed].', '2026-11-12'])
-  const plain = mapPurchaseRequest({ id: 'PR-1', status: 'draft', metadata: {}, lines: [] })
-  assert.deepEqual([plain.lastAction, plain.lastReason, plain.lastActionAt], [null, null, null])
+// #430 review: the shared request mapper (and the legacy route that uses it
+// without a permission check) gives no reason; the assistant reads it from
+// the request records itself.
+test('the shared request mapper gives no decision reason', () => {
+  const mapped = mapPurchaseRequest({ id: 'PR-7', number: 'PR-202611-0007', status: 'rejected', metadata: { lastAction: 'reject', lastReason: 'Not needed now.', timeline: [{ action: 'reject', at: '2026-11-12T10:30:00Z' }] }, lines: [] })
+  assert.equal('lastReason' in mapped, false)
+  assert.equal(JSON.stringify(mapped).includes('Not needed now.'), false)
 })
 
-test('list_purchase_requests gives the rejected and cancelled requests with their reason', async () => {
+test('list_purchase_requests gives the rejected and cancelled requests with their reason, capped', async () => {
   const scenario = aiSkillScenario()
   scenario.data.purchaseRequests.push(
-    { id: 'PR-007', number: 'PR-202611-0007', status: 'rejected', lastAction: 'reject', lastReason: 'Not needed now: stock and open orders cover it.', lastActionAt: '2026-09-20', lines: [{ id: 'PRL-007', sku: 'LDM-002', quantity: 30, unit: 'pcs' }] },
-    { id: 'PR-008', number: 'PR-202611-0008', status: 'cancelled', lastAction: 'cancel', lastReason: 'No longer needed.', lastActionAt: '2026-09-22', lines: [{ id: 'PRL-008', sku: 'LDM-001', quantity: 10, unit: 'pcs' }] },
+    { id: 'PR-007', number: 'PR-202611-0007', status: 'rejected', lines: [{ id: 'PRL-007', sku: 'LDM-002', quantity: 30, unit: 'pcs' }] },
+    { id: 'PR-008', number: 'PR-202611-0008', status: 'cancelled', lines: [{ id: 'PRL-008', sku: 'LDM-001', quantity: 10, unit: 'pcs' }] },
   )
-  const context = await loadAiSkillContext(scenario.ctx)
+  const long = `No longer needed. ${'x'.repeat(400)}`
+  const records = {
+    'PR-007': { lastAction: 'reject', lastReason: 'Not needed now: stock and open orders cover it.', timeline: [{ action: 'submit', at: '2026-09-18T09:00:00Z' }, { action: 'reject', at: '2026-09-20T10:00:00Z' }] },
+    'PR-008': { lastAction: 'cancel', lastReason: long, timeline: [{ action: 'cancel', at: '2026-09-22T10:00:00Z' }] },
+  }
+  const asked = []
+  const purchaseRequest = { findMany: async ({ where }) => { asked.push(where); return where.id.in.map((id) => ({ id, metadata: records[id] || null })) } }
+  const loaded = await loadAiSkillContext(scenario.ctx)
+  const context = { ...loaded, prisma: new Proxy(loaded.prisma, { get: (target, key) => (key === 'purchaseRequest' ? purchaseRequest : target[key]) }) }
   const facts = await readAiSkillFacts(context, { openPurchaseRequests: true })
   const run = async (args) => (await runAiReadTool('list_purchase_requests', args, { facts, context })).result
   const all = await run({})
   assert.deepEqual([all.closed.rejected, all.closed.cancelled], [1, 1])
-  assert.deepEqual(all.closed.latest.map((row) => [row.request, row.status, row.reason, row.decidedOn, row.skus]), [
-    ['PR-202611-0008', 'cancelled', 'No longer needed.', '2026-09-22', ['LDM-001']],
-    ['PR-202611-0007', 'rejected', 'Not needed now: stock and open orders cover it.', '2026-09-20', ['LDM-002']],
+  assert.deepEqual(all.closed.latest.map((row) => [row.request, row.status, row.decidedOn, row.skus]), [
+    ['PR-202611-0008', 'cancelled', '2026-09-22', ['LDM-001']],
+    ['PR-202611-0007', 'rejected', '2026-09-20', ['LDM-002']],
   ])
+  assert.equal(all.closed.latest[1].reason, 'Not needed now: stock and open orders cover it.')
+  // Free text a person wrote, capped like any text a tool returns.
+  assert.ok(all.closed.latest[0].reason.length <= 200 && all.closed.latest[0].reason.startsWith('No longer needed.'))
+  // Only the closed requests' records are read.
+  assert.deepEqual(asked.map((where) => [...where.id.in].sort()), [['PR-007', 'PR-008']])
   // Not in the open list itself, and not beside a status or SKU filter.
   assert.equal(all.rows.some((row) => ['rejected', 'cancelled'].includes(row.status)), false)
   assert.equal((await run({ status: 'submitted' })).closed, undefined)
@@ -95,4 +110,27 @@ test('list_supplier_invoices says how many differences were reviewed, and the la
   // Without the records, no figure.
   const none = (await runAiReadTool('list_supplier_invoices', { kind: 'summary' }, { facts, context: base })).result.summary
   assert.equal('reviewedDifferences' in none, false)
+})
+
+// #430 review: reviews only for a reader of the match, as the match
+// exceptions page; open orders past the read bound are said, not dropped.
+test('reviewed differences need the match permission; orders past the bound are said', async () => {
+  const scenario = aiSkillScenario()
+  const base = await loadAiSkillContext(scenario.ctx)
+  const facts = await readAiSkillFacts(base)
+  const financeMatchException = { findMany: async () => [{ supplierInvoiceId: 'SI-1', status: 'approved', exceptionType: 'price_variance', resolvedAt: new Date('2026-09-25T10:00:00Z'), supplierInvoice: { invoiceNumber: 'INV-1' } }] }
+  const prisma = new Proxy(base.prisma, { get: (target, key) => (key === 'financeMatchException' ? financeMatchException : target[key]) })
+  const codes = new Set([...base.actor.permissionCodes].filter((code) => code !== 'finance.three_way_match.read'))
+  const withoutMatch = { ...base, prisma, actor: { ...base.actor, permissionCodes: codes } }
+  const summary = (await runAiReadTool('list_supplier_invoices', { kind: 'summary' }, { facts, context: withoutMatch })).result.summary
+  assert.equal('reviewedDifferences' in summary, false)
+  // Over 500 reviews: the count says it covers the latest ones.
+  const many = Array.from({ length: 501 }, (_, index) => ({ supplierInvoiceId: `SI-${index}`, status: 'approved', exceptionType: 'price_variance', resolvedAt: new Date('2026-09-25T10:00:00Z'), supplierInvoice: { invoiceNumber: `INV-${index}` } }))
+  const busy = new Proxy(base.prisma, { get: (target, key) => (key === 'financeMatchException' ? { findMany: async () => many } : target[key]) })
+  const cut = (await runAiReadTool('list_supplier_invoices', { kind: 'summary' }, { facts, context: { ...base, prisma: busy } })).result.summary.reviewedDifferences
+  assert.deepEqual([cut.invoices, cut.partial], [500, { limit: 500 }])
+  // Open orders past the by-id bound.
+  const openIds = new Set(Array.from({ length: 205 }, (_, index) => `SO-${index}`))
+  const orders = await openSalesOrdersOf({ listed: [], openIds, prisma: { salesOrder: { findMany: async ({ where }) => where.id.in.map((id) => ({ id })) } }, tenantId: 'T' })
+  assert.deepEqual([orders.length, orders.notRead], [200, 5])
 })
