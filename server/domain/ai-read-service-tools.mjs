@@ -95,9 +95,9 @@ const suggestionFacts = (suggestion) => ({
 // The preferred supplier's lead time and minimum order come from the item's
 // supplier link (preferredSupplierFor in reorder-list.mjs), so they are read
 // from the row's supplier, never from the row itself.
-// How many of the order-now items furthest below their reorder point the
-// reorder list names beside its page.
-const SHORTFALLS_SHOWN = 5
+// How many of the most urgent order-now items the reorder list names beside
+// its page.
+const URGENT_SHOWN = 5
 
 const reorderList = defineAiTool({
   name: 'reorder_list',
@@ -207,20 +207,33 @@ const reorderList = defineAiTool({
     // the 195" could not be read).
     const offset = Math.min(Math.max(0, Number(args.offset) || 0), windowed.length)
     const page = aiToolList(windowed.slice(offset), args.limit)
-    // The items to order now that are furthest below their reorder point,
-    // over every row, not the page: rows due the same day come by SKU, so
-    // the first page of 65 items due today was 21xxx codes, and answers
-    // picked their "most urgent" from it (2026-11-20 question set: the
-    // cakestand, fourth furthest below, was never named).
+    // The most urgent items to order now, over every row, not the page: rows
+    // due the same day come by SKU, so the first page of 65 items due today
+    // was 21xxx codes, and answers picked their "most urgent" from it
+    // (2026-11-20 question set: the cakestand was never named). Urgent is
+    // the fewest days the stock position covers at the recorded daily
+    // demand; an item with no demand recorded comes after, by how far below
+    // its reorder point it is as a share of it. Never raw quantities, which
+    // differ in unit (#431 review).
     const nowRows = rows.filter((row) => row.orderNow === true && Number.isFinite(Number(row.shortfall)))
-    const largestShortfallsNow = !args.sku && nowRows.length > 1
-      ? [...nowRows].sort((a, b) => Number(b.shortfall) - Number(a.shortfall) || text(a.sku).localeCompare(text(b.sku))).slice(0, SHORTFALLS_SHOWN).map((row) => ({
-        sku: row.sku, itemName: row.itemName || row.name || null, position: row.position ?? null, reorderPoint: row.reorderPoint ?? null, shortfall: row.shortfall, incoming: row.incoming ?? null,
+    const coverOf = (row) => (Number(row.averageDailyDemand) > 0 && Number.isFinite(Number(row.position)) ? Math.max(0, Number(row.position)) / Number(row.averageDailyDemand) : null)
+    const shareBelow = (row) => (Number(row.reorderPoint) > 0 ? Number(row.shortfall) / Number(row.reorderPoint) : 0)
+    const urgency = (a, b) => {
+      const [left, right] = [coverOf(a), coverOf(b)]
+      if (left !== null && right !== null && left !== right) return left - right
+      if ((left === null) !== (right === null)) return left === null ? 1 : -1
+      return shareBelow(b) - shareBelow(a) || text(a.sku).localeCompare(text(b.sku))
+    }
+    const mostUrgentNow = !args.sku && nowRows.length > 1
+      ? [...nowRows].sort(urgency).slice(0, URGENT_SHOWN).map((row) => ({
+        sku: row.sku, itemName: row.itemName || row.name || null, unit: row.unit || null,
+        daysOfCover: coverOf(row) === null ? null : Math.round(coverOf(row) * 10) / 10, averageDailyDemand: row.averageDailyDemand ?? null,
+        position: row.position ?? null, reorderPoint: row.reorderPoint ?? null, shortfall: row.shortfall, incoming: row.incoming ?? null,
         requestQuantity: row.requestQuantity, raisedToMinimum: row.raisedToMinimum, ref: row.ref,
       }))
       : null
     return {
-      ...(largestShortfallsNow ? { largestShortfallsNow } : {}),
+      ...(mostUrgentNow ? { mostUrgentNow } : {}),
       asOf: facts.asOf, summary: list.summary && typeof list.summary === 'object' ? primitives(list.summary, Object.keys(list.summary)) : null, notJudged: array(list.notJudged).length, limitations: array(list.dataLimitations), counts,
       orderByRange: dated.length ? { earliest: dated[0], latest: dated.at(-1) } : null,
       forecastAvailable: Boolean(forecastClient),
