@@ -1017,29 +1017,20 @@ test('the reorder list and suggest_purchase_lines order up to the same level', a
   }
 })
 
-// 2026-11-20 question set: 65 items due today came by SKU, so the first page
-// was 21xxx codes and the cakestand was never named. The order-now items
-// furthest below their reorder point come beside the page, each with its
-// unit. No days-of-cover ranking (#431 review: dropped).
-test('reorder_list names the order-now items furthest below their reorder point, with units, and no urgency ranking', async () => {
+// #431: a ranked summary beside the reorder list's page was tried twice and
+// dropped (mostUrgentNow by days of cover, then largestShortfallsNow by
+// shortfall): answers named its top 5 and stopped reading, and reorder-zh
+// fell from 1/2 to 0/5 and 0/3 on the 2026-11-21 live runs. The list gives
+// neither.
+test('reorder_list gives no ranked summary beside its page', async () => {
   const scenario = aiSkillScenario()
   const loaded = await loadAiSkillContext(scenario.ctx)
   const today = (await readAiSkillFacts(loaded)).today
-  // [sku, position, reorder point, daily demand, unit]
-  const specs = [['20000', 100, 112, 2, 'pcs'], ['20001', 53, 254, 10, 'pcs'], ['20002', 182, 247, 7.2, 'pcs'], ['20003', 538, 700, 4, 'pcs'], ['20004', 131, 228, 0, 'pcs'], ['20005', 40, 400, 0, 'kg'], ['20006', 10, 50, 5, 'box'], ['20007', 300, 310, 1, 'pcs']]
-  const rows = specs.map(([sku, position, reorderPoint, demand, unit]) => ({ sku, itemName: `Item ${sku}`, unit, orderNow: true, orderByDate: today, position, reorderPoint, shortfall: reorderPoint - position, incoming: 0, demand: { averageDailyDemand: demand || null }, supplier: { id: 'SUP-1', name: 'Supplier', leadTimeDays: 14 }, purchaseRequest: { quantity: reorderPoint - position + 20, raisedToMinimum: sku === '20002' } }))
-  rows.push({ sku: '29999', itemName: 'Not due', orderNow: false, orderByDate: addCalendarDays(today, 9), shortfall: 500, position: 1, reorderPoint: 501, demand: { averageDailyDemand: 50 }, supplier: { id: 'SUP-1', name: 'Supplier' } })
+  const rows = [['20000', 100, 112], ['20001', 53, 254], ['20002', 182, 247]].map(([sku, position, reorderPoint]) => ({ sku, itemName: `Item ${sku}`, unit: 'pcs', orderNow: true, orderByDate: today, position, reorderPoint, shortfall: reorderPoint - position, incoming: 0, demand: { averageDailyDemand: 5 }, supplier: { id: 'SUP-1', name: 'Supplier', leadTimeDays: 14 }, purchaseRequest: { quantity: reorderPoint - position + 20 } }))
   const context = await loadAiSkillContext({ ...scenario.ctx, aiReadServices: { reorderList: { read: async () => ({ rows }) } } })
-  const run = async (args) => (await runAiReadTool('reorder_list', args, { facts: await readAiSkillFacts(context), context })).result
-  const list = await run({ limit: 3 })
-  // Shortfalls: 20005 360, 20001 201, 20003 162, 20004 97, 20002 65.
-  assert.deepEqual(list.largestShortfallsNow.map((row) => [row.sku, row.shortfall, row.unit]), [['20005', 360, 'kg'], ['20001', 201, 'pcs'], ['20003', 162, 'pcs'], ['20004', 97, 'pcs'], ['20002', 65, 'pcs']])
-  assert.deepEqual([list.largestShortfallsNow[4].raisedToMinimum, list.largestShortfallsNow[4].requestQuantity], [true, 85])
-  // No days-of-cover ranking, on the list or its rows.
+  const list = (await runAiReadTool('reorder_list', { limit: 2 }, { facts: await readAiSkillFacts(context), context })).result
   assert.equal(list.mostUrgentNow, undefined)
-  assert.equal(list.largestShortfallsNow.some((row) => 'daysOfCover' in row), false)
-  // The page itself is as before: by order-by day, then SKU.
-  assert.deepEqual(list.rows.map((row) => row.sku), ['20000', '20001', '20002'])
-  // One item asked for: no summary.
-  assert.equal((await run({ sku: '20001' })).largestShortfallsNow, undefined)
+  assert.equal(list.largestShortfallsNow, undefined)
+  // The page is as on the inventory page: by order-by day, then SKU.
+  assert.deepEqual(list.rows.map((row) => row.sku), ['20000', '20001'])
 })
