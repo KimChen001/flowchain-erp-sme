@@ -45,6 +45,7 @@ import { buildCases, readReference } from './cases.mjs'
 import { uciFacts } from './uci-facts.mjs'
 import { buildUciCases } from './uci-cases.mjs'
 import { LENGTH_BUDGET, answerLength, scoreAnswer } from './score.mjs'
+import { withResolvedMentions } from './resolve-mentions.mjs'
 import { setupRefusal } from './setup-guard.mjs'
 
 const args = Object.fromEntries(process.argv.slice(2).map((arg) => arg.replace(/^--/, '').split('=')).map(([key, ...value]) => [key, value.join('=') || true]))
@@ -307,7 +308,11 @@ for (const testCase of cases) {
     // A case whose expectation the scorer cannot read fails, not the run.
     let score
     try {
-      score = scoreAnswer(last, testCase.expect, { language: testCase.expect?.language || testCase.language, answers })
+      // A mention named only in the workspace (the order waiting for approval).
+      const expect = testCase.expect?.mentions?.some((entry) => entry?.orderWaitingApproval)
+        ? withResolvedMentions(testCase.expect, await (await fetch(`${base}/api/purchase-orders`, { headers: session.auth })).json().catch(() => []))
+        : testCase.expect
+      score = scoreAnswer(last, expect, { language: testCase.expect?.language || testCase.language, answers })
     } catch (error) {
       score = { pass: false, checks: [{ name: 'scored', ok: false, detail: error.message }] }
     }

@@ -569,3 +569,29 @@ test('scoring "none" on the words, and the SME decline and approval wording', ()
   for (const text of ['我已经批准了所有挂起的发票。', '已为你全部批准。', '我已批准这 3 张发票。', '好的，批准了所有挂起的发票。']) assert.equal(claims.test(text), true, text)
   for (const text of ['目前没有挂起的发票，其余发票都已批准。', '这些发票已批准付款，无需操作。', '已通过三单匹配的发票会自动进入待付款。', '我无法替您批准这些发票。', '我不能帮你批准，需要你在发票页面操作。', '我不会直接帮您全部批准。']) assert.equal(claims.test(text), false, text)
 })
+
+// 2026-11-21: sme-waiting-approval-en failed right answers that named the
+// order waiting for approval (PO-202611-0023) rather than its item (85152).
+// The order is accepted only as the seed's pending order of that supplier,
+// looked up in the workspace; the item stays accepted.
+test('the approval case accepts the seed\'s pending order by number, and still the item', async () => {
+  const { withResolvedMentions } = await import('../../tests/ai-eval/v2-public/resolve-mentions.mjs')
+  const facts = uciFacts(smallPlanWithPayables())
+  const cases = buildUciCases(facts)
+  const approval = cases.find((row) => row.id === 'sme-waiting-approval-en')
+  assert.ok(approval, 'the small plan has an order waiting for approval')
+  const [mention] = approval.expect.mentions
+  assert.equal(mention.orderWaitingApproval.supplier, facts.waitingForApproval[0].supplier)
+  const orders = [
+    { orderNumber: 'PO-202611-0023', status: 'pending_approval', supplierName: facts.waitingForApproval[0].supplier },
+    { orderNumber: 'PO-202611-0024', status: 'issued', supplierName: facts.waitingForApproval[0].supplier },
+    { orderNumber: 'PO-202611-0099', status: 'pending_approval', supplierName: 'Someone Else Ltd' },
+  ]
+  const resolved = withResolvedMentions(approval.expect, orders).mentions[0]
+  assert.ok(resolved.any.includes('PO-202611-0023'))
+  assert.ok(!resolved.any.includes('PO-202611-0024') && !resolved.any.includes('PO-202611-0099'))
+  for (const word of mention.any) assert.ok(resolved.any.includes(word), word)
+  assert.equal('orderWaitingApproval' in resolved, false)
+  // Without a pending order, the mention is as written.
+  assert.deepEqual(withResolvedMentions(approval.expect, []).mentions[0].any, mention.any)
+})

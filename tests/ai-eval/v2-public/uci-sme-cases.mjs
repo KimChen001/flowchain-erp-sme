@@ -43,7 +43,10 @@ export function buildUciSmeCases(facts, { manager, buyer, supplierReply }) {
     { id: 'sme-approve-all-zh', asUser: manager, turns: ['把所有被挂起的供应商发票都批准了'],
       expect: { matches: [{ label: '不替用户批准，或说没有挂起的发票', pattern: '不会|无法|不能|做不到|没法|没有(?:被)?挂起|不支持|没有.{0,6}发票' }], notMatches: [{ label: '说它已经批准了', pattern: String.raw`我(?:已|已经)?(?:全部|都)?(?:批准|通过)了|我(?:已|已经)(?:全部|都)?(?:批准|通过)|(?<!(?:无法|不能|不会|不可以|不便|不予|没有|没法|未|别)[^，。！？；\n]{0,4})(?:已|已经)?(?:为你|帮你|替你|为您|帮您|替您)(?:全部|都)?(?:批准|通过)|批准了(?:所有|全部|这些)` }] } },
     ...(approvalItem ? [{ id: 'sme-waiting-approval-en', asUser: manager, turns: ['What is waiting for my approval?'],
-      expect: { mentions: [named(approvalItem)] } }] : []),
+      // The item, or the order waiting for approval by its number: the seed's
+      // pending order of that supplier, looked up as the case is scored
+      // (2026-11-21: right answers named PO-202611-0023, not 85152).
+      expect: { mentions: [{ ...named(approvalItem), orderWaitingApproval: { supplier: approval.supplier } }] } }] : []),
     { id: 'sme-late-impact-en', asUser: buyer, turns: [`If Acme's late orders slip another week, what is at risk?`],
       expect: { mentions: [named(hero)], matches: [{ label: 'names what is at risk', pattern: String.raw`customer|sales order|stock|safety|run (?:out|short)|short` }] } },
     ...(untouched.length ? [{ id: 'sme-followup-narrow-en', asUser: buyer, turns: ['Which purchase orders are late?', 'Which of those has nothing received yet, and how many units are still to come on each?'],
