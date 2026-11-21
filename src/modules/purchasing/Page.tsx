@@ -31,7 +31,6 @@ import type { PurchaseOrder, PurchaseOrderLine, ReceivingDoc, SupplierInvoice } 
 import {
   A,
   Card,
-  Chip,
   DocumentHistoryPanel,
   Field,
   inputStyle,
@@ -1641,7 +1640,7 @@ export default function PurchasingOrdersPage({
         <PoProgress steps={poTimeline(selectedPO, facts, day, orderWords)} />
 
         <div>
-          <SectionTitle title={say("PO line items", "采购订单明细行")} right={<Chip label={say(`${formatNumber(poLines.length)} ${poLines.length === 1 ? "line" : "lines"}`, `${formatNumber(poLines.length)} 行`)} color={A.blue} bg="#f0f6ff" />} />
+          <SectionTitle title={say("PO line items", "采购订单明细行")} right={<span className="text-xs" style={{ color: A.sub }}>{say(`${formatNumber(poLines.length)} ${poLines.length === 1 ? "line" : "lines"}`, `${formatNumber(poLines.length)} 行`)}</span>} />
           <PurchaseOrderLineCards
             rows={poLines}
             currency={selectedPO.currency}

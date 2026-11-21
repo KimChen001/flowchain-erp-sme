@@ -724,8 +724,8 @@ export default function SupplierMasterPage({
                         {r.item?.sku || r.itemId} · {r.item?.itemName || ""}
                       </EntityLink>
                     </td>
-                    <td className={tdNowrapClass}>{copy(r.preferred ? "是" : "否")}</td>
-                    <td className={tdNowrapClass}>{copy(r.approved ? "是" : "否")}</td>
+                    <td className={tdNowrapClass}>{r.preferred ? <StatusChip label={copy("Preferred")} tone="info" /> : "—"}</td>
+                    <td className={tdNowrapClass}>{r.approved ? <StatusChip label={copy("Approved")} tone="success" /> : <StatusChip label={copy("Not approved")} tone="warning" />}</td>
                     <td className={tdNumericRightClass}>{r.leadTimeDays == null ? "—" : formatNumber(r.leadTimeDays)}</td>
                     <td className={tdNumericRightClass}>{r.minimumOrderQuantity == null ? "—" : formatNumber(r.minimumOrderQuantity)}</td>
                     <td className={tdNumericRightClass}>{r.referencePrice === null || r.referencePrice === undefined ? "—" : poPrice(String(r.referencePrice), r.currency)}</td>

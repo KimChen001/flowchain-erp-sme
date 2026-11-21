@@ -4,7 +4,7 @@ import { useSearchParams } from "react-router";
 import { A, Card } from "../../components/ui";
 import { listTableCardsRef, tableBodyTextClass } from "../../components/ui/workbenchTable";
 import { typography } from "../../components/ui/typography";
-import { listButtonClass, listHeadRowStyle } from "../../components/ui/listLayout";
+import { StatusChip, listButtonClass, listHeadRowStyle } from "../../components/ui/listLayout";
 import { EntityLink } from "../../components/business/EntityLink";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
@@ -345,7 +345,7 @@ function Drilldown({ row, metric, onClose }: { row: SupplierScorecardRow; metric
                 <td className="px-3 py-2"><EntityLink kind="purchase_order" id={delivery.purchaseOrderId} /></td>
                 <td className="px-3 py-2">{tr("delivery")} · {tr("deliveryLines", { n: delivery.lines.length })}</td>
                 <td className="px-3 py-2">{format.day(delivery.originalPromisedDate)}</td>
-                <td className="px-3 py-2">{delivery.revised && <span className="rounded bg-amber-50 px-1 text-[11px] text-amber-700">{tr("revised")}</span>}</td>
+                <td className="px-3 py-2">{delivery.revised && <StatusChip label={tr("revised")} tone="warning" />}</td>
                 <td className="px-3 py-2">{format.day(delivery.lastFirstReceiptDay)}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{delivery.daysLate ? format.number(delivery.daysLate) : "—"}</td>
                 <td className="px-3 py-2">{result(delivery)}</td>
@@ -361,7 +361,7 @@ function Drilldown({ row, metric, onClose }: { row: SupplierScorecardRow; metric
                   <td className="px-3 py-2 pl-5" />
                   <td className="px-3 py-2">{line.sku}{line.itemName ? ` · ${line.itemName}` : ""}</td>
                   <td className="px-3 py-2">{format.day(line.originalPromisedDate)}</td>
-                  <td className="px-3 py-2">{format.day(line.currentPromisedDate)}{line.revised && <span className="ml-1 rounded bg-amber-50 px-1 text-[11px] text-amber-700">{tr("revised")}</span>}</td>
+                  <td className="px-3 py-2">{format.day(line.currentPromisedDate)}{line.revised && <span className="ml-1 inline-flex"><StatusChip label={tr("revised")} tone="warning" /></span>}</td>
                   <td className="px-3 py-2">{format.day(line.firstReceiptDay)}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{line.daysLate ? format.number(line.daysLate) : "—"}</td>
                   <td className="px-3 py-2">{result(line)}</td>

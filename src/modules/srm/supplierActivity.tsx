@@ -39,14 +39,14 @@ const COPY: Record<string, [string, string]> = {
   amountsHidden: ["Amounts are hidden for your role.", "你的角色看不到金额。"],
   latest: ["The latest {shown} of {total} purchase orders.", "显示最近 {shown} 张，共 {total} 张采购订单。"],
   po: ["Purchase order", "采购订单"], date: ["Date", "日期"], status: ["Status", "状态"], promised: ["Promised", "承诺交期"], amount: ["Amount", "金额"],
-  overdueBy: ["{n} days overdue", "逾期 {n} 天"],
+  overdueBy: ["{n} days overdue", "逾期 {n} 天"], overdueByOne: ["1 day overdue", "逾期 1 天"],
   invoices: ["Supplier invoices", "采购发票"], invoice: ["Invoice", "发票"], match: ["Match", "匹配"],
   invoicesHidden: ["Supplier invoices are hidden for your role.", "你的角色看不到采购发票。"],
   noInvoices: ["No supplier invoices yet.", "暂无采购发票。"],
   moreInvoices: ["Showing the latest 20 invoices.", "仅显示最近 20 张发票。"],
   issuesHidden: ["Hidden for your role: you cannot read the records behind these signals.", "你的角色不可见：你无法查看这些信号对应的记录。"],
   order: ["Most overdue first, then the oldest open. The same order as the assistant.", "逾期最久的在前，其次是最早未结的，与 AI 助手的顺序一致。"],
-  po_overdue: ["Purchase order {n} days overdue", "采购订单逾期 {n} 天"],
+  po_overdue: ["Purchase order {n} days overdue", "采购订单逾期 {n} 天"], po_overdue_one: ["Purchase order 1 day overdue", "采购订单逾期 1 天"],
   grn_rejected_qty: ["Receipt with {qty} rejected", "收货拒收 {qty}"],
   invoice_variance: ["Invoice variance {amount}", "发票差异 {amount}"],
   invoice_variance_hidden: ["Invoice variance", "发票差异"],
@@ -107,7 +107,7 @@ export function useSupplierIssueText() {
   const f = useSupplierActivityFormat();
   return {
     issueText: (issue: Issue) => {
-      if (issue.type === "po_overdue") return t("po_overdue", { n: issue.data.days ?? issue.when.days ?? 0 });
+      if (issue.type === "po_overdue") { const days = issue.data.days ?? issue.when.days ?? 0; return days === 1 ? t("po_overdue_one") : t("po_overdue", { n: days }); }
       if (issue.type === "grn_rejected_qty") return t("grn_rejected_qty", { qty: `${f.number(issue.data.rejected)}${issue.data.unit ? ` ${issue.data.unit}` : ""}` });
       return issue.data.variance === null || issue.data.variance === undefined ? t("invoice_variance_hidden") : t("invoice_variance", { amount: f.money(issue.data.variance, issue.data.currency || null) });
     },
@@ -159,7 +159,7 @@ export function SupplierActivityCards({ supplierId, titles, empty }: { supplierI
                     <td className={tdIdClass}><EntityLink kind="purchase_order" id={row.id} number={row.orderNumber} className={tableLinkClass} /></td>
                     <td className={tdNowrapClass}>{f.day(row.date)}</td>
                     <td className={tdNowrapClass}><Status code={row.status} label={f.status(row.status)} /></td>
-                    <td className={tdNowrapClass}>{f.day(row.promisedDate)}{row.overdueDays > 0 ? <span className="ml-2" style={{ color: A.red }}>{t("overdueBy", { n: row.overdueDays })}</span> : null}</td>
+                    <td className={tdNowrapClass}>{f.day(row.promisedDate)}{row.overdueDays > 0 ? <div className="mt-0.5"><StatusChip label={row.overdueDays === 1 ? t("overdueByOne") : t("overdueBy", { n: f.number(row.overdueDays) })} tone="danger" /></div> : null}</td>
                     {data?.visibility.orderAmounts ? <td className={tdNumericRightClass}>{f.money(row.amount, row.currency)}</td> : null}
                   </tr>
                 ))}
