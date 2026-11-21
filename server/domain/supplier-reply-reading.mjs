@@ -89,10 +89,13 @@ const INLINE_STOP = [
 const SENTENCE_DONE = /[.?!。？！:：)）]\s*$/
 // Taken out of the pointer to our question, so no date of ours, written or
 // relative, comes with an answer: digits, month and weekday names, words of
-// time ("next", "week", "end"), and Chinese date characters and numerals.
+// time ("next", "week", "end"), number words and ordinals, and Chinese date
+// characters and numerals.
 const POINTER_DATE_WORDS = /\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:r(?:s(?:day)?)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?|today|tonight|tomorrow|yesterday|next|this|last|coming|weeks?|weekend|fortnight|months?|years?|days?|end|early|mid|late|beginning|start|asap|eod|eow|eom)\b\.?/gi
+// Number words and ordinals ("twenty-eighth", "the 28th" once its digits are gone).
+const POINTER_NUMBER_WORDS = /\b(?:(?:twenty|thirty)[- ]?)?(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|one|two|three|four|five|six|seven|eight|nine)\b|\b(?:tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty)\b|(?<=\s|^)(?:st|nd|rd|th)\b/gi
 const POINTER_DATE_CHARS = /[0-9０-９年月日号號周週星期礼禮拜今明后後昨前天下本上底初旬内內一二三四五六七八九十〇零两兩百千]/g
-const pointerOf = (quoted) => quoted.replace(POINTER_DATE_WORDS, ' ').replace(POINTER_DATE_CHARS, '').replace(/\(\s*\)/g, '').replace(/\s+([,.?!，。？！)）])/g, '$1').replace(/\s+/g, ' ').trim().slice(0, 60)
+const pointerOf = (quoted) => quoted.replace(POINTER_DATE_CHARS, '').replace(POINTER_DATE_WORDS, ' ').replace(POINTER_NUMBER_WORDS, ' ').replace(/\(\s*\)/g, '').replace(/\s+([,.?!，。？！)）])/g, '$1').replace(/\s+/g, ' ').trim().slice(0, 60)
 
 // The supplier's answers inside a ">"-quoted earlier message, read only
 // where they cannot be our own text:

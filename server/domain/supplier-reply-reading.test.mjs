@@ -589,6 +589,10 @@ test('a supplier answering inside our quoted chase is read, with the question it
   const asked = cleanSupplierReply('See below.\nOn Mon, 17 Nov 2026, Daniel wrote:\n> Could you ship by next Friday, 十一月十二日?\n> Or by the end of the month?\n\nYes.\n\n> Daniel')
   assert.equal(asked.text, 'See below.\n\n[re: Or by the of the?] Yes.')
   assert.doesNotMatch(asked.text, /friday|next|十一月|十二日|month/i)
+  // Ordinals and number words too.
+  const ordinal = cleanSupplierReply('See below.\nOn Mon, 17 Nov 2026, Daniel wrote:\n> Hinges?\n> Could they come on the twenty-eighth, or by the 28th at the latest?\n\nYes.\n\n> Daniel')
+  assert.equal(ordinal.text, 'See below.\n\n[re: Could they come on the, or by the at the latest?] Yes.')
+  assert.doesNotMatch(ordinal.text, /twenty|eighth|28|\bth\b/i)
   // The text above the quote is read and proposed as before.
   assert.deepEqual(outcomes(checkReplyReading({ order, text: 'All of it ships on 28 November.\n\n[re: Brackets?] 3 Dec', receivedOn: '2026-11-18', inlineFrom: 'All of it ships on 28 November.'.length + 2, reading: reading([{ line: 'L1', date: '2026-11-28', quote: 'All of it ships on 28 November', dateKind: 'stated' }]) })), [['L1', 'proposed', null, '2026-11-28']])
 })
