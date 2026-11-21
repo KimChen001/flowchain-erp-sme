@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ElementType, type ReactNode } from "react";
-import { Link } from "react-router";
+import { Link, useLocation } from "react-router";
 import { AlarmClock, ArrowRight, CheckCircle2, ChevronDown, Circle, ListChecks, RefreshCw } from "lucide-react";
 import { A, Card } from "../../components/ui";
 import { StatusChip, listHeadRowStyle, listRowClass, listRowStyle, statusToneOf } from "../../components/ui/listLayout";
@@ -13,7 +13,7 @@ import { unitLabel } from "../../i18n/unitLabels";
 import { documentStatusLabel } from "../../i18n/statusLabels";
 import { reorderListText } from "../inventory/reorderListCopy";
 import { useTodayCopy, type TodayCopyKey } from "./todayCopy";
-import { groupsByKind, reorderRequestHref, type ReorderRequest, todayTileCounts } from "./todayRows";
+import { groupsByKind, reorderRequestHref, type ReorderRequest, todayRowsNotShown, todayTileCounts } from "./todayRows";
 import { DecisionSection, type TodayDecisions } from "./DecisionCards";
 import { useTodayRowFormat } from "./todayRowFormat";
 
@@ -125,6 +125,12 @@ function RuntimeHomepage() {
   const [overview, setOverview] = useState<HomeOverview | null>(null);
   const [state, setState] = useState<"loading" | "loaded" | "error">("loading");
   const [filter, setFilter] = useState<"all" | "overdue">("all");
+  // A link to #today-decisions (Priorities, a late order's page) lands on the
+  // decision cards once they are drawn.
+  const { hash } = useLocation();
+  useEffect(() => {
+    if (state === "loaded" && hash === "#today-decisions") document.getElementById("today-decisions")?.scrollIntoView({ block: "start" });
+  }, [state, hash]);
   // Today's work is one line per kind; the kinds opened, and those showing
   // every row rather than the first GROUP_ROWS.
   const [openKinds, setOpenKinds] = useState<Partial<Record<WorkKind, boolean>>>({});
@@ -176,6 +182,8 @@ function RuntimeHomepage() {
   // it, less what was set aside (todayTileCounts). The list below and the
   // decision cards show those rows.
   const { work: workTotal, overdue: overdueTotal } = todayTileCounts(overview);
+  // Rows the server has beyond the ones it sent; the decision cards are not among them.
+  const notShown = todayRowsNotShown(overview, decisionKeys);
   const shown = filter === "overdue" ? items.filter((item) => item.overdueDays > 0) : items;
   // One line per kind, in the order of each kind's earliest row.
   const groups = groupsByKind(shown);
@@ -341,8 +349,9 @@ function RuntimeHomepage() {
           <div className="py-10 text-center text-xs">{t("loading")}</div>
         ) : shown.length === 0 ? (
           <div className="py-10 text-center text-sm" style={{ color: A.sub }}>
-            <p>{filter === "overdue" ? t("noOverdueWork") : t("noWork")}</p>
-            {filter === "all" ? <div className="mx-auto mt-1 max-w-md text-xs">{t("noWorkHint")}</div> : null}
+            {/* With decisions waiting above, the list is not "nothing to do". */}
+            <p data-testid="today-work-empty">{filter === "overdue" ? (waiting.some((entry) => entry.row.overdueDays > 0) ? t("noOtherOverdueWork") : t("noOverdueWork")) : waiting.length ? t("noOtherWork") : t("noWork")}</p>
+            {filter === "all" && !waiting.length ? <div className="mx-auto mt-1 max-w-md text-xs">{t("noWorkHint")}</div> : null}
           </div>
         ) : (
           // One line per kind: the earliest row's date, the kind and how many,
@@ -411,8 +420,8 @@ function RuntimeHomepage() {
             })}
           </ul>
         )}
-        {state === "loaded" && filter === "all" && overview && workTotal > items.length ? (
-          <div className="mt-2 text-xs" style={{ color: A.sub }}>{t("moreNotShown", { n: workTotal - items.length })}</div>
+        {state === "loaded" && filter === "all" && notShown > 0 ? (
+          <div className="mt-2 text-xs" style={{ color: A.sub }} data-testid="today-work-more-not-shown">{t("moreNotShown", { n: notShown })}</div>
         ) : null}
         {state === "loaded" && notes.length ? (
           <div className="mt-3 space-y-1 border-t pt-3 text-xs" style={{ color: A.sub }} data-testid="today-work-notes">

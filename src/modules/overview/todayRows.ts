@@ -58,6 +58,21 @@ export function reorderRequestHref(request: ReorderRequest, reason: string, shor
   return `/app/procurement/requests?${params.toString()}`;
 }
 
+// How many of Today's rows are not on the page: the server lists its first
+// rows (workItems) of workTotal. A row that became a decision card or was set
+// aside is shown in its own section, so it is not "not shown", whether or not
+// it was among the rows listed. (Product review 2026-11-20: the count was
+// the tile less the list, so it counted the cards shown above.)
+export function todayRowsNotShown(
+  overview: { workTotal?: number; workItems?: Array<{ kind: string; recordId: string }> } | null | undefined,
+  decisionKeys: Set<string>,
+) {
+  const listed = overview?.workItems || [];
+  const listedKeys = new Set(listed.map((item) => `${item.kind}:${item.recordId}`));
+  const cardsBeyond = [...decisionKeys].filter((key) => !listedKeys.has(key)).length;
+  return Math.max(0, (overview?.workTotal ?? listed.length) - listed.length - cardsBeyond);
+}
+
 // The counts Today's two tiles and the priorities summary show: Today's work
 // and the decisions waiting on it, less what was set aside. Both count the
 // same rows, so Overdue is never more than Needs action (design audit L6-03,
