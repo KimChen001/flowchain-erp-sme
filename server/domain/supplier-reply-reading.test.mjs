@@ -5,7 +5,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { supplierReplyCheckSchema } from '../../shared/supplier-reply-contract.mjs'
-import { checkReplyReading, cleanSupplierReply, datesInQuote, quoteFound, readSupplierReply, relativeDateInQuote, supplierReplyInstructionsIgnored, supplierReplyPrompt, supplierReplyPromptTokens } from './supplier-reply-reading.mjs'
+import { checkReplyReading, lineNamedElsewhere, cleanSupplierReply, datesInQuote, quoteFound, readSupplierReply, relativeDateInQuote, supplierReplyInstructionsIgnored, supplierReplyPrompt, supplierReplyPromptTokens } from './supplier-reply-reading.mjs'
 
 // PO-202611-0012 from Acme Ltd, promised 12 Nov; the reply came on Tue 17 Nov 2026.
 const RECEIVED = '2026-11-17'
@@ -652,4 +652,59 @@ test('the line check reads the clause that holds the date: items left out, the r
   assert.deepEqual(at(three, '82494L ships on 26 November, 82583 on 30 November.', 'L1', '2026-11-30'), held('L1'))
   const sets = [lineOf('L1', { supplierSku: '300' }), lineOf('L2', { itemName: '铰链' })]
   assert.deepEqual(at(sets, '300套12月4日发货。', 'L2', '2026-12-04'), proposed('L2', '2026-12-04'))
+})
+
+test('the line check holds dates put on the wrong line however the reply orders items, dates, brackets and lists (review probe)', () => {
+  const lineOf = (ref, fields) => ({ ref, purchaseOrderLineId: `pol-${ref}`, sku: null, supplierSku: null, itemName: null, remaining: 10, unit: 'pcs', promisedDate: '2026-11-12', ...fields })
+  const orderOf = (lines) => ({ number: 'PO-1', supplierName: 'Acme', status: 'partially_received', lines })
+  const codes = orderOf([lineOf('L1', { sku: '85123A' }), lineOf('L2', { sku: '20727' }), lineOf('L3', { sku: '22423' })])
+  const names = orderOf([lineOf('L1', { itemName: 'Hinge' }), lineOf('L2', { itemName: 'Bracket' }), lineOf('L3', { itemName: 'Spring' })])
+  const three = orderOf([lineOf('L1', { sku: '82494L' }), lineOf('L2', { sku: '82583' }), lineOf('L3', { sku: '82600' })])
+  const zhNames = orderOf([lineOf('L1', { itemName: '铰链' }), lineOf('L2', { itemName: '支架' }), lineOf('L3', { itemName: '弹簧' })])
+  const D10 = '2026-12-10'
+  const D4 = '2026-12-04'
+  const D30 = '2026-11-30'
+  // [order, quote, line, date, held]
+  const cases = [
+    [codes, '85123A ships 10 Dec, 20727 ships 4 Dec', 'L1', D4, true],
+    [codes, '85123A ships 10 Dec, 20727 ships 4 Dec', 'L2', D4, false],
+    [codes, '10 Dec for 85123A, 20727 on 4 Dec', 'L2', D10, true],
+    [codes, '10 Dec for 85123A, 20727 on 4 Dec', 'L1', D4, true],
+    [codes, '10 Dec for 85123A, 20727 on 4 Dec', 'L1', D10, false],
+    [codes, '10 Dec for 85123A, 20727 on 4 Dec', 'L2', D4, false],
+    [codes, 'We ship on 10 Dec for 85123A, 20727 follows on 4 Dec', 'L1', D4, true],
+    [codes, '10 Dec (85123A), 20727 4 Dec', 'L1', D4, true],
+    [codes, '(85123A 10 Dec, 20727 4 Dec', 'L1', D4, true],
+    [codes, 'New ETAs (85123A 10 Dec, 20727 4 Dec)', 'L1', D4, true],
+    [codes, 'New ETAs (85123A: 10 Dec; 20727: 4 Dec)', 'L2', D10, true],
+    [codes, '(85123A ships 10 Dec. 20727 ships 4 Dec.)', 'L2', D10, true],
+    [codes, 'Revised (see below\n85123A 10 Dec\n20727 4 Dec', 'L2', D10, true],
+    [codes, 'Sorry :( 85123A ships 10 Dec, 20727 ships 4 Dec', 'L1', D4, true],
+    [codes, 'New ETAs (85123A 10 Dec, 20727 4 Dec)', 'L2', D4, false],
+    [codes, '12月10日交85123A，20727 12月4日交', 'L1', D4, true],
+    [codes, '新交期（85123A 12月10日，20727 12月4日）', 'L1', D4, true],
+    [codes, '85123A、20727 12月4日发货，22423 12月10日', 'L3', D4, true],
+    [codes, '85123A 12月10日发货，20727 12月4日发货', 'L1', D4, true],
+    [names, 'Hinges, brackets ship 4 Dec', 'L2', D4, false],
+    [names, 'Hinges, brackets ship 4 Dec', 'L3', D4, true],
+    [names, 'Hinges 10 Dec, brackets 4 Dec', 'L1', D4, true],
+    [names, '10 Dec for hinges, brackets on 4 Dec', 'L1', D4, true],
+    [zhNames, '12月10日交铰链，支架12月4日交', 'L1', D4, true],
+    [codes, 'Everything ships 10 Dec except 85123A, 20727 ships 4 Dec', 'L2', D4, false],
+    [codes, 'Everything ships 10 Dec except 85123A, 20727 ships 4 Dec', 'L3', D10, false],
+    [codes, 'Everything ships 10 Dec except 85123A, 20727 ships 4 Dec', 'L2', D10, true],
+    [codes, '85123A, 20727 ship 10 Dec, the rest 4 Dec', 'L1', D4, true],
+    [three, 'We confirm delivery of all three lines (82494L, 82583, 82600) on 30 November', 'L2', D30, false],
+    [three, '82494L, 82583 and 82600 ship on 30 November', 'L1', D30, false],
+    [codes, '📦📦 85123A ships 10 Dec,(20727) ships 4 Dec', 'L1', D4, true],
+    [codes, '📦 85123A ships 10 Dec\n(20727) ships 4 Dec', 'L1', D4, true],
+  ]
+  for (const [lines, quote, ref, date, held] of cases) {
+    assert.equal(lineNamedElsewhere(lines, quote, ref, { date, receivedOn: '2026-11-17' }), held, `${quote} | ${ref} ${date}`)
+  }
+  // End to end: a reading that swaps the two dates proposes neither.
+  for (const [reply, quote] of [['Hello, 10 Dec for 85123A, 20727 on 4 Dec. Regards', '10 Dec for 85123A, 20727 on 4 Dec'], ['New ETAs (85123A 10 Dec, 20727 4 Dec). Thanks', 'New ETAs (85123A 10 Dec, 20727 4 Dec)']]) {
+    const swapped = checkReplyReading({ order: codes, text: reply, receivedOn: '2026-11-17', reading: reading([{ line: 'L1', date: D4, quote, dateKind: 'stated' }, { line: 'L2', date: D10, quote, dateKind: 'stated' }]) })
+    assert.deepEqual(outcomes(swapped), [['L1', 'needs_you', 'line_mismatch', null], ['L2', 'needs_you', 'line_mismatch', null]], reply)
+  }
 })
