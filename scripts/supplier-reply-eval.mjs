@@ -14,8 +14,8 @@
 //             kind, the model and the endpoint's host. The model client is
 //             the assistant's own (createAssistantV2ModelClient).
 // --batch     the batches to run, comma-separated: set (the 46), held-out,
-//             held-out-2. Default: all three. Each is scored on its own line;
-//             a held-out batch gates on no hard fail.
+//             held-out-2, held-out-3. Default: all four. Each is scored on
+//             its own line; a held-out batch gates on no hard fail.
 // --only      the case ids to run, comma-separated.
 // --out       where the raw readings, checks and usage go, as JSON: under this
 //             checkout's .local/ (git-ignored) or outside the checkout.
@@ -35,11 +35,12 @@ import { SUPPLIER_REPLY_PROMPT_VERSION } from '../shared/supplier-reply-contract
 import { SUPPLIER_REPLY_CASES } from '../tests/ai-eval/supplier-reply/cases.mjs'
 import { HELD_OUT_CASES } from '../tests/ai-eval/supplier-reply/held-out-cases.mjs'
 import { HELD_OUT_2_CASES } from '../tests/ai-eval/supplier-reply/held-out-2-cases.mjs'
+import { HELD_OUT_3_CASES } from '../tests/ai-eval/supplier-reply/held-out-3-cases.mjs'
 import { runSupplierReplyCase, scoreSupplierReplyCase, summarizeSupplierReplyRun, supplierReplyGate } from '../tests/ai-eval/supplier-reply/score.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // The set and the held-out batches, in run order.
-const BATCHES = { set: SUPPLIER_REPLY_CASES, 'held-out': HELD_OUT_CASES, 'held-out-2': HELD_OUT_2_CASES }
+const BATCHES = { set: SUPPLIER_REPLY_CASES, 'held-out': HELD_OUT_CASES, 'held-out-2': HELD_OUT_2_CASES, 'held-out-3': HELD_OUT_3_CASES }
 const batchOf = (id) => Object.keys(BATCHES).find((name) => BATCHES[name].some((kase) => kase.id === id))
 const CALL_TIMEOUT_MS = 90000
 const inside = (path, folder) => path.toLowerCase() === folder.toLowerCase() || path.toLowerCase().startsWith(`${folder.toLowerCase()}${sep}`)
@@ -154,13 +155,14 @@ async function main() {
   const usageOf = (rows) => rows.reduce((total, row) => ({ calls: total.calls + row.calls, inputTokens: total.inputTokens + row.usage.inputTokens, outputTokens: total.outputTokens + row.usage.outputTokens, costMicros: total.costMicros + row.usage.costMicros }), { calls: 0, inputTokens: 0, outputTokens: 0, costMicros: 0 })
   const batch = (rows) => summarizeSupplierReplyRun(rows.map((row) => row.score), usageOf(rows))
   const rowsOf = (name) => results.filter((row) => batchOf(row.id) === name)
-  const [setRows, heldRows, held2Rows] = ['set', 'held-out', 'held-out-2'].map(rowsOf)
+  const [setRows, heldRows, held2Rows, held3Rows] = ['set', 'held-out', 'held-out-2', 'held-out-3'].map(rowsOf)
   const summary = setRows.length ? batch(setRows) : null
   const heldOut = heldRows.length ? batch(heldRows) : null
   const heldOut2 = held2Rows.length ? batch(held2Rows) : null
+  const heldOut3 = held3Rows.length ? batch(held3Rows) : null
   // The set's gate when the set ran; every held-out batch that ran: no hard fail.
   const gate = summary ? supplierReplyGate(summary, heldOut) : null
-  const heldPass = [heldOut, heldOut2].every((totals) => !totals || totals.hardFails === 0)
+  const heldPass = [heldOut, heldOut2, heldOut3].every((totals) => !totals || totals.hardFails === 0)
   const pct = (share) => `${Math.round(share * 1000) / 10}%`
   const report = (label, totals) => {
     console.log(`[supplier-reply-eval] ${label}: ok ${totals.ok} · held ${totals.held} · state only ${totals.stateOnly} · misses ${totals.misses} · hard fails ${totals.hardFails} (of ${totals.cases}) · dated correct ${totals.datedCorrect}/${totals.dated} (${pct(totals.datedCorrectShare)})`)
@@ -170,18 +172,20 @@ async function main() {
   if (summary) report('set', summary)
   if (heldOut) report('held out', heldOut)
   if (heldOut2) report('held out 2', heldOut2)
+  if (heldOut3) report('held out 3', heldOut3)
   const pass = (!gate || gate.pass) && heldPass && !stopped
   const gateParts = [
     ...(summary ? [`set: hard fails ${summary.gate.hardFails}, dated correct ${pct(summary.gate.datedCorrectShare)}, needs 0 and 90%`] : []),
     ...(heldOut ? [`held out: hard fails ${heldOut.hardFails}, needs 0`] : []),
     ...(heldOut2 ? [`held out 2: hard fails ${heldOut2.hardFails}, needs 0`] : []),
+    ...(heldOut3 ? [`held out 3: hard fails ${heldOut3.hardFails}, needs 0`] : []),
   ]
   console.log(`[supplier-reply-eval] gate: ${pass ? 'PASS' : 'FAIL'} (${gateParts.join('; ')})${stopped ? ' — run stopped early' : ''}`)
 
   mkdirSync(out, { recursive: true })
   const provider = { kind: config.kind, model: config.model || null, endpointHost: host, promptVersion: SUPPLIER_REPLY_PROMPT_VERSION, prices }
   writeFileSync(join(out, 'results.json'), `${JSON.stringify(results, null, 2)}\n`)
-  writeFileSync(join(out, 'summary.json'), `${JSON.stringify({ provider, batches: names, cases: cases.length, stopped, summary, heldOut, heldOut2, gate, gatePass: pass, modelLog }, null, 2)}\n`)
+  writeFileSync(join(out, 'summary.json'), `${JSON.stringify({ provider, batches: names, cases: cases.length, stopped, summary, heldOut, heldOut2, heldOut3, gate, gatePass: pass, modelLog }, null, 2)}\n`)
   console.log(`[supplier-reply-eval] wrote ${inside(out, root) ? relative(root, out) : out}`)
   if (stopped) process.exitCode = 2
 }
