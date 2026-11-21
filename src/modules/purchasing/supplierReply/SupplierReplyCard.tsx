@@ -23,7 +23,7 @@ import type { SupplierReplyCardData, SupplierReplyDismissReason, SupplierReplyLi
 const BUTTON = { primary: `${listButtonClass.primary} !text-[12px]`, secondary: `${listButtonClass.secondary} !text-[12px]`, outline: `${listButtonClass.outline} !text-[12px]` };
 const DISMISS_REASONS: SupplierReplyDismissReason[] = ["wrong_reading", "supplier_will_confirm", "other"];
 // A reading of an ambiguous date, on the grey form line: white, and blue once picked.
-const readingClass = (picked: boolean) => `inline-flex h-7 items-center rounded-lg border px-2 text-[12px] font-medium disabled:opacity-60 ${picked ? "border-blue-500 bg-blue-50 text-blue-700" : "border-slate-200 bg-white text-slate-800 hover:bg-slate-100"}`;
+const readingClass = (picked: boolean) => `inline-flex h-7 max-sm:h-9 items-center rounded-lg border px-2 text-[12px] font-medium disabled:opacity-60 ${picked ? "border-blue-500 bg-blue-50 text-blue-700" : "border-slate-200 bg-white text-slate-800 hover:bg-slate-100"}`;
 
 export function SupplierReplyCard({ card, onChanged, onRefused, notice = null, mayChange = false }: {
   card: SupplierReplyCardData;
@@ -199,7 +199,7 @@ export function SupplierReplyCard({ card, onChanged, onRefused, notice = null, m
                       <div className="mt-1 flex flex-wrap items-center gap-3">
                         <label className="flex items-center gap-2 text-xs font-normal">
                           <span>{t("promisedDate")}</span>
-                          <input type="date" disabled={leave} aria-label={`${t("promisedDate")} · ${lineName(line)}`} className="rounded border bg-white px-1 py-0.5 text-xs" value={values[lineId] || ""} onChange={(event) => setValues({ ...values, [lineId]: event.target.value })} />
+                          <input type="date" disabled={leave} aria-label={`${t("promisedDate")} · ${lineName(line)}`} className="rounded border bg-white px-1 py-0.5 text-xs max-sm:min-h-9" value={values[lineId] || ""} onChange={(event) => setValues({ ...values, [lineId]: event.target.value })} />
                         </label>
                         <label className="flex items-center gap-1.5 text-xs font-normal">
                           <input type="checkbox" checked={leave} data-testid="supplier-reply-leave" onChange={(event) => setSkipped(event.target.checked ? new Set([...skipped, lineId]) : new Set([...skipped].filter((id) => id !== lineId)))} />
@@ -237,7 +237,7 @@ export function SupplierReplyCard({ card, onChanged, onRefused, notice = null, m
                   {card.canDecide ? (
                     <label className="mt-1 flex items-center gap-2 text-xs font-normal">
                       <span>{t("promisedDate")}</span>
-                      <input type="date" aria-label={`${t("promisedDate")} · ${lineName(formLine)}`} className="rounded border bg-white px-1 py-0.5 text-xs" value={values[lineId] || ""} onChange={(event) => setValues({ ...values, [lineId]: event.target.value })} />
+                      <input type="date" aria-label={`${t("promisedDate")} · ${lineName(formLine)}`} className="rounded border bg-white px-1 py-0.5 text-xs max-sm:min-h-9" value={values[lineId] || ""} onChange={(event) => setValues({ ...values, [lineId]: event.target.value })} />
                     </label>
                   ) : null}
                 </div>
@@ -290,11 +290,11 @@ export function SupplierReplyCard({ card, onChanged, onRefused, notice = null, m
         <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md bg-slate-50 p-2" data-testid="supplier-reply-dismiss-form">
           <label className="flex items-center gap-1">
             <span>{t("dismissReason")}</span>
-            <select className="rounded border px-1 py-0.5" value={reason} onChange={(event) => setReason(event.target.value as SupplierReplyDismissReason)}>
+            <select className="rounded border px-1 py-0.5 max-sm:min-h-9" value={reason} onChange={(event) => setReason(event.target.value as SupplierReplyDismissReason)}>
               {DISMISS_REASONS.map((code) => <option key={code} value={code}>{t(`dismiss_${code}` as SupplierReplyCopyKey)}</option>)}
             </select>
           </label>
-          <input className="min-w-48 flex-1 rounded border px-2 py-0.5" maxLength={SUPPLIER_REPLY_NOTE_LIMIT} aria-label={t("notePlaceholder")} placeholder={t("notePlaceholder")} value={note} onChange={(event) => setNote(event.target.value)} />
+          <input className="min-w-48 flex-1 rounded border px-2 py-0.5 max-sm:min-h-9" maxLength={SUPPLIER_REPLY_NOTE_LIMIT} aria-label={t("notePlaceholder")} placeholder={t("notePlaceholder")} value={note} onChange={(event) => setNote(event.target.value)} />
           <button type="button" className={BUTTON.outline} onClick={() => setDismissing(false)}>{t("cancel")}</button>
           <button type="button" disabled={busy || !dismissReady(reason, note)} className={BUTTON.primary} data-testid="supplier-reply-dismiss-save" onClick={() => void dismiss()}>{t("save")}</button>
         </div>

@@ -32,6 +32,10 @@ export function useListCopy() {
     COPY[key][language === "en-US" ? 0 : 1].replace(/\{(\w+)\}/g, (_, name) => typeof values[name] === "number" ? formatNumber(values[name] as number) : String(values[name] ?? ""));
 }
 
+// A back link at the top of a detail page ("← Back to purchase orders"):
+// 12 px blue, 36 px tall on a phone.
+export const backLinkClass = "inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline max-sm:min-h-9";
+
 export const listButtonClass = {
   // 32 px on a desk, 36 px on a phone, for a finger.
   secondary: `inline-flex h-8 items-center gap-1.5 rounded-lg bg-slate-50 px-3 max-sm:h-9 ${typography.denseButton} text-slate-900 hover:bg-slate-100`,
