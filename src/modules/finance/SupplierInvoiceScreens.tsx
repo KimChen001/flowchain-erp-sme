@@ -23,6 +23,9 @@ import { documentNumberFor, rememberDocumentNumbers, useDocumentNumber } from ".
 import { BackToListLink } from "../procurement/BackToListLink";
 import { procurementErrorCode, procurementErrorText } from "../procurement/procurementErrors";
 import { matchExceptionLabel } from "../../domain/procurement/variance-types";
+import { knownCodeText } from "../../lib/apiErrorText";
+
+const issueText = (issue: { code?: string; message?: string }, language: string) => (language === "en-US" ? issue.message : knownCodeText(issue.code, language) || issue.message) || "";
 
 // A header fact, as OverviewFields draws one (components/document/DocumentShell.tsx).
 const FACT_LABEL = "fc-caption font-medium";
@@ -606,8 +609,8 @@ function LinkReceipt({ invoice, onDone }: { invoice: { id: string; version: numb
       </div>
       {plan && (plan.allowed
         ? <Notice tone="success">{t("finance.previewAllowed")}</Notice>
-        : <Notice>{(plan.blockingIssues || []).map((issue) => issue.message).join(" · ")}</Notice>)}
-      {plan?.allowed && Boolean(plan.warnings?.length) && <Notice>{(plan.warnings || []).map((issue) => issue.message).join(" · ")}</Notice>}
+        : <Notice>{(plan.blockingIssues || []).map((issue) => issueText(issue, language)).join(" · ")}</Notice>)}
+      {plan?.allowed && Boolean(plan.warnings?.length) && <Notice>{(plan.warnings || []).map((issue) => issueText(issue, language)).join(" · ")}</Notice>}
       {error && <div title={errorCode}><Notice>{error}</Notice></div>}
     </div>
   );
@@ -1094,7 +1097,7 @@ function CancelSupplierInvoice({ base, version, number, onDone }: { base: string
     try {
       const plan = await apiJson<{ allowed: boolean; blockingIssues?: Array<{ code?: string; message?: string }> }>(`${base}/cancel-preview`, { method: "POST", body: JSON.stringify(body) });
       if (!plan.allowed) {
-        setError(plan.blockingIssues?.[0]?.message || t("finance.loadFailed"));
+        setError((plan.blockingIssues?.[0] && issueText(plan.blockingIssues[0], language)) || t("finance.loadFailed"));
         return;
       }
       await apiJson(`${base}/cancel`, { method: "POST", body: JSON.stringify({ ...body, idempotencyKey: createSecureClientMutationId("p2p") }) });
