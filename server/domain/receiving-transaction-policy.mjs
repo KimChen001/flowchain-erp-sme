@@ -149,7 +149,10 @@ export async function buildReceivingPostingPlan({ prisma, tenantId, receivingDoc
     const accepted = safeUnits(line.acceptedQty, blockingIssues, `Receiving line ${line.id} acceptedQty`)
     const rejected = safeUnits(line.rejectedQty, blockingIssues, `Receiving line ${line.id} rejectedQty`)
     if (accepted === null || rejected === null) continue
-    if (accepted <= ZERO || rejected < ZERO) blockingIssues.push(issue('RECEIVING_VALIDATION_FAILED', `Receiving line ${line.id} acceptedQty must be positive and rejectedQty cannot be negative.`))
+    // Nothing accepted is a delivery rejected in full (design audit L1-14):
+    // the line posts no stock and leaves the PO line open.
+    if (accepted < ZERO || rejected < ZERO) blockingIssues.push(issue('RECEIVING_VALIDATION_FAILED', `Receiving line ${line.id} acceptedQty and rejectedQty cannot be negative.`))
+    else if (accepted === ZERO && rejected === ZERO) blockingIssues.push(issue('RECEIVING_VALIDATION_FAILED', `Receiving line ${line.id} has neither an accepted nor a rejected quantity.`))
     const poLine = poLines.get(line.purchaseOrderLineId)
     if (!poLine) { blockingIssues.push(issue('RECEIVING_VALIDATION_FAILED', `Receiving line ${line.id} does not reference a line on the related purchase order.`)); continue }
     const sku = receivingText(line.sku)
@@ -174,14 +177,17 @@ export async function buildReceivingPostingPlan({ prisma, tenantId, receivingDoc
     quantityPlans.push({ line, poLine, sku, itemId, warehouseId, location, locationKey: receivingLocationKey(location), accepted, rejected, unit: unitPlan.unit })
   }
 
+  // Only what was accepted moves stock and the PO line: a line rejected in
+  // full has no impact on either.
+  const stockPlans = quantityPlans.filter((plan) => plan.accepted > ZERO)
   const inventoryImpacts = []
-  for (const plan of quantityPlans) {
+  for (const plan of stockPlans) {
     const balance = await prisma.inventoryBalance.findUnique({ where: balanceWhere({ tenantId, ...plan }) })
     const onHandBefore = receivingDecimalUnits(balance?.onHandQuantity || 0)
     const availableBefore = receivingDecimalUnits(balance?.availableQuantity || 0)
     inventoryImpacts.push({ sku: plan.sku, warehouseId: plan.warehouseId, location: plan.location, locationKey: plan.locationKey, onHandBefore: receivingDecimalString(onHandBefore), onHandDelta: receivingDecimalString(plan.accepted), onHandAfter: receivingDecimalString(onHandBefore + plan.accepted), availableBefore: receivingDecimalString(availableBefore), availableDelta: receivingDecimalString(plan.accepted), availableAfter: receivingDecimalString(availableBefore + plan.accepted) })
   }
-  const purchaseOrderImpacts = [...acceptedByPoLine.entries()].map(([poLineId, delta]) => {
+  const purchaseOrderImpacts = [...acceptedByPoLine.entries()].filter(([, delta]) => delta > ZERO).map(([poLineId, delta]) => {
     const poLine = poLines.get(poLineId)
     const before = receivingDecimalUnits(poLine.receivedQuantity)
     const ordered = receivingDecimalUnits(poLine.orderedQuantity)
@@ -193,7 +199,7 @@ export async function buildReceivingPostingPlan({ prisma, tenantId, receivingDoc
     normalizedLines: quantityPlans.map((plan) => ({ id: plan.line.id, poLineId: plan.poLine.id, sku: plan.sku, itemId: plan.itemId, warehouseId: plan.warehouseId, locationKey: plan.locationKey, acceptedQuantity: receivingDecimalString(plan.accepted), rejectedQuantity: receivingDecimalString(plan.rejected) })),
     quantityPlans, inventoryImpacts, purchaseOrderImpacts,
     statusImpact: { poWorkflowStatus: receivingWorkflowStatus(purchaseOrder), poFulfillmentBefore: receivingFulfillmentStatus(purchaseOrder.lines), poFulfillmentAfter: receivingFulfillmentStatus(projectedLines), receivingPostingBefore: receivingDocument.postingStatus, receivingPostingAfter: 'posted' },
-    factsToCreate: { inventoryMovementCount: quantityPlans.length, auditEventCount: 1, commandExecutionCount: 1 },
+    factsToCreate: { inventoryMovementCount: stockPlans.length, auditEventCount: 1, commandExecutionCount: 1 },
     limitations: ['Lot/Serial posting is not connected in this beta.'],
   }
 }
@@ -204,7 +210,10 @@ export async function buildReceivingReversalPlan({ prisma, tenantId, receivingDo
   if (receivingDocument.postingStatus === 'reversed') blockingIssues.push(issue('RECEIVING_ALREADY_REVERSED', 'Receiving document is already reversed.'))
   else if (receivingDocument.postingStatus !== 'posted') blockingIssues.push(issue('RECEIVING_REVERSAL_NOT_SAFE', 'Only a posted receiving document can be reversed.'))
   const originalMovements = await prisma.inventoryMovement.findMany({ where: { tenantId, relatedGrnId: receivingDocument.id, movementType: 'receipt_posting' }, orderBy: { createdAt: 'asc' } })
-  if (!originalMovements.length || originalMovements.some((movement) => movement.reversedByMovementId)) blockingIssues.push(issue('RECEIVING_REVERSAL_NOT_SAFE', 'Original receipt movements are missing or already reversed.'))
+  // A receipt that accepted nothing (rejected in full, L1-14) posted no
+  // movement, so none is missing: reversing it moves no stock.
+  const acceptedAny = receivingDocument.lines.some((line) => { try { return receivingDecimalUnits(line.acceptedQty) > ZERO } catch { return true } })
+  if ((acceptedAny && !originalMovements.length) || originalMovements.some((movement) => movement.reversedByMovementId)) blockingIssues.push(issue('RECEIVING_REVERSAL_NOT_SAFE', 'Original receipt movements are missing or already reversed.'))
   // A submitted, matched or approved supplier invoice is a claim against this
   // receipt, and an approved one has already produced a payable. Undoing the
   // receipt underneath it would leave money owed for goods the system then

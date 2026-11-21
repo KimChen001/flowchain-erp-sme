@@ -102,6 +102,17 @@ test('a bill recorded before its receipt waits for it, and only then is matched 
     assert.equal(approve.status, 409)
     assert.equal(await prisma.payableObligation.count({ where: { tenantId } }), 0)
 
+    // A first delivery is rejected in full (design audit L1-14): nothing was
+    // accepted, so the bill is not offered it, and linking it is refused; the
+    // bill waits for the replacement delivery.
+    await prisma.receivingDocument.create({ data: { id: 'BBR-GRN-REJ', tenantId, documentNumber: 'BBR-GRN-REJ', poId: 'BBR-PO-1', supplierId: 'BBR-SUP', supplierName: 'Harbor Supply', status: 'received', workflowStatus: 'posted', postingStatus: 'posted', postedAt: new Date(), postedById: users.admin.id, warehouseId: 'BBR-WH', currency: 'USD', lines: { create: { id: 'BBR-GRN-REJ-L1', purchaseOrderLineId: 'BBR-PO-1-L1', itemId: 'BBR-ITEM', sku: 'BBR-SKU', itemName: 'Valve', acceptedQty: '0.0000', rejectedQty: '8.0000', unit: 'EA', warehouseId: 'BBR-WH', location: 'A-01', locationKey: 'a-01', metadata: { rejectionReason: 'Crushed in transit' } } } } })
+    detail = await call(prisma, 'finance', 'GET', `/api/finance/supplier-invoices/${billId}`)
+    assert.deepEqual(detail.body.receiptCandidates, [])
+    const rejectedLink = await call(prisma, 'finance', 'POST', `/api/finance/supplier-invoices/${billId}/link-receipt-preview`, { expectedVersion: 1, receivingDocumentId: 'BBR-GRN-REJ' })
+    assert.equal(rejectedLink.body.allowed, false)
+    assert.ok(rejectedLink.body.blockingIssues.some((entry) => entry.code === 'SUPPLIER_INVOICE_RECEIPT_LINE_REJECTED'), JSON.stringify(rejectedLink.body.blockingIssues))
+    assert.equal((await call(prisma, 'finance', 'POST', `/api/finance/supplier-invoices/${billId}/link-receipt`, { expectedVersion: 1, receivingDocumentId: 'BBR-GRN-REJ', idempotencyKey: 'bbr-link-rejected' })).status, 409)
+
     // The goods arrive short: 6 of the 8 billed. Linking is allowed and says
     // so; the three-way match then shows the difference.
     await receipt(prisma, 'BBR-GRN-OTHER', 'BBR-PO-2', '5.0000')

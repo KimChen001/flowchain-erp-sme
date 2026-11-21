@@ -119,6 +119,12 @@ test('a bill opened from an order with several receipts starts on the oldest one
   assert.equal(firstUnbilledReceipt(order('24.0000'), [older]), older)
   assert.equal(firstUnbilledReceipt(order('0'), []), null)
   assert.equal(firstUnbilledReceipt(null, [newer, older]), older)
+  // A delivery rejected in full has nothing to bill (L1-14): never the start,
+  // alone (the bill then opens before its receipt) or beside others.
+  const rejected = { id: 'GRN-0', lines: [{ purchaseOrderLineId: 'POL-1', acceptedQuantity: '0.0000' }] }
+  assert.equal(firstUnbilledReceipt(order('0'), [rejected]), null)
+  assert.equal(firstUnbilledReceipt(order('0'), [newer, rejected]), newer)
+  assert.equal(firstUnbilledReceipt(order('0'), [rejected, older]), older)
 })
 
 test('the new invoice form never says "No receipt yet" above listed receipts and hints at a price above the PO', () => {

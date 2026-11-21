@@ -26,7 +26,7 @@ const COPY: Record<string, [string, string]> = {
   numberOnSave: ["The receipt number is assigned when you save.", "收货单号在保存时自动生成。"],
   details: ["Receipt details", "收货信息"],
   linesTitle: ["Lines to receive", "收货明细"],
-  linesIntro: ["Tick the lines that arrived. A rejected quantity needs a reason.", "勾选本次到货的行。有拒收数量时需填写拒收原因。"],
+  linesIntro: ["Tick the lines that arrived. A rejected quantity needs a reason; a delivery rejected in full is recorded with 0 accepted.", "勾选本次到货的行。有拒收数量时需填写拒收原因；整行拒收时合格数量填 0。"],
   loading: ["Loading the purchase order…", "正在读取采购订单…"],
   loadFailed: ["The purchase order could not be loaded for receiving.", "可收货的采购订单加载失败。"],
   retry: ["Retry", "重试"],
@@ -60,7 +60,8 @@ const COPY: Record<string, [string, string]> = {
   doneDraft: ["Saved draft {doc}", "已保存草稿 {doc}"],
   lineLabel: ["Line {n}", "第 {n} 行"],
   lineRequired: ["Select at least one line to receive.", "请至少选择一行收货。"],
-  acceptedPositive: ["Accepted quantity must be greater than zero.", "合格数量必须大于零。"],
+  // A delivery rejected in full is recorded with 0 accepted (design audit L1-14).
+  quantityRequired: ["Enter an accepted quantity, a rejected quantity, or both.", "请填写合格数量、拒收数量或两者。"],
   overReceipt: ["Accepted quantity is more than the open quantity on the purchase order.", "合格数量超过采购订单未收数量。"],
   invalidQuantity: ["Enter a number with up to four decimal places.", "请输入最多四位小数的数量。"],
   reasonRequired: ["Enter a reason for the rejected quantity.", "请填写拒收原因。"],
@@ -216,10 +217,12 @@ function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: Recei
       const rejected = value.rejected.trim() || "0";
       const issue: LineIssues = {};
       if (!QUANTITY.test(accepted)) issue.accepted = "invalidQuantity";
-      else if (units(accepted) <= 0n) issue.accepted = "acceptedPositive";
       else if (units(accepted) > units(line.remainingQuantity)) issue.accepted = "overReceipt";
       if (!QUANTITY.test(rejected)) issue.rejected = "invalidQuantity";
       else if (units(rejected) > 0n && !value.reason.trim()) issue.reason = "reasonRequired";
+      // 0 accepted records a delivery rejected in full, with its rejected
+      // quantity and reason (design audit L1-14); 0 and 0 records nothing.
+      if (!issue.accepted && !issue.rejected && units(accepted) === 0n && units(rejected) === 0n) issue.accepted = "quantityRequired";
       if (Object.keys(issue).length) byLine[line.id] = issue;
     }
     if (!warehouseId) header.warehouse = "warehouseRequired";
@@ -231,7 +234,7 @@ function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: Recei
   const serverMessage = (error: unknown) => {
     if (!(error instanceof ApiError)) return tr("failed");
     const byCode: Record<string, string> = {
-      RECEIVING_OVER_RECEIPT: tr("overReceipt"), RECEIVING_REJECTION_REASON_REQUIRED: tr("reasonRequired"),
+      RECEIVING_OVER_RECEIPT: tr("overReceipt"), RECEIVING_REJECTION_REASON_REQUIRED: tr("reasonRequired"), RECEIVING_QUANTITY_REQUIRED: tr("quantityRequired"),
       SYNC_VERSION_CONFLICT: tr("versionConflict"), RECEIVING_IMMUTABLE: tr("immutable"), RECEIVING_WORKFLOW_CONFLICT: tr("immutable"),
       AUTHORIZATION_PERMISSION_DENIED: tr("permissionDenied"), WAREHOUSE_SCOPE_DENIED: tr("warehouseDenied"),
       CAPABILITY_NOT_AVAILABLE: tr("capability"), RECEIVING_PURCHASE_ORDER_NOT_RECEIVABLE: tr("notReceivable"),

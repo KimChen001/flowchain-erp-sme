@@ -158,6 +158,12 @@ test('the pure money figures: receipts, cash by month and gross profit', () => {
     { id: 'R2', documentNumber: 'GRN-2', poId: 'PO-1', arrivedAt: date('2026-09-02'), lines: [{ id: 'L3', purchaseOrderLineId: 'POL-1', acceptedQty: '1' }] },
   ], { linkedReceipts: new Set(['R2']), linkedLines: new Set(), orderLines: new Map([['POL-1', 2.5]]), orders: new Map([['PO-1', { number: 'PO-1', currency: 'GBP', supplierName: 'Acme' }]]) })
   assert.deepEqual(rows.map((row) => [row.receipt, row.value, row.linesWithoutPrice, row.supplier]), [['GRN-1', 7.5, 1, 'Acme']])
+  // A delivery rejected in full (L1-14) has nothing to invoice: not listed.
+  const rejected = receiptsNotInvoiced([
+    { id: 'R3', documentNumber: 'GRN-3', poId: 'PO-1', arrivedAt: date('2026-09-03'), lines: [{ id: 'L4', purchaseOrderLineId: 'POL-1', acceptedQty: '0.0000' }] },
+    { id: 'R4', documentNumber: 'GRN-4', poId: 'PO-1', arrivedAt: date('2026-09-04'), lines: [{ id: 'L5', purchaseOrderLineId: 'POL-1', acceptedQty: '0.0000' }, { id: 'L6', purchaseOrderLineId: 'POL-1', acceptedQty: '2' }] },
+  ], { linkedReceipts: new Set(), linkedLines: new Set(), orderLines: new Map([['POL-1', 2.5]]), orders: new Map([['PO-1', { number: 'PO-1', currency: 'GBP', supplierName: 'Acme' }]]) })
+  assert.deepEqual(rejected.map((row) => [row.receipt, row.value]), [['GRN-4', 5]])
   assert.deepEqual(cashByMonth([]), { totals: [], months: [] })
   const profit = grossProfitOf([{ day: '2026-10-01', sku: 'A', quantity: 2, lineAmount: 10 }], { unitCost: () => 2.5, by: 'total' })
   assert.deepEqual([profit.revenue, profit.cost, profit.grossProfit, profit.grossMarginPercent, profit.rows], [10, 5, 5, 50, []])

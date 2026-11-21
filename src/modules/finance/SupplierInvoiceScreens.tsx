@@ -87,10 +87,14 @@ const unbilledQuantities = (order: Order) =>
 // What other bills already claim on each order line is set against the
 // oldest receipts first (the server checks the exact quantities on save).
 // Entry data lists receipts newest first. Null when every receipt is billed.
+// A receipt that accepted nothing (a delivery rejected in full, design audit
+// L1-14) has nothing to bill and is never the start: without another, the
+// bill opens before its receipt.
 export const firstUnbilledReceipt = <R extends { lines: Array<{ purchaseOrderLineId: string | null; acceptedQuantity: string }> }>(
   order: { lines: Array<{ id: string; billedQuantity: string }> } | null | undefined,
-  forPo: R[],
+  receipts: R[],
 ): R | null => {
+  const forPo = receipts.filter((receipt) => receipt.lines.some((line) => Number(line.acceptedQuantity || 0) > 0));
   if (forPo.length <= 1) return forPo[0] || null;
   const billedLeft = new Map((order?.lines || []).map((line) => [line.id, Math.max(0, Number(line.billedQuantity || 0))]));
   for (const receipt of [...forPo].reverse()) {

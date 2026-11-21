@@ -183,10 +183,15 @@ function rawInvoicesForGrn(data = {}, grnId = '') {
 }
 
 function lineQuantity(line = {}, keys = []) {
+  return recordedLineQuantity(line, keys) ?? 0
+}
+// The first recorded quantity among the keys, or null when none is recorded:
+// a recorded 0 (a delivery rejected in full, design audit L1-14) stays 0.
+function recordedLineQuantity(line = {}, keys = []) {
   for (const key of keys) {
     if (line[key] !== undefined && line[key] !== null && line[key] !== '') return toNumber(line[key], 0)
   }
-  return 0
+  return null
 }
 
 function primaryPoLine(po = {}) {
@@ -210,7 +215,7 @@ function primaryGrnLine(grn = {}) {
     grnLineId: text(line.grnLineId || line.lineId || line.id, `${text(grn.grn || grn.id || 'GRN')}-LINE-1`),
     poLineId: text(line.poLineId),
     receivedQty: lineQuantity(line, ['receivedQty', 'quantityReceived', 'received']) || toNumber(grn.items, 0),
-    acceptedQty: lineQuantity(line, ['acceptedQty', 'passed', 'quantityAccepted']) || toNumber(grn.passed, 0),
+    acceptedQty: recordedLineQuantity(line, ['acceptedQty', 'passed', 'quantityAccepted']) ?? toNumber(grn.passed, 0),
     rejectedQty: lineQuantity(line, ['rejectedQty', 'failed', 'quantityRejected']) || toNumber(grn.failed, 0),
     unit: text(line.unit || grn.unit),
   }
@@ -803,7 +808,8 @@ function buildThreeWayMatchContract(query, db, models) {
     row.match.invoiceId ? evidenceFromDocument(documentById(models, row.match.invoiceId) || { documentType: 'invoice', id: row.match.invoiceId, status: row.match.status }, { summary: `Invoice Line ${row.invoiceLine.invoiceLineId} · Invoice 金额 ${money(row.invoiceLine.amount || row.match.invoiceAmount || 0, row.match.currency)} · 金额差异 ${money(row.match.varianceAmount, row.match.currency)}。`, severity: toNumber(row.match.varianceAmount, 0) ? 'risk' : 'warning' }) : evidenceItem({ type: 'invoice', id: `invoice-missing-${row.match.poId}`, entityId: '', entityLabel: 'Invoice Line 待补齐', moduleId: 'procurement:invoices', entityType: 'supplier_invoice', status: '待补齐', summary: '当前未读取到完整 Invoice Line，无法完成三单匹配结论。', severity: 'warning' }),
   ].filter(Boolean))
   const first = rows[0]
-  const quantityDiff = first ? Math.max(0, toNumber(first.poLine.orderedQty, 0) - toNumber(first.grnLine.acceptedQty || first.grnLine.receivedQty, 0)) : 0
+  // A recorded 0 accepted is the quantity, not a missing one (L1-14).
+  const quantityDiff = first ? Math.max(0, toNumber(first.poLine.orderedQty, 0) - toNumber(first.grnLine.acceptedQty ?? first.grnLine.receivedQty, 0)) : 0
   const priceDiffText = first?.invoiceLine?.unitPrice && first?.poLine?.unitPrice
     ? money(Math.abs(first.invoiceLine.unitPrice - first.poLine.unitPrice), first.match.currency || first.poLine.currency)
     : '待补齐'

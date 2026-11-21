@@ -1395,6 +1395,13 @@ export function createOperationalFinanceCommandService({
         continue;
       }
       const [match] = candidates;
+      // A receipt line that accepted nothing was a delivery rejected in full
+      // (design audit L1-14): there is nothing to bill against, and a bill
+      // linked to it could not move to the replacement delivery. Refused.
+      if (financeUnits(match.acceptedQty || 0) <= 0n) {
+        add("SUPPLIER_INVOICE_RECEIPT_LINE_REJECTED", `Receipt ${receipt.documentNumber || receipt.id} accepted none of line ${line.lineNumber} (${line.sku}): that delivery was rejected in full. Link this supplier invoice to the replacement delivery.`);
+        continue;
+      }
       const available = financeUnits(match.acceptedQty || 0) - (billed.get(match.id) || 0n);
       const quantity = financeUnits(line.quantity || 0);
       if (quantity > available)
