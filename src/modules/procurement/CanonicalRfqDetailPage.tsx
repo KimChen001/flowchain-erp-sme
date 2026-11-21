@@ -232,6 +232,8 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, canTransition, no
   const [transitionError, setTransitionError] = useState("");
   const canOpen = canTransition && record.status === "draft";
   const canCancel = canTransition && CANCELLABLE_RFQ.includes(record.status || "");
+  // Comparing quotes is the next step while they are being collected.
+  const compareIsNext = !canOpen && (record.status === "open" || record.status === "collecting_quotes");
   const transition = async (action: "open" | "cancel") => {
     const number = record.number || record.id || "";
     const sure = action === "open"
@@ -294,7 +296,7 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, canTransition, no
             {canOpen && <button type="button" disabled={busy !== null} onClick={() => void transition("open")} className={listButtonClass.primary} data-testid="rfq-open-button"><Play size={14} />{tr("开启询价", "Open RFQ")}</button>}
             {canCancel && <button type="button" disabled={busy !== null} onClick={() => void transition("cancel")} className={listButtonClass.danger} data-testid="rfq-cancel-button"><Ban size={14} />{tr("取消询价单", "Cancel RFQ")}</button>}
             {canCompare && <Link
-              className={listButtonClass.secondary}
+              className={compareIsNext ? listButtonClass.primary : listButtonClass.secondary}
               data-testid="rfq-comparison-link"
               to={`/app/procurement/rfq/${encodeURIComponent(record.id || "")}/comparison`}
             >
