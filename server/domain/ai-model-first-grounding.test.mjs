@@ -503,3 +503,23 @@ test('slash dates are read in the workspace order', () => {
   const [typed] = check('You asked for delivery by 18/11/2026.', [], { locale: 'en-GB', question }).problems
   assert.deepEqual([typed.kind, aiV2UserTypedDate(typed.value, question, { locale: 'en-GB' })], ['date', true])
 })
+
+// 2026-11-20 question set: figures the results imply but do not write. A
+// count of a whole list said with its noun, a period in months a result
+// spans, and both months of a Chinese month range.
+test('a whole list\'s count with its noun, a period\'s months, and a Chinese month range are grounded', () => {
+  const prices = [{ sku: '85123A', rows: [{ orderNumber: 'PO-202611-0009', unitPrice: 1.48, orderedOn: '2026-11-02' }, { orderNumber: 'PO-202610-0028', unitPrice: 1.48, orderedOn: '2026-10-31' }, { orderNumber: 'PO-202610-0026', unitPrice: 1.48, orderedOn: '2026-10-26' }] }]
+  const margin = [{ period: { from: '2025-12-01', to: '2026-11-20' }, revenue: 16388.96 }]
+  const flags = (answer, results) => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results, question: '', today: '2026-11-20' }).problems.filter((row) => row.kind === 'number' || row.kind === 'date').map((row) => row.value)
+  assert.deepEqual(flags('这个物料的价格记录只有 3 笔，都是 £1.48。', prices), [])
+  assert.deepEqual(flags('Only 3 records, all at £1.48.', prices), [])
+  assert.deepEqual(flags('记录中只有 2026 年 10—11 月的三笔采购价。', prices), [])
+  assert.deepEqual(flags('The margin is on £16,388.96 over the last 12 months.', margin), [])
+  assert.deepEqual(flags('过去 12 个月的销售额是 £16,388.96。', margin), [])
+  // Still flagged: another count, another period, a list cut at its limit,
+  // and a month range the results do not reach.
+  assert.deepEqual(flags('There are 4 records at £1.48.', prices), ['4'])
+  assert.deepEqual(flags('Over the last 18 months.', margin), ['18'])
+  assert.deepEqual(flags('Only 3 records match.', [{ rows: [{ sku: 'X' }, { sku: 'Y' }, { sku: 'Z' }], more: 40 }]), ['3'])
+  assert.deepEqual(flags('2026 年 3—4 月的价格是 £1.48。', prices), ['2026 年 3—4 月'])
+})

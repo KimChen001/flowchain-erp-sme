@@ -65,6 +65,9 @@ const DATE_PATTERNS = [
   { pattern: /(?<!\d)(\d{4})-(\d{1,2})-(\d{1,2})(?!\d)/g, read: (m) => ({ year: +m[1], month: +m[2], day: +m[3] }) },
   { pattern: /(?<!\d)(?:(\d{4})\s*年\s*)?(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]/g, read: (m) => ({ year: m[1] ? +m[1] : null, month: +m[2], day: +m[3] }) },
   { pattern: /(?<!\d)(\d{4})\s*年\s*(\d{1,2})\s*月/g, read: (m) => ({ year: +m[1], month: +m[2], day: null }) },
+  // A range of months written once (2026 年 10—11 月, 1-3 月): both months
+  // (2026-11-20: the 10 of "10—11 月" was read as a figure).
+  { pattern: /(?<![\d.])(?:(\d{4})\s*年\s*)?(\d{1,2})\s*[—–\-~～至到]\s*(\d{1,2})\s*月(?!\s*\d)/g, read: (m) => ({ year: m[1] ? +m[1] : null, month: +m[2], day: null, endMonth: +m[3] }) },
   // A month alone (上季度 7月至9月), not a count of months (3 个月).
   { pattern: /(?<![\d.])(\d{1,2})\s*月(?!\s*\d)/g, read: (m) => ({ year: null, month: +m[1], day: null }) },
   // A range of days in one month, both checked (2026-11-08 on DeepSeek: "本周内
@@ -243,6 +246,46 @@ function listSizesOf(results) {
   return sizes
 }
 const STEP_BEFORE = /(?:\bsteps?|步骤|第)[^.\n。！？!?]{0,16}$/i
+// A count of records: the noun after the figure.
+const RECORD_COUNT_AFTER = /^\s*(?:笔|条|张|项|家|份|位|(?:purchase |sales )?(?:records?|rows?|entries|orders?|invoices?|requests?|suppliers?|customers?|receipts?|replies)\b)/i
+// A number of months ("12 months", 12 个月; 12 月 is December).
+const MONTHS_AFTER = /^\s*(?:months?\b|个月)/i
+// The sizes of the lists the results hold whole: not cut at a limit (more
+// over 0) and, where a total is given, all of it.
+function wholeListSizesOf(results) {
+  const sizes = new Set()
+  const walk = (value, parent = null) => {
+    if (Array.isArray(value)) {
+      const objects = value.filter((row) => row && typeof row === 'object' && !Array.isArray(row))
+      const cut = Number(parent?.more) > 0 || (Number.isFinite(Number(parent?.total)) && Number(parent.total) !== objects.length)
+      if (objects.length >= 2 && !cut) sizes.add(objects.length)
+      value.forEach((entry) => walk(entry, null))
+    } else if (value && typeof value === 'object') for (const entry of Object.values(value)) walk(entry, value)
+  }
+  walk(results)
+  return sizes
+}
+// The months each period of the results spans ({ from, to } days): the
+// calendar months it touches, and its length in months.
+function periodMonthsOf(results) {
+  const spans = new Set()
+  const walk = (value) => {
+    if (Array.isArray(value)) value.forEach(walk)
+    else if (value && typeof value === 'object') {
+      const from = text(value.from)
+      const to = text(value.to)
+      if (/^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to) && from <= to) {
+        const [y1, m1] = from.split('-').map(Number)
+        const [y2, m2] = to.split('-').map(Number)
+        spans.add((y2 * 12 + m2) - (y1 * 12 + m1) + 1)
+        spans.add(Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000 / 30.44))
+      }
+      Object.values(value).forEach(walk)
+    }
+  }
+  walk(results)
+  return spans
+}
 const COUNT_NOUN =/^\s*(?:(?:[\p{L}\p{N}_-]+\s+){0,2}(?:items?|skus?|products?|orders?|requests?|suppliers?|customers?|lines?|records?)(?![\p{L}])|(?:个|项|张|家|种|笔|条|款))/iu
 // An answer about overdue or aged amounts, and the bucket labels it may write:
 // 1–30, 31–60, 61–90, 91–120, 121–180, over 90 days, over-90-day, 90+ days,
@@ -291,6 +334,7 @@ export function aiGroundingSources(results = [], { dayFirst = false } = {}) {
         const year = date.year ? String(date.year) : '????'
         const month = String(date.month).padStart(2, '0')
         months.add(`${year}-${month}`)
+        if (date.endMonth >= 1 && date.endMonth <= 12) months.add(`${year}-${String(date.endMonth).padStart(2, '0')}`)
         if (date.day) days.add(`${year}-${month}-${String(date.day).padStart(2, '0')}`)
         if (date.endDay) days.add(`${year}-${month}-${String(date.endDay).padStart(2, '0')}`)
         return ' '.repeat(match[0].length)
@@ -714,8 +758,9 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
       const date = read(match, dayFirst)
       if (!date.month || date.month > 12 || (date.day !== null && (date.day < 1 || date.day > 31))) return match[0]
       if (date.endDay !== undefined && (date.endDay <= date.day || date.endDay > 31)) return match[0]
+      if (date.endMonth !== undefined && (date.endMonth <= date.month || date.endMonth > 12)) return match[0]
       checked.date += 1
-      if (!dayKnown(date) || (date.endDay && !dayKnown({ ...date, day: date.endDay }))) fail('date', match[0])
+      if (!dayKnown(date) || (date.endDay && !dayKnown({ ...date, day: date.endDay })) || (date.endMonth && !dayKnown({ ...date, month: date.endMonth }))) fail('date', match[0])
       return blank(match[0])
     })
   }
@@ -784,6 +829,13 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
       // The top N of a list a result holds N rows of ("the top 10 items",
       // 前 10 位; 2026-11-11 on Flash: the 10 was flagged).
       || (kind === 'plain' && !decimals && factor === 1 && value >= 2 && TOP_BEFORE.test(rest.slice(Math.max(0, at - 16), at)) && listSizesOf(results).has(value))
+      // How many records a whole list holds, said with its noun ("only 3
+      // records", 只有 3 笔; 2026-11-20: price_history's three rows). Never
+      // a list cut at its limit, whose size is not its count.
+      || (kind === 'plain' && !decimals && factor === 1 && value >= 2 && RECORD_COUNT_AFTER.test(afterText) && wholeListSizesOf(results).has(value))
+      // A period in months a result spans ("over the last 12 months", 过去
+      // 12 个月; 2026-11-20: gross_profit's default year was flagged).
+      || (kind === 'plain' && !decimals && factor === 1 && value >= 1 && MONTHS_AFTER.test(afterText) && periodMonthsOf(results).has(value))
       // A step of the answer's own numbered list ("steps 1 and 2", 第 2 步).
       || (kind === 'plain' && !decimals && factor === 1 && value >= 1 && value <= listItems && (STEP_BEFORE.test(rest.slice(Math.max(0, at - 24), at)) || /^\s*步/.test(rest.slice(at + num.length, at + num.length + 3))))
     const figure = { label: match[0].trim(), value, tolerance, kind, decimals, group: kind === 'money' ? `money:${(currencies || []).join('/')}` : kind }
