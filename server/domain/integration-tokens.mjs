@@ -102,27 +102,82 @@ export function publicIntegrationToken(record, { owners = new Map(), uses = new 
   }
 }
 
-// Public mailbox domains: a sender on one of these matches a supplier only by
-// the whole address, never by the domain.
-const PUBLIC_MAIL_DOMAINS = new Set(['gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'live.com', 'msn.com', 'yahoo.com', 'icloud.com', 'me.com', 'aol.com', 'proton.me', 'protonmail.com', 'gmx.com', 'mail.com', 'qq.com', 'foxmail.com', '163.com', '126.com', 'sina.com', 'sohu.com', 'yeah.net', 'aliyun.com'])
+// Public mailbox providers. A sender on one of them matches a supplier only
+// by the whole address, never by the domain: anyone can open an account
+// there. A domain counts when it is one of these, or a provider's name
+// followed by a country or generic ending (yahoo.co.uk, gmx.de, yandex.ru).
+const PUBLIC_MAIL_DOMAINS = new Set([
+  'gmail.com', 'googlemail.com', 'msn.com', 'me.com', 'mac.com', 'aim.com', 'ymail.com', 'rocketmail.com', 'pm.me', 'tuta.io',
+  'web.de', 't-online.de', 'freenet.de', 'libero.it', 'virgilio.it', 'laposte.net', 'orange.fr', 'free.fr', 'wanadoo.fr', 'sfr.fr',
+  'btinternet.com', 'sky.com', 'comcast.net', 'verizon.net', 'att.net', 'sbcglobal.net', 'cox.net', 'optonline.net', 'earthlink.net',
+  'inbox.ru', 'list.ru', 'bk.ru', 'rambler.ru', 'naver.com', 'daum.net', 'hanmail.net', 'rediffmail.com', 'fastmail.com', 'hey.com', 'tutanota.com',
+  'qq.com', 'vip.qq.com', 'foxmail.com', '163.com', 'vip.163.com', '126.com', 'yeah.net', '139.com', '189.cn', 'wo.cn', 'sina.com', 'sina.cn', 'sohu.com', 'tom.com', '21cn.com', 'aliyun.com',
+])
+const PUBLIC_MAIL_BRANDS = new Set(['yahoo', 'hotmail', 'outlook', 'live', 'gmx', 'yandex', 'ya', 'zoho', 'zohomail', 'proton', 'protonmail', 'aol', 'icloud', 'mail', 'email', 'inbox'])
+export function publicMailDomain(domain) {
+  const name = text(domain).toLowerCase()
+  if (PUBLIC_MAIL_DOMAINS.has(name)) return true
+  const [brand, ...ending] = name.split('.')
+  // The ending is a country or generic one: one or two short labels (com, de, co.uk, com.br).
+  return PUBLIC_MAIL_BRANDS.has(brand) && ending.length >= 1 && ending.length <= 2 && ending.every((label) => /^[a-z]{2,3}$/.test(label))
+}
 
-// The address in a From value ("Pat <pat@acme.example>" or a bare address), lower case.
+const ATOM = "[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+"
+const ADDR_SPEC = new RegExp(`^${ATOM}(?:\\.${ATOM})*@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+$`)
+
+// The one address a From value names, lower case, or null when it does not
+// name exactly one plain address. Read as RFC 5322 has it: quoted display
+// names and comments are skipped (they may contain anything, angle brackets
+// included); then either one angle address `<…>` with nothing after it, or
+// a bare address. Several mailboxes, groups, quoted local parts and
+// unbalanced quotes, comments or brackets give null, so they are never on record.
 export function senderAddress(value) {
-  const raw = text(value)
-  const bracketed = raw.match(/<([^<>\s]+@[^<>\s]+)>/)
-  const address = (bracketed ? bracketed[1] : raw).trim().toLowerCase()
-  return /^[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[^\s@<>(),;:"]+$/.test(address) ? address : null
+  const raw = String(value ?? '')
+  if (!raw.trim() || raw.length > 998) return null
+  let outside = ''
+  let depth = 0
+  let quoted = false
+  for (let at = 0; at < raw.length; at += 1) {
+    const char = raw[at]
+    if (quoted || depth > 0) {
+      if (char === '\\') { at += 1; continue }
+      if (quoted && char === '"') quoted = false
+      else if (!quoted && char === '(') depth += 1
+      else if (!quoted && char === ')') depth -= 1
+      continue
+    }
+    if (char === '"') { quoted = true; outside += ' '; continue }
+    if (char === '(') { depth = 1; outside += ' '; continue }
+    if (char === ')') return null
+    outside += char
+  }
+  if (quoted || depth > 0) return null
+  const angles = [...outside.matchAll(/<([^<>]*)>/g)]
+  if (angles.length > 1) return null
+  let spec
+  if (angles.length === 1) {
+    const [whole, inner] = angles[0]
+    const before = outside.slice(0, angles[0].index)
+    const after = outside.slice(angles[0].index + whole.length)
+    // Only a display name before it (no brackets or separators), nothing after it.
+    if (after.trim() || /[<>@,;:]/.test(before)) return null
+    spec = inner.trim()
+  } else {
+    if (/[<>]/.test(outside)) return null
+    spec = outside.trim()
+  }
+  return ADDR_SPEC.test(spec) ? spec.toLowerCase() : null
 }
 
 // Whether a reply's sender is the supplier's email on record: the same
-// address, or the same domain unless it is a public mailbox domain. False
-// when either is missing (docs/supplier-reply-dates-design.md §4.11: "sender
-// not on record").
+// address, or the same company domain (never a public mailbox domain).
+// False when either is missing or is not one plain address
+// (docs/supplier-reply-dates-design.md §4.11: "sender not on record").
 export function senderOnRecord(sender, supplierEmail) {
   const from = senderAddress(sender)
   const onRecord = senderAddress(supplierEmail)
   if (!from || !onRecord) return false
   if (from === onRecord) return true
   const domain = from.split('@')[1]
-  return domain === onRecord.split('@')[1] && !PUBLIC_MAIL_DOMAINS.has(domain)
+  return domain === onRecord.split('@')[1] && !publicMailDomain(domain)
 }

@@ -34,6 +34,13 @@ const text = (value) => String(value ?? '').trim()
 const MANAGE = 'settings.workspace.manage'
 const REVISE = 'procurement.purchase_order.revise'
 const DAY_MS = 24 * 60 * 60 * 1000
+const HOUR_MS = 60 * 60 * 1000
+// A message claim with no reply after this long is left from a reading that
+// never finished (the process stopped, or freeing the claim failed): a retry
+// takes it over. A reading is at most two calls of 45 seconds each.
+export const INGEST_CLAIM_STALE_MS = 3 * 60 * 1000
+// Refusals per token are audited once an hour; the hour's record counts the rest.
+export const INGEST_REFUSAL_NAMESPACE = 'integration.supplier-reply-refusals'
 
 export class SupplierReplyIngestError extends Error {
   constructor(code, message, status = 400, details = []) {
@@ -121,13 +128,32 @@ export function createSupplierReplyIngestService({ prisma, replies, env = proces
     return actor
   }
 
-  // Codes and ids only, never the text or the token; best effort.
+  // Refusals, codes and ids only, never the text or the token; best effort.
+  // The first refusal of a token in an hour is an audit row; the rest of that
+  // hour are counted by code in the hour's record, so posting wrong secrets
+  // (the token id is not secret) cannot flood the audit log. actorId is the
+  // token's admin only once the secret was right.
   async function auditRefusal(tenantId, tokenId, actorId, error) {
-    await prisma.auditLog.create({ data: {
-      id: `audit-ingest-${tokenId}-${now().getTime()}-${Math.random().toString(36).slice(2, 8)}`, tenantId, actorId: actorId || null, source: 'supplier_reply_ingest', module: 'procurement', action: 'supplier_reply_ingest_refused',
-      entityType: 'IntegrationToken', entityId: tokenId, summary: `A supplier reply sent with an integration token was refused: ${error.code}.`,
-      metadata: { tokenId, code: error.code, status: error.status },
-    } }).catch(() => null)
+    try {
+      const hour = new Date(Math.floor(now().getTime() / HOUR_MS) * HOUR_MS).toISOString()
+      const key = `${tokenId}:${hour}`
+      const where = recordKey(tenantId, INGEST_REFUSAL_NAMESPACE, key)
+      const held = await prisma.runtimeRecord.findUnique({ where })
+      if (held) {
+        const counts = { ...(held.payload?.counts || {}) }
+        counts[error.code] = (Number(counts[error.code]) || 0) + 1
+        await prisma.runtimeRecord.update({ where, data: { payload: { ...held.payload, counts } } })
+        return
+      }
+      await prisma.runtimeRecord.create({ data: { id: `${INGEST_REFUSAL_NAMESPACE}:${key}`, tenantId, namespace: INGEST_REFUSAL_NAMESPACE, recordKey: key, payload: { tokenId, hour, counts: { [error.code]: 1 } } } })
+      await prisma.auditLog.create({ data: {
+        id: `audit-ingest-${tokenId}-${hour}`, tenantId, actorId: actorId || null, source: 'supplier_reply_ingest', module: 'procurement', action: 'supplier_reply_ingest_refused',
+        entityType: 'IntegrationToken', entityId: tokenId, summary: `A supplier reply sent with an integration token was refused: ${error.code}. Further refusals this hour are counted in ${INGEST_REFUSAL_NAMESPACE}.`,
+        metadata: { tokenId, code: error.code, status: error.status, hour },
+      } })
+    } catch {
+      // Best effort: a refusal is answered even when it cannot be recorded.
+    }
   }
 
   // The token behind an Authorization header, its workspace and its member.
@@ -138,14 +164,25 @@ export function createSupplierReplyIngestService({ prisma, replies, env = proces
     const record = await prisma.runtimeRecord.findUnique({ where: recordKey(parts.tenantId, INTEGRATION_TOKEN_NAMESPACE, parts.tokenId) })
     if (!record) refuseToken()
     const payload = record.payload || {}
+    if (!integrationSecretMatches(payload, parts.secret)) {
+      // The secret is wrong: nobody is known, so no actor is recorded.
+      await auditRefusal(parts.tenantId, parts.tokenId, null, { code: 'INTEGRATION_TOKEN_INVALID', status: 401 })
+      refuseToken()
+    }
     const owner = await prisma.user.findFirst({ where: { id: text(payload.ownerUserId), tenantId: parts.tenantId } })
-    const standing = integrationSecretMatches(payload, parts.secret)
-      && !payload.revokedAt
+    // The admin's standing now: active, the same role, and still allowed to
+    // manage the workspace and revise orders (a change of role assignments
+    // that leaves user.role alone ends the token too).
+    let standing = !payload.revokedAt
       && !integrationTokenExpired(payload, now())
       && owner?.status === 'active'
       && text(owner.role).toLowerCase() === text(payload.ownerRole)
+    if (standing) {
+      const actor = await resolveActor(prisma, ownerIdentity(parts.tenantId, owner)).catch(() => null)
+      standing = Boolean(actor) && [MANAGE, REVISE].every((permission) => can({ actor, permission, tenantId: parts.tenantId }))
+    }
     if (!standing) {
-      await auditRefusal(parts.tenantId, parts.tokenId, owner?.id, { code: 'INTEGRATION_TOKEN_INVALID', status: 401 })
+      await auditRefusal(parts.tenantId, parts.tokenId, owner?.status === 'active' ? owner.id : null, { code: 'INTEGRATION_TOKEN_INVALID', status: 401 })
       refuseToken()
     }
     return { tenantId: parts.tenantId, tokenId: parts.tokenId, owner }
@@ -222,7 +259,15 @@ export function createSupplierReplyIngestService({ prisma, replies, env = proces
       } catch (error) {
         if (error?.code !== 'P2002') throw error
         const held = await prisma.runtimeRecord.findUnique({ where: recordKey(tenantId, INTEGRATION_MESSAGE_NAMESPACE, key) })
-        return duplicateOf(tenantId, held?.payload?.replyId, !held?.payload?.replyId)
+        if (held?.payload?.replyId) return duplicateOf(tenantId, held.payload.replyId)
+        const claimedAt = Date.parse(held?.payload?.claimedAt || '')
+        if (!held || !(now().getTime() - claimedAt > INGEST_CLAIM_STALE_MS)) return duplicateOf(tenantId, null, true)
+        // Left from a reading that never finished: take it over, only if no
+        // other retry took it first (the record is unchanged since it was read).
+        const payload = { replyId: null, tokenId, claimedAt: now().toISOString(), takenOverFrom: held.payload?.claimedAt || null }
+        const taken = await prisma.runtimeRecord.updateMany({ where: { tenantId, namespace: INTEGRATION_MESSAGE_NAMESPACE, recordKey: key, updatedAt: held.updatedAt }, data: { payload } })
+        if (taken.count !== 1) return duplicateOf(tenantId, null, true)
+        claim = { ...held, payload }
       }
     }
 

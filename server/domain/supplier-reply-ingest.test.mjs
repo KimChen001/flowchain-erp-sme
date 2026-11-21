@@ -4,10 +4,10 @@ import { readFileSync } from 'node:fs'
 import { apiAccessDenial } from '../bootstrap/api-access-gate.mjs'
 import {
   INTEGRATION_MESSAGE_NAMESPACE, INTEGRATION_TOKEN_LIMIT, INTEGRATION_TOKEN_NAMESPACE, INTEGRATION_TOKEN_USE_NAMESPACE,
-  formatIntegrationToken, hashIntegrationSecret, integrationSecretMatches, newIntegrationToken, parseIntegrationToken, senderAddress, senderOnRecord,
+  formatIntegrationToken, hashIntegrationSecret, integrationMessageKey, integrationSecretMatches, newIntegrationToken, parseIntegrationToken, publicMailDomain, senderAddress, senderOnRecord,
 } from './integration-tokens.mjs'
 import { handleSupplierReplyIngestRoute } from '../routes/supplier-reply-ingest.routes.mjs'
-import { createSupplierReplyIngestService, orderNumbersIn, supplierReplyIngestEnabled, supplierReplyIngestPerDay } from '../services/supplier-reply-ingest.mjs'
+import { INGEST_CLAIM_STALE_MS, INGEST_REFUSAL_NAMESPACE, createSupplierReplyIngestService, orderNumbersIn, supplierReplyIngestEnabled, supplierReplyIngestPerDay } from '../services/supplier-reply-ingest.mjs'
 import { supplierReplyCardSchema, supplierReplyPasteRequestSchema } from '../../shared/supplier-reply-contract.mjs'
 
 // Supplier replies without pasting (docs/supplier-reply-ingest-api.md): a
@@ -55,11 +55,17 @@ function store({ tenants = {}, users = [], orders = [], replies = [], publicData
       findMany: async ({ where }) => records.filter((row) => row.tenantId === where.tenantId && row.namespace === where.namespace),
       create: async ({ data }) => {
         if (records.some((row) => row.tenantId === data.tenantId && row.namespace === data.namespace && row.recordKey === data.recordKey)) throw Object.assign(new Error('Unique constraint failed'), { code: 'P2002' })
-        const row = { ...data, createdAt: new Date() }
+        const row = { ...data, createdAt: new Date(), updatedAt: new Date(Date.now() + records.length) }
         records.push(row)
         return row
       },
-      update: async ({ where, data }) => Object.assign(found(where), data),
+      update: async ({ where, data }) => Object.assign(found(where), data, { updatedAt: new Date(Date.now() + records.length + 1) }),
+      updateMany: async ({ where, data }) => {
+        const row = records.find((entry) => entry.tenantId === where.tenantId && entry.namespace === where.namespace && entry.recordKey === where.recordKey && entry.updatedAt.getTime() === new Date(where.updatedAt).getTime())
+        if (!row) return { count: 0 }
+        Object.assign(row, data, { updatedAt: new Date(row.updatedAt.getTime() + 1) })
+        return { count: 1 }
+      },
       upsert: async ({ where, create, update }) => {
         const row = found(where)
         if (row) return Object.assign(row, update)
@@ -135,6 +141,24 @@ test('a token reads fcsr.<workspace>.<id>.<secret>; only the hash, a hint and it
 test('a sender is on record by the same address, or the same company domain but never a public mailbox domain', () => {
   assert.equal(senderAddress('Pat Lee <Pat@Acme.example>'), 'pat@acme.example')
   assert.equal(senderAddress('not an address'), null)
+  // The address is the one angle address outside quoted display names and comments.
+  for (const [from, address] of [
+    ['"<orders@acme.example>" <x@evil.example>', 'x@evil.example'],
+    ['x@evil.example (<orders@acme.example>)', 'x@evil.example'],
+    ['"Acme, Sales" <sales@acme.example>', 'sales@acme.example'],
+    ['Acme (Sales) <sales@acme.example>', 'sales@acme.example'],
+    ['<orders@acme.example> <x@evil.example>', null],
+    ['<x@evil.example> orders@acme.example', null],
+    ['orders@acme.example, x@evil.example', null],
+    ['Group: orders@acme.example;', null],
+    ['"unbalanced <orders@acme.example>', null],
+    ['"quoted local"@acme.example', null],
+  ]) assert.equal(senderAddress(from), address, from)
+  assert.equal(senderOnRecord('"<orders@acme.example>" <x@evil.example>', 'orders@acme.example'), false)
+  assert.equal(senderOnRecord('x@evil.example (<orders@acme.example>)', 'orders@acme.example'), false)
+  for (const domain of ['gmail.com', 'yahoo.co.uk', 'hotmail.co.uk', 'live.co.uk', 'yandex.ru', 'zoho.com', 'mail.ru', 'gmx.de', 'web.de', '139.com', 'qq.com']) assert.equal(publicMailDomain(domain), true, domain)
+  for (const domain of ['acme.example', 'mail.acme.example', 'acme.co.uk']) assert.equal(publicMailDomain(domain), false, domain)
+  assert.equal(senderOnRecord('someone@yahoo.co.uk', 'acme@yahoo.co.uk'), false)
   assert.equal(senderOnRecord('Pat <pat@acme.example>', 'orders@acme.example'), true)
   assert.equal(senderOnRecord('orders@acme.example', 'Orders@ACME.example'), true)
   assert.equal(senderOnRecord('mallory@evil.example', 'orders@acme.example'), false)
@@ -227,9 +251,12 @@ test('a reply is refused when it names no order, an unknown one, or two open one
   // A Message-ID must be printable ASCII.
   await assert.rejects(() => send(service, token, { text: 'PO-202611-0012 ships Friday.', messageId: '<回复@acme.example>' }), { code: 'SUPPLIER_REPLY_INGEST_INVALID' })
   assert.equal(paste.calls.length, 0)
+  // One audit row for the token's first refusal this hour; the hour's record counts the rest.
   const refused = prisma.audit.filter((row) => row.action === 'supplier_reply_ingest_refused')
-  assert.deepEqual(refused.map((row) => row.metadata.code), ['SUPPLIER_REPLY_INGEST_NO_ORDER', 'SUPPLIER_REPLY_INGEST_ORDER_NOT_FOUND', 'SUPPLIER_REPLY_INGEST_SEVERAL_ORDERS', 'SUPPLIER_REPLY_INGEST_INVALID', 'SUPPLIER_REPLY_INGEST_INVALID'])
-  assert.ok(refused.every((row) => row.tenantId === TENANT && row.actorId === 'admin' && !JSON.stringify(row).includes('Friday')))
+  assert.deepEqual(refused.map((row) => [row.metadata.code, row.actorId, row.tenantId]), [['SUPPLIER_REPLY_INGEST_NO_ORDER', 'admin', TENANT]])
+  const hour = prisma.records.find((row) => row.namespace === INGEST_REFUSAL_NAMESPACE)
+  assert.deepEqual(hour.payload.counts, { SUPPLIER_REPLY_INGEST_NO_ORDER: 1, SUPPLIER_REPLY_INGEST_ORDER_NOT_FOUND: 1, SUPPLIER_REPLY_INGEST_SEVERAL_ORDERS: 1, SUPPLIER_REPLY_INGEST_INVALID: 2 })
+  assert.ok(!JSON.stringify([refused, hour]).includes('Friday'))
 })
 
 test('the same message twice is kept once, also while the first is still being read', async () => {
@@ -254,6 +281,16 @@ test('the same message twice is kept once, also while the first is still being r
   const later = await send(racing, token, { text: 'PO-202611-0012 ships Monday.', messageId: '<retry@acme.example>' })
   assert.deepEqual([later.body.duplicate, later.body.pending, later.body.replyId], [true, false, 'reply-1'])
 
+  // A claim left by a reading that never finished is taken over once it is stale.
+  const key = integrationMessageKey('<stuck@acme.example>')
+  prisma.records.push({ id: 'stuck', tenantId: TENANT, namespace: INTEGRATION_MESSAGE_NAMESPACE, recordKey: key, payload: { replyId: null, tokenId: 'old', claimedAt: new Date(NOW - 60 * 1000).toISOString() }, createdAt: new Date(NOW), updatedAt: new Date(NOW - 60 * 1000) })
+  const young = await send(service, token, { text: 'PO-202611-0012 ships Monday.', messageId: '<stuck@acme.example>' })
+  assert.deepEqual([young.body.duplicate, young.body.pending], [true, true])
+  prisma.records.find((row) => row.recordKey === key).payload.claimedAt = new Date(NOW - INGEST_CLAIM_STALE_MS - 1000).toISOString()
+  const taken = await send(service, token, { text: 'PO-202611-0012 ships Monday.', messageId: '<stuck@acme.example>' })
+  assert.deepEqual([taken.status, taken.body.duplicate], [201, false])
+  assert.equal(prisma.records.find((row) => row.recordKey === key).payload.replyId, taken.body.replyId)
+
   // A failed reading frees the message for a retry.
   const failing = createSupplierReplyIngestService({ prisma, replies: { pasteReply: async () => { throw Object.assign(new Error('closed'), { status: 409, code: 'SUPPLIER_REPLY_ORDER_NOT_OPEN' }) } }, env: {}, now: () => new Date(NOW), resolveActor })
   await assert.rejects(() => send(failing, token, { text: 'PO-202611-0012 ships Tuesday.', messageId: '<free@acme.example>' }), { code: 'SUPPLIER_REPLY_ORDER_NOT_OPEN' })
@@ -268,8 +305,20 @@ test('every unaccepted token gets the same 401: missing, malformed, unknown, wro
   for (const authorization of [undefined, '', 'Bearer nope', `${prefix}.${workspace}.${tokenId}.${'B'.repeat(43)}`, `${prefix}.${workspace}.${ID}.${SECRET}`, `${prefix}.${Buffer.from('other-tenant').toString('base64url')}.${tokenId}.${secret}`]) {
     await assert.rejects(() => send(service, authorization, body), { code: 'INTEGRATION_TOKEN_INVALID', status: 401 }, String(authorization))
   }
-  // A wrong secret for a real token is audited in its workspace.
-  assert.ok(prisma.audit.some((row) => row.action === 'supplier_reply_ingest_refused' && row.metadata.tokenId === tokenId && row.metadata.code === 'INTEGRATION_TOKEN_INVALID'))
+  // A wrong secret for a real token is audited in its workspace once this
+  // hour, with no actor: nobody is known before the secret is checked.
+  const wrong = prisma.audit.filter((row) => row.action === 'supplier_reply_ingest_refused' && row.metadata.tokenId === tokenId)
+  assert.deepEqual(wrong.map((row) => [row.metadata.code, row.actorId]), [['INTEGRATION_TOKEN_INVALID', null]])
+  for (let at = 0; at < 20; at += 1) await assert.rejects(() => send(service, `${prefix}.${workspace}.${tokenId}.${'C'.repeat(43)}`, body), { status: 401 })
+  assert.equal(prisma.audit.filter((row) => row.action === 'supplier_reply_ingest_refused' && row.metadata.tokenId === tokenId).length, 1)
+
+  // The admin's permissions now are checked on each use: losing workspace
+  // management or order revision through a role assignment ends the token.
+  actors.admin = [REVISE]
+  await assert.rejects(() => send(service, token, body), { code: 'INTEGRATION_TOKEN_INVALID' })
+  actors.admin = [MANAGE]
+  await assert.rejects(() => send(service, token, body), { code: 'INTEGRATION_TOKEN_INVALID' })
+  actors.admin = [MANAGE, REVISE]
 
   const admin = prisma.users.find((user) => user.id === 'admin')
   admin.role = 'manager'
@@ -380,7 +429,7 @@ test('the routes answer 404 unless the server switches them on; the ingest route
 test('an emailed reply never replaces an open card, and its card shows the sender and whether it is on record', () => {
   const service = read('server/services/supplier-reply-service.mjs')
   assert.match(service, /source: origin\?\.source === 'email' \? 'email' : 'paste'/)
-  assert.match(service, /const takesOver = open && read\.readingStatus === 'read' && origin\?\.source !== 'email'/)
+  assert.match(service, /const takesOver = open && read\.readingStatus === 'read' && !emailed/)
   assert.match(service, /senderOnRecord: row\.source === 'email' \? senderOnRecord\(row\.sender, supplierEmail\) : null,/)
   // The paste route passes no origin, and the paste body allows text and receivedOn only.
   assert.doesNotMatch(read('server/routes/supplier-replies.routes.mjs'), /origin/)
@@ -392,5 +441,9 @@ test('an emailed reply never replaces an open card, and its card shows the sende
   assert.match(card, /card\.source === "email" && card\.sender \? t\("from", \{ sender: card\.sender \}\) : null/)
   assert.match(card, /card\.source === "email" && card\.senderOnRecord === false \? <p [^>]*data-testid="supplier-reply-sender-not-on-record">\{t\("senderNotOnRecord"\)\}<\/p>/)
   const copy = read('src/modules/purchasing/supplierReply/supplierReplyCopy.ts')
-  assert.match(copy, /senderNotOnRecord: \["The sender is not this supplier's email on record\.[^"]*", "发件人不是该供应商记录中的邮箱。[^"]*"\],/)
+  assert.match(copy, /senderNotOnRecord: \["The sender is not this supplier's email on record, so this reply is not offered for recording\.[^"]*", "发件人不是该供应商记录中的邮箱，因此这封回复不能在这里记录。[^"]*"\],/)
+  // Nor does a reply from a sender not on record become the order's card.
+  assert.match(service, /const senderKnown = !emailed \|\| senderOnRecord\(origin\.sender, await supplierEmailOf\(client, actor\.tenantId, order\)\)/)
+  assert.match(service, /active = open && senderKnown && \(takesOver \|\| !previous\.length\)/)
+  assert.match(service, /sender: row\.source === 'email' \? senderAddress\(row\.sender\) \|\| text\(row\.sender\)\.slice\(0, 320\) \|\| null : null,/)
 })

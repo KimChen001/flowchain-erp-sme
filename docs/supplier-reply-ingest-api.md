@@ -18,11 +18,15 @@ the reply then takes the paste path:
 Two things differ from a paste, because anyone who can write to the forwarded
 mailbox can reach the endpoint:
 
-- **The sender is checked.** The card shows the sender, and says so when it is
-  not the supplier's email on record: the same address, or the same company
-  domain (never a public mailbox domain such as gmail.com).
-- **An emailed reply never replaces an open card.** It becomes the card only
-  when the order has none; otherwise it is kept beside it.
+- **The sender is checked.** The From value is read as RFC 5322 has it:
+  quoted display names and comments are set aside, and it must name exactly
+  one address (one angle address, or a bare one). That address is on record
+  when it is the supplier's email, or on the same company domain. A public
+  mailbox domain (gmail.com, yahoo.co.uk, gmx.de, yandex.ru, qq.com and the
+  like) matches only the whole address. The card shows the address.
+- **An emailed reply never replaces an open card**, and one whose sender is
+  not on record never becomes the card at all. It is kept and listed with a
+  note; a person who knows it is genuine pastes it on the order.
 
 ## Switching it on
 
@@ -52,14 +56,20 @@ A workspace also needs:
   acts as another member. Every check of the paste path runs as that admin,
   so a token can do no more than its admin, and only this one action.
 - **A token stops working** when it expires (90 days by default, 1 to 365 as
-  the admin chooses), when it is revoked, or when its admin is disabled or
-  changes role, as the local MCP token (#391) does.
+  the admin chooses), when it is revoked, or when its admin is disabled,
+  changes role, or no longer holds `settings.workspace.manage` and
+  `procurement.purchase_order.revise` (checked on every use, so a change of
+  role assignments counts too), as the local MCP token (#391) does.
 - A workspace holds at most five active tokens. They are counted and created
   in one serializable transaction.
 - Every refused token gets the same 401, whether it is missing, malformed,
   unknown, wrong, expired or revoked.
 - Refusals are audited (`supplier_reply_ingest_refused`, codes and ids only)
-  once the token's workspace is known.
+  once the token's workspace is known: the first refusal of a token in an
+  hour is an audit row, and the rest of that hour are counted by code in a
+  runtime record (`integration.supplier-reply-refusals`), so posting wrong
+  secrets cannot flood the audit log. No actor is recorded until the secret
+  is right.
 
 ## Routes
 
@@ -101,7 +111,9 @@ Content-Type: application/json
 - `messageId` is optional, printable ASCII. The same message sent twice is
   kept once. The message is claimed before the reading, so a retry while the
   first copy is read gets `duplicate: true, pending: true` and no second
-  reading. A reading that fails frees the message for a retry.
+  reading. A reading that fails frees the message for a retry, and a claim
+  left by a reading that never finished (the process stopped) is taken over
+  by a retry after three minutes.
 - `receivedOn` is optional, today in the workspace by default, within the
   last 60 days.
 
@@ -127,8 +139,13 @@ The answer carries ids and codes only:
 
 The daily number counts the emailed replies kept in the database, after the
 request is checked, so refused requests do not use it up and every server
-process sees the same count. Two requests at the same moment may each pass it
-by one.
+process sees the same count. It is checked before the reading, so N requests
+read at the same moment can pass it by up to N − 1.
+
+Replies from senders not on record count too: whoever can write to the
+forwarded mailbox can use up the day's number, though such replies never
+become a card. Counting only replies from senders on record would leave
+those unlimited instead.
 
 ## Not done in this draft
 

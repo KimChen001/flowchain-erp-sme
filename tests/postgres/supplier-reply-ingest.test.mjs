@@ -127,7 +127,8 @@ test('a token made by an admin brings a supplier reply onto its order as an emai
     for (const card of cards.values()) assert.ok(supplierReplyCardSchema.safeParse(card).success)
     const genuine = cards.get(sent.payload.replyId)
     const impostor = cards.get(forged.payload.replyId)
-    assert.deepEqual([genuine.source, genuine.sender, genuine.senderOnRecord, genuine.canDecide], ['email', 'Pat <pat@acme-e.example>', true, true])
+    // The card shows the address itself, not the display name.
+    assert.deepEqual([genuine.source, genuine.sender, genuine.senderOnRecord, genuine.canDecide], ['email', 'pat@acme-e.example', true, true])
     assert.deepEqual([impostor.sender, impostor.senderOnRecord, impostor.canDecide], ['mallory@evil.example', false, false])
     assert.equal((await prisma.supplierReply.findFirst({ where: { tenantId: tenantE, id: sent.payload.replyId } })).activeKey, 'PO-E')
 

@@ -26,7 +26,7 @@ import { aiCallCostMicros, aiUsagePrices, recordAiProviderCall } from '../domain
 import { withAiWorkspaceAccess } from '../domain/ai-workspace-access.mjs'
 import { addWorkdays } from '../domain/decision-items.mjs'
 import { localDevelopmentEnabled } from '../domain/local-development-contract.mjs'
-import { senderOnRecord } from '../domain/integration-tokens.mjs'
+import { senderAddress, senderOnRecord } from '../domain/integration-tokens.mjs'
 import { ITEM_SUPPLIER_NAMESPACE, mapItemSupplierRecord } from '../domain/master-data-commands.mjs'
 import { resolveProvisionedActor } from '../domain/pilot-identity.mjs'
 import { procurementReadAccessFor } from '../domain/procurement-read-access.mjs'
@@ -198,7 +198,9 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
       source: row.source,
       // An emailed reply shows who sent it, and whether that is the
       // supplier's email on record (docs/supplier-reply-dates-design.md §4.11).
-      sender: row.source === 'email' ? text(row.sender) || null : null,
+      // The address itself (display names and comments set aside), or the
+      // From value as received when it names no single address.
+      sender: row.source === 'email' ? senderAddress(row.sender) || text(row.sender).slice(0, 320) || null : null,
       senderOnRecord: row.source === 'email' ? senderOnRecord(row.sender, supplierEmail) : null,
       receivedOn: row.receivedOn,
       createdAt: new Date(row.createdAt).toISOString(),
@@ -287,7 +289,12 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
     // open reply (an outage's manual form too) becomes the card.
     // An emailed reply never replaces an open card: anyone who can write to
     // the forwarded mailbox could otherwise push the supplier's own reply aside.
-    const takesOver = open && read.readingStatus === 'read' && origin?.source !== 'email'
+    const emailed = origin?.source === 'email'
+    const takesOver = open && read.readingStatus === 'read' && !emailed
+    // Nor does one from a sender who is not the supplier's email on record
+    // become the card: it is kept and listed, and a person who knows it is
+    // genuine pastes it.
+    const senderKnown = !emailed || senderOnRecord(origin.sender, await supplierEmailOf(client, actor.tenantId, order))
     let superseded = []
     let active = false
     try {
@@ -295,7 +302,7 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
         const previous = await tx.supplierReply.findMany({ where: { tenantId: actor.tenantId, purchaseOrderId: order.id, activeKey: { not: null } }, select: { id: true } })
         if (takesOver) superseded = previous.map((row) => row.id)
         if (superseded.length) await tx.supplierReply.updateMany({ where: { tenantId: actor.tenantId, id: { in: superseded } }, data: { state: 'superseded', activeKey: null, supersededById: id } })
-        active = open && (takesOver || !previous.length)
+        active = open && senderKnown && (takesOver || !previous.length)
         await tx.supplierReply.create({
           data: {
             id, tenantId: actor.tenantId, purchaseOrderId: order.id, supplierId: text(order.supplierId) || null, activeKey: active ? order.id : null,
