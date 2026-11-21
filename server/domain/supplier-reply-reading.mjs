@@ -752,9 +752,11 @@ export function linesNamedInQuote(order, quote) {
 // Read with its line breaks kept (quoteForm folds them), so the items of a
 // list stay apart. A comma ends no clause only when what stands before it,
 // back to the previous break (or to a bracket still open), is a bare item (a
-// code or a name and nothing else): "82494L, 82583 and 82600 on 30 Nov",
-// "all three lines (82494L, 82583, 82600) on 30 Nov" and "Hinges, brackets
-// ship 4 Dec" are one clause; "10 Dec for 85123A, 20727 on 4 Dec" is two.
+// code or a name and nothing else), and the clause it would join holds one
+// date at most: "82494L, 82583 and 82600 on 30 Nov", "all three lines
+// (82494L, 82583, 82600) on 30 Nov" and "Hinges, brackets ship 4 Dec" are one
+// clause; "10 Dec for 85123A, 20727 on 4 Dec" and "10 Dec (85123A, 20727 on
+// 4 Dec)" are two.
 const quoteSource = (quote) => String(quote ?? '').normalize('NFKC').replace(INVISIBLE, '').replace(/\r\n?/g, '\n').replace(/[ \t]+/g, ' ').toLowerCase()
 // A list opened by a bracket still open at the comma ("all three lines
 // (82494L, 82583, …") starts after that bracket; a bracket closed before
@@ -769,25 +771,29 @@ function bareItem(segment, lines) {
     return lineCodes(line).includes(item) || (name && (item === name || item === `${name}s` || item === `${name}es`))
   })
 }
-// The clauses of a source, in order, as [start, end) places.
+// The clauses of a source, in order, as [start, end) places. joins(segment
+// before the mark, the mark, the clause joining would make up to the next mark).
 function clausePlaces(source, breaks, joins) {
+  const marks = [...source.matchAll(breaks)]
   const places = []
   let start = 0
   let previous = 0
-  for (const mark of source.matchAll(breaks)) {
-    const joined = joins(source.slice(previous, mark.index), mark)
+  marks.forEach((mark, at) => {
+    const next = at + 1 < marks.length ? marks[at + 1].index : source.length
+    const joined = joins(source.slice(previous, mark.index), mark, source.slice(start, next))
     previous = mark.index + mark[0].length
-    if (joined) continue
+    if (joined) return
     places.push([start, mark.index])
     start = mark.index + mark[0].length
-  }
+  })
   places.push([start, source.length])
   return places
 }
-function partsOf(quote, order) {
+const datesIn = (value, receivedOn) => new Set(datesWithPlaces(value, receivedOn).map((row) => row.date).filter(Boolean)).size
+function partsOf(quote, order, receivedOn) {
   const source = quoteSource(quote)
   const lines = array(order?.lines)
-  const listComma = (segment, mark) => /^[,，]$/.test(mark[0]) && bareItem(segment, lines)
+  const listComma = (segment, mark, joined) => /^[,，]$/.test(mark[0]) && bareItem(segment, lines) && datesIn(joined, receivedOn) <= 1
   return {
     source,
     clauses: clausePlaces(source, CLAUSE_BREAK, listComma),
@@ -796,29 +802,13 @@ function partsOf(quote, order) {
 }
 const placeAround = (places, from, to) => places.find(([start, end]) => start <= from && to <= end) || [places.find(([start, end]) => start <= from && from < end)?.[0] ?? 0, places.find(([start, end]) => start < to && to <= end)?.[1] ?? Infinity]
 function dateParts(quote, date, receivedOn, order) {
-  const { source, clauses, sentences } = partsOf(quote, order)
+  const { source, clauses, sentences } = partsOf(quote, order, receivedOn)
   const place = date ? datesWithPlaces(source, receivedOn).find((row) => row.date === date && Number.isInteger(row.index)) : null
   if (!place) return { clause: source, sentence: source }
   const to = place.index + place.phrase.length
   const [clauseStart, clauseEnd] = placeAround(clauses, place.index, to)
   const [sentenceStart, sentenceEnd] = placeAround(sentences, place.index, to)
   return { clause: source.slice(clauseStart, clauseEnd), sentence: source.slice(sentenceStart, sentenceEnd) }
-}
-// Whether the quote ties the line to another date: a clause that names the
-// line writes dates, none of them the one given ("85123A ships 10 Dec,
-// 20727 ships 4 Dec": 4 Dec is not 85123A's).
-function lineDatedOtherwise(order, quote, ref, date, receivedOn) {
-  if (!date) return false
-  const { source, clauses } = partsOf(quote, order)
-  const line = array(order?.lines).find((row) => row.ref === ref)
-  if (!line) return false
-  return clauses.some(([start, end]) => {
-    const clause = source.slice(start, end)
-    const named = lineCodes(line).some((code) => codeMentions(clause, code).length) || nameMentions(clause, line).length > 0
-    if (!named) return false
-    const dates = datesWithPlaces(clause, receivedOn).map((row) => row.date).filter(Boolean)
-    return dates.length > 0 && !dates.includes(date)
-  })
 }
 // One item's code and name side by side that point to different lines.
 function codeNameConflict(form, { codes, names }) {
@@ -835,7 +825,6 @@ const refsOf = ({ codes, names }) => new Set([...codes, ...names].map((mention) 
 // Whether the date given to line `ref` belongs, by the quote's own words, to
 // another line (see above).
 export function lineNamedElsewhere(order, quote, ref, { date = null, receivedOn = null } = {}) {
-  if (lineDatedOtherwise(order, quote, ref, date, receivedOn)) return true
   const parts = dateParts(quote, date, receivedOn, order)
   const clause = quoteForm(parts.clause)
   const inClause = linesNamedInQuote(order, clause)

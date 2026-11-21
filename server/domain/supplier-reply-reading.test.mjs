@@ -692,7 +692,28 @@ test('the line check holds dates put on the wrong line however the reply orders 
     [zhNames, '12月10日交铰链，支架12月4日交', 'L1', D4, true],
     [codes, 'Everything ships 10 Dec except 85123A, 20727 ships 4 Dec', 'L2', D4, false],
     [codes, 'Everything ships 10 Dec except 85123A, 20727 ships 4 Dec', 'L3', D10, false],
-    [codes, 'Everything ships 10 Dec except 85123A, 20727 ships 4 Dec', 'L2', D10, true],
+    // Known gap, as before this check: "Everything ships 10 Dec except 85123A,
+    // 20727 ships 4 Dec" with 10 Dec on L2 is proposed. A rule for it held
+    // correct "was 12 Nov, now 4 Dec" replies, which are far more common.
+    // A bracket opened after a date does not make a list of the next clause.
+    [codes, '10 Dec for (85123A, 20727 on 4 Dec', 'L1', D4, true],
+    [codes, '10 Dec for (85123A, 20727 on 4 Dec', 'L2', D10, true],
+    [codes, 'ETA (85123A, 20727 4 Dec; 22423 10 Dec)', 'L1', D10, true],
+    [codes, 'ETA (85123A, 20727 4 Dec; 22423 10 Dec)', 'L3', D4, true],
+    [codes, '10 Dec (85123A, the rest 4 Dec)', 'L1', D4, true],
+    [codes, 'Delivery 10 Dec (85123A, 20727 follows on 4 Dec)', 'L1', D4, true],
+    // A line's old date next to its new one is no other line's date.
+    [codes, '85123A was due 12 Nov, now ships 4 Dec', 'L1', D4, false],
+    [codes, '85123A moved from 12 Nov to 4 Dec', 'L1', D4, false],
+    [codes, '85123A ships next Wednesday, not 12 Nov', 'L1', '2026-11-25', false],
+    [codes, '85123A: next Wednesday instead of 12 Nov', 'L1', '2026-11-25', false],
+    [codes, '85123A ships Thu 4 Dec', 'L1', D4, false],
+    [codes, '85123A ships Thursday, 4 Dec', 'L1', D4, false],
+    [codes, '85123A ships 4–5 Dec', 'L1', '2026-12-05', false],
+    [codes, '85123A: original 12 Nov, revised 4 Dec', 'L1', D4, false],
+    [codes, '85123A原定11月12日，改为12月4日', 'L1', D4, false],
+    [codes, '85123A 6 pcs 4 Dec, 85123A 4 pcs 10 Dec', 'L1', D4, false],
+    [codes, '85123A, invoiced 10 Nov, ships 4 Dec', 'L1', D4, false],
     [codes, '85123A, 20727 ship 10 Dec, the rest 4 Dec', 'L1', D4, true],
     [three, 'We confirm delivery of all three lines (82494L, 82583, 82600) on 30 November', 'L2', D30, false],
     [three, '82494L, 82583 and 82600 ship on 30 November', 'L1', D30, false],
@@ -702,6 +723,9 @@ test('the line check holds dates put on the wrong line however the reply orders 
   for (const [lines, quote, ref, date, held] of cases) {
     assert.equal(lineNamedElsewhere(lines, quote, ref, { date, receivedOn: '2026-11-17' }), held, `${quote} | ${ref} ${date}`)
   }
+  // End to end: a was/now reply is proposed on its line.
+  const wasNow = checkReplyReading({ order: codes, text: 'Hi, 85123A was due 12 Nov, now ships 4 Dec. Thanks', receivedOn: '2026-11-17', reading: reading([{ line: 'L1', date: D4, quote: '85123A was due 12 Nov, now ships 4 Dec', dateKind: 'stated' }]) })
+  assert.deepEqual(outcomes(wasNow), [['L1', 'proposed', null, D4]])
   // End to end: a reading that swaps the two dates proposes neither.
   for (const [reply, quote] of [['Hello, 10 Dec for 85123A, 20727 on 4 Dec. Regards', '10 Dec for 85123A, 20727 on 4 Dec'], ['New ETAs (85123A 10 Dec, 20727 4 Dec). Thanks', 'New ETAs (85123A 10 Dec, 20727 4 Dec)']]) {
     const swapped = checkReplyReading({ order: codes, text: reply, receivedOn: '2026-11-17', reading: reading([{ line: 'L1', date: D4, quote, dateKind: 'stated' }, { line: 'L2', date: D10, quote, dateKind: 'stated' }]) })
