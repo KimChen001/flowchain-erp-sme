@@ -3,7 +3,7 @@ import React from "react";
 import { X } from "lucide-react";
 import { A, Card, Chip } from "../ui";
 import { StatusChip } from "../ui/listLayout";
-import { statusToneOf } from "../ui/statusTones";
+import { STATUS_TONE_COLORS, statusToneOf } from "../ui/statusTones";
 import { RelatedRecordsPanel } from "../navigation/RelatedRecordsPanel";
 import { resolveBusinessLinkedRecord, type BusinessLinkedRecord, type BusinessLinkedRecordInput } from "../../lib/businessLinks";
 import type { WorkflowContext } from "../../lib/workflowContext";
@@ -51,8 +51,8 @@ export type EvidenceRow = {
 
 export function documentToneStyle(tone: DocumentTone = "neutral") {
   if (tone === "success") return { color: A.success, bg: "#f0fdfa" };
-  if (tone === "warning") return { color: A.orange, bg: "#fff8f0" };
-  if (tone === "danger") return { color: A.red, bg: "#fff1f0" };
+  if (tone === "warning") return { color: STATUS_TONE_COLORS.warning.color, bg: "#fff8f0" };
+  if (tone === "danger") return { color: A.danger, bg: "#fff1f0" };
   if (tone === "purple") return { color: A.purple, bg: "#faf3ff" };
   if (tone === "info") return { color: A.blue, bg: "#f0f6ff" };
   return { color: A.gray1, bg: A.gray6 };

@@ -865,7 +865,7 @@ export default function SupplierMasterPage({
           </Field>
       </ListSearchCard>
 
-      <ListCard title={copy("Supplier list")} total={sortedRows.length} shown={supplierPage.pageRows.length} testId="supplier-list">
+      <ListCard title={copy("Supplier list")} total={error || (loading && rows.length === 0) ? undefined : sortedRows.length} shown={supplierPage.pageRows.length} testId="supplier-list">
         <div className="flex flex-wrap items-end gap-3 px-4 pt-2 sm:px-5" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
           <div role="tablist" aria-label={copy("Supplier list")} className="flex flex-wrap gap-1">
             {LIST_TABS.map((item) => (
