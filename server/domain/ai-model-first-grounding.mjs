@@ -656,7 +656,10 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
   // (a drafted message) included: "steps 1 and 2" points into them.
   const listItems = Math.max(0, ...[...figuresText(body).matchAll(LIST_ITEM)].map((match) => Number(match[1])))
   // List marks go, also inside a quoted draft ("> 3. The reason for the delay").
-  let rest = figuresText(`${title}\n${body}`).replace(/^\s*(?:>\s*)*(?:\d{1,2}[.)]|[-*•])\s+/gm, ' ')
+  // The answer's text before any record, name or term is blanked out, so a
+  // date is read only where it is written in one piece.
+  const unmasked = figuresText(`${title}\n${body}`).replace(/^\s*(?:>\s*)*(?:\d{1,2}[.)]|[-*•])\s+/gm, ' ')
+  let rest = unmasked
     // Payment terms are a term, not a figure: "Net 30", "2/10 net 30", 月结 30 天.
     .replace(PAYMENT_TERMS, (match) => ' '.repeat(match.length))
   const blank = (match) => ' '.repeat(match.length)
@@ -730,6 +733,10 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
   }
   for (const { pattern, read } of DATE_PATTERNS) {
     rest = rest.replace(pattern, (...match) => {
+      // A month and a day joined across a blanked record or name are no date
+      // (2026-11-22 probe review: "September … 29" read as 29 September).
+      const at = offsetOf(match)
+      if ([...match[0]].some((char, index) => char === ' ' && unmasked[at + index] !== undefined && !/\s/.test(unmasked[at + index]))) return match[0]
       const date = read(match, dayFirst)
       if (!date.month || date.month > 12 || (date.day !== null && (date.day < 1 || date.day > 31))) return match[0]
       if (date.endDay !== undefined && (date.endDay <= date.day || date.endDay > 31)) return match[0]

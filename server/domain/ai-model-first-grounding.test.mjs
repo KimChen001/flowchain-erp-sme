@@ -54,6 +54,23 @@ test('a list count counts only its noun\'s kind: items, record numbers or names'
   assert.deepEqual(flagged('共 3 项：21137、21498、PO-202610-0028。'), [])
 })
 
+// 2026-11-22 probe review: the masks that blank a record or a name left
+// spaces, so a month and a number on either side read as one date.
+test('a date is read only where it is written in one piece, never across a record or a name', () => {
+  const results = [{ rows: [{ orderNumber: 'PO-202610-0028', promisedDate: '2026-10-14', ref: { type: 'purchase_order', id: 'UCI-PO-329', label: 'PO-202610-0028' } }, { orderNumber: 'PO-202610-0031', promisedDate: '2026-10-16', ref: { type: 'purchase_order', id: 'UCI-PO-331', label: 'PO-202610-0031' } }], total: 2, more: 0 }]
+  const flagged = (answer) => kinds(check(answer, results)).filter((row) => row.startsWith('number:') || row.startsWith('date:'))
+  // Written in one piece: read as dates, as before.
+  assert.deepEqual(flagged('PO-202610-0028 was promised for 14 Oct 2026.'), [])
+  assert.deepEqual(flagged('PO-202610-0031 is due on October 16.'), [])
+  assert.deepEqual(flagged('PO-202610-0028 承诺交期 10 月 14 日。'), [])
+  // A month written alone beside a record is still a month.
+  assert.deepEqual(flagged('10 月 PO-202610-0028 还有未到的货。'), [])
+  assert.deepEqual(flagged('In October PO-202610-0028 is still open.'), [])
+  // A month and a number either side of a record are no date: the number is a figure.
+  assert.deepEqual(flagged('Sales in October PO-202610-0028 30 units.'), ['number:30'])
+  assert.deepEqual(flagged('10 月 PO-202610-0028 30 日到货。'), ['number:10', 'number:30 日'])
+})
+
 test('false positive fixed: a count a document passage writes as a word grounds the same count in figures', () => {
   const escalation = policy('Escalate when the supplier has not responded for two business days, or when a customer delivery within three business days is affected.')
   assert.deepEqual(kinds(check('政策规定，供应商两个工作日内未回复，或 3 个工作日内的客户交付受影响时，才需升级。', [escalation])), [])
