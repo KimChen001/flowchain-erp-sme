@@ -205,14 +205,20 @@ function stubImap(mails, { capabilities = ['IMAP4rev1', 'MOVE'], sizes = {} } = 
     async logout() {}
     async mailboxCreate() {}
     async getMailboxLock() { return { release() {} } }
-    async search(query, options) { assert.deepEqual([query, options], [{ seen: false }, { uid: true }]); return [...mails.keys()].filter((uid) => !seen.has(uid)) }
     async fetchAll(range, query, options) {
       assert.deepEqual(options, { uid: true })
-      const uids = range.split(',').map(Number)
       if (query.envelope) {
+        // The unread messages by a search, never a list of UIDs.
+        assert.deepEqual(range, { seen: false })
         fetched.envelopes += 1
-        return uids.map((uid) => { const mail = mails.get(uid); return { uid, size: sizes[uid] || 1000, envelope: { messageId: mail.messageId, subject: mail.subject, date: new Date(mail.date), from: [{ address: mail.from.value[0].address }] } } })
+        return [...mails.keys()].filter((uid) => !seen.has(uid)).map((uid) => {
+          const mail = mails.get(uid)
+          // As imapflow gives it: a Date, or the header's string when it does not parse.
+          const date = Number.isNaN(Date.parse(mail.date)) ? mail.date : new Date(mail.date)
+          return { uid, size: sizes[uid] || 1000, envelope: { messageId: mail.messageId, subject: mail.subject, date, from: [{ address: mail.from.value[0].address }] } }
+        })
       }
+      const uids = range.split(',').map(Number)
       assert.equal(query.source, true)
       fetched.sources.push(...uids)
       return uids.map((uid) => ({ uid, source: Buffer.from(JSON.stringify(mails.get(uid))) }))
@@ -288,4 +294,47 @@ test('the example messages parse as a mailbox gives them, English and Chinese', 
   assert.deepEqual([rows[0][2].from, rows[0][2].receivedOn, rows[0][2].messageId], ['priya@acme-home.example', '2026-11-22', '<demo-0001-acme@acme-home.example>'])
   assert.match(rows[1][2].text, /PO-202611-0012 的货已经备好，12月3日安排发货/)
   assert.equal(rows[1][2].subject, '回复：PO-202611-0012 交期')
+})
+
+test('a message with no usable Message-ID and a Date that does not parse is handled, and the reply after it still goes', async () => {
+  const mails = new Map([
+    [31, mailOf({ messageId: '<ü@x>', date: 'not a date', text: 'PO-202610-0028 ships on 6 December.' })],
+    [32, mailOf({ messageId: '<after@x>' })],
+  ])
+  const imap = stubImap(mails)
+  const posted = []
+  const post = async (cfg, body) => { posted.push(body); return { outcome: 'sent', status: 201, replyId: 'r', orderNumber: null, retryAfter: null, code: null } }
+  assert.deepEqual(await runImap({ config: imapConfig(), ImapFlow: imap.StubImap, parse: parseJson, post, state: openState(null) }), { sent: 2, refused: 0, skipped: 0, later: 0 })
+  assert.deepEqual(posted.map((body) => [body.messageId.startsWith('<') && body.messageId.endsWith('@flowchain-mail-bridge.local>') ? 'made' : body.messageId, 'receivedOn' in body]), [['made', false], ['<after@x>', true]])
+  assert.match(envelopeKey({ messageId: '<ü@x>', date: 'not a date', subject: 's', from: [{ address: 'a@b' }] }, 10), /^env:/)
+})
+
+test('a message that cannot be read is skipped and logged; the others in the round go on', async () => {
+  const mails = new Map([[41, mailOf({ messageId: '<broken@x>' })], [42, mailOf({ messageId: '<fine@x>' })]])
+  const imap = stubImap(mails)
+  const parse = async (source) => { const mail = JSON.parse(source.toString()); if (mail.messageId === '<broken@x>') throw new TypeError('bad MIME'); return mail }
+  const lines = []
+  const posted = []
+  const post = async (cfg, body) => { posted.push(body.messageId); return { outcome: 'sent', status: 201, replyId: 'r', orderNumber: null, retryAfter: null, code: null } }
+  const state = openState(null)
+  assert.deepEqual(await runImap({ config: imapConfig(), ImapFlow: imap.StubImap, parse, post, state, log: (line) => lines.push(line) }), { sent: 1, refused: 0, skipped: 1, later: 0 })
+  assert.deepEqual([posted, state.has('<broken@x>'), lines.some((line) => /uid 41: could not be read \(TypeError\)/.test(line))], [['<fine@x>'], true, true])
+  // The same in a folder: the file moves to skipped/.
+  const dir = mkdtempSync(join(tmpdir(), 'mail-bridge-broken-'))
+  writeFileSync(join(dir, 'broken.eml'), 'not json at all')
+  writeFileSync(join(dir, 'fine.eml'), JSON.stringify(mailOf({ messageId: '<fine2@x>' })))
+  assert.deepEqual(await runFolder({ dir, config: imapConfig(), parse: parseJson, post, state: openState(null) }), { sent: 1, refused: 0, skipped: 1, later: 0 })
+  assert.deepEqual(readdirSync(join(dir, 'skipped')), ['broken.eml'])
+})
+
+test('an id made for a message without a Message-ID uses its Date header as written, so it is the same on every retry', () => {
+  // mailparser puts the time of parsing in `date` when the header does not parse.
+  const asParsed = (now) => ({ ...mailOf({ messageId: '' }), date: now, headerLines: [{ key: 'date', line: 'Date: not a date' }] })
+  assert.equal(messageIdOf(asParsed(new Date('2026-11-22T10:00:00Z'))), messageIdOf(asParsed(new Date('2026-11-22T10:05:00Z'))))
+  assert.equal('receivedOn' in payloadOf(asParsed(new Date()), { timeZone: 'UTC' }).body, false)
+  // A header that parses gives the day received.
+  const fine = { ...mailOf({ messageId: '' }), date: new Date('2026-11-22T14:12:00Z'), headerLines: [{ key: 'date', line: 'Date: Sun, 22 Nov 2026 09:12:00 -0500' }] }
+  assert.equal(payloadOf(fine, { timeZone: 'America/New_York' }).body.receivedOn, '2026-11-22')
+  // A minus sign (U+2212) between the parts of an order number counts.
+  assert.equal(forwardable(mailOf({ subject: 'Hello', text: 'PO−202611−0012 ships' })).forward, true)
 })

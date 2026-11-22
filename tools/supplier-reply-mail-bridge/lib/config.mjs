@@ -26,7 +26,7 @@ const inside = (path, folder) => {
 export function checkoutRoots(checkout) {
   const roots = [checkout]
   try {
-    const listing = execFileSync('git', ['-C', checkout, 'worktree', 'list', '--porcelain'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+    const listing = execFileSync('git', ['-C', checkout, 'worktree', 'list', '--porcelain'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 })
     for (const line of listing.split(/\r?\n/)) if (line.startsWith('worktree ')) roots.push(line.slice('worktree '.length).trim())
   } catch { /* no git: this checkout only */ }
   return [...new Set(roots.map(realOf))]

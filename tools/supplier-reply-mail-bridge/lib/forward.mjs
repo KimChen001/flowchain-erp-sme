@@ -29,7 +29,7 @@ export function receivedDay(date, timeZone) {
 // in its subject or text, and, when senders are listed, comes from one of
 // them (an address, or a domain).
 export function forwardable(mail, { orderPrefix = 'PO', from = [] } = {}) {
-  const number = new RegExp(`\\b${orderPrefix}\\s*[-–—]?\\s*\\d{6}\\s*[-–—]\\s*\\d{4,6}\\b`, 'i')
+  const number = new RegExp(`\\b${orderPrefix}\\s*[-–—−]?\\s*\\d{6}\\s*[-–—−]\\s*\\d{4,6}\\b`, 'i')
   if (!number.test(`${mail?.subject || ''}\n${mail?.text || ''}`.normalize('NFKC'))) return { forward: false, why: 'no_order_number' }
   if (from.length) {
     const sender = senderOf(mail)
@@ -39,14 +39,22 @@ export function forwardable(mail, { orderPrefix = 'PO', from = [] } = {}) {
   return { forward: true, why: null }
 }
 
+// The Date header as the message wrote it. mailparser puts the current time
+// in `date` when the header does not parse, so `date` is not used for ids.
+export function rawDateOf(mail) {
+  const line = Array.isArray(mail?.headerLines) ? mail.headerLines.find((row) => String(row?.key).toLowerCase() === 'date')?.line : null
+  if (line) return String(line).replace(/^date:\s*/i, '').trim()
+  return typeof mail?.date === 'string' ? mail.date.trim() : ''
+}
+
 // The message's id for FlowChain: its Message-ID, or, when it has none (or
-// one FlowChain does not take), an id made from its sender, date, subject
-// and text, so a retry of the same message is still kept once.
+// one FlowChain does not take), an id made from its sender, its Date header
+// as written, subject and text, so a retry of the same message is still
+// kept once.
 export function messageIdOf(mail) {
   const own = usableId(mail?.messageId)
   if (own) return own
-  const date = mail?.date ? new Date(mail.date).toISOString() : ''
-  return `<${sha256([senderOf(mail), date, String(mail?.subject || ''), sha256(String(mail?.text || ''))].join('\n'))}@flowchain-mail-bridge.local>`
+  return `<${sha256([senderOf(mail), rawDateOf(mail), String(mail?.subject || ''), sha256(String(mail?.text || ''))].join('\n'))}@flowchain-mail-bridge.local>`
 }
 export const messageKey = (mail) => messageIdOf(mail)
 
@@ -58,7 +66,10 @@ export function payloadOf(mail, { timeZone }) {
   if (subject) body.subject = subject.slice(0, 998)
   const sender = senderOf(mail)
   if (sender) body.from = sender.slice(0, 320)
-  const day = mail?.date ? receivedDay(mail.date, timeZone) : null
+  // The day received, only from a Date header that parses (else FlowChain
+  // counts it received today).
+  const raw = rawDateOf(mail)
+  const day = raw && !Number.isNaN(Date.parse(raw)) ? receivedDay(new Date(raw), timeZone) : (!raw && mail?.date instanceof Date ? receivedDay(mail.date, timeZone) : null)
   if (day) body.receivedOn = day
   return { body, truncated: textValue.length > TEXT_LIMIT }
 }

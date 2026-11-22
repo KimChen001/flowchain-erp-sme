@@ -30,7 +30,8 @@ What happens to each message:
 - **Not sent:**
   - messages that name no order number;
   - messages from a sender not on the list, when senders are listed;
-  - messages larger than `MAX_BYTES` (5 MB by default).
+  - messages larger than `MAX_BYTES` (5 MB by default);
+  - messages that cannot be read (broken MIME). The log names them, and the rest of the round goes on.
 
   These stay unread and are remembered, so they are not read again.
 - **Each round:**

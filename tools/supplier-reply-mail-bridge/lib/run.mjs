@@ -39,10 +39,17 @@ export async function runFolder({ dir, config, parse, post = postReply, state, l
     for (const name of readdirSync(dir).filter((file) => file.toLowerCase().endsWith('.eml')).sort()) {
       if (config.maxBytes && statSync(join(dir, name)).size > config.maxBytes) { move(name, 'skipped'); counts.skipped += 1; log(`skipped  ${name}: larger than ${config.maxBytes} bytes`); continue }
       const source = readFileSync(join(dir, name))
-      const mail = await parse(source)
-      const check = forwardable(mail, config)
-      if (!check.forward) { move(name, 'skipped'); counts.skipped += 1; log(`skipped  ${name}: ${check.why}`); continue }
-      const { body, truncated } = payloadOf(mail, config)
+      let mail
+      let prepared
+      try {
+        mail = await parse(source)
+        const check = forwardable(mail, config)
+        prepared = check.forward ? payloadOf(mail, config) : { why: check.why }
+      } catch (error) {
+        prepared = { why: `could not be read (${String(error?.name || 'error')})` }
+      }
+      if (prepared.why) { move(name, 'skipped'); counts.skipped += 1; log(`skipped  ${name}: ${prepared.why}`); continue }
+      const { body, truncated } = prepared
       const result = await post(config, body)
       if (result.outcome === 'stop') throw new BridgeStop(result)
       if (result.outcome === 'later') {
@@ -68,7 +75,10 @@ export function envelopeKey(envelope, size) {
   const id = String(envelope?.messageId || '').trim()
   if (id && id.length <= 998 && /^[\x21-\x7e]+$/.test(id)) return id
   const from = String(envelope?.from?.[0]?.address || '').toLowerCase()
-  const date = envelope?.date ? new Date(envelope.date).toISOString() : ''
+  // A date the server could not parse stays a string: it is left out, never
+  // turned into one (which would throw).
+  const when = envelope?.date instanceof Date ? envelope.date : null
+  const date = when && !Number.isNaN(when.getTime()) ? when.toISOString() : ''
   return `env:${sha256([from, date, String(envelope?.subject || ''), String(size ?? '')].join('\n'))}`
 }
 
@@ -103,8 +113,9 @@ export async function runImap({ config, ImapFlow, parse, post = postReply, state
     if (canMove) await client.mailboxCreate(imap.doneFolder).catch(() => {})
     const lock = await client.getMailboxLock(imap.mailbox)
     try {
-      const unread = (await client.search({ seen: false }, { uid: true })) || []
-      const heads = unread.length ? await client.fetchAll(unread.join(','), { uid: true, envelope: true, size: true }, { uid: true }) : []
+      // The unread messages by a search: imapflow packs the UIDs into ranges,
+      // so a long backlog never makes a command too long for the server.
+      const heads = (await client.fetchAll({ seen: false }, { uid: true, envelope: true, size: true }, { uid: true })) || []
       const fresh = heads.map((row) => ({ uid: row.uid, size: Number(row.size) || 0, key: envelopeKey(row.envelope, row.size) })).filter((row) => !state.has(row.key)).slice(0, limit)
       const toRead = []
       for (const row of fresh) {
@@ -120,10 +131,23 @@ export async function runImap({ config, ImapFlow, parse, post = postReply, state
       const messages = toRead.length ? await client.fetchAll(toRead.map((row) => row.uid).join(','), { uid: true, source: true }, { uid: true }) : []
       for (const { uid, source } of messages) {
         const key = keys.get(uid)
-        const mail = await parse(source)
-        const check = forwardable(mail, config)
-        if (!check.forward) { state.remember(key, 'skipped', check.why); counts.skipped += 1; continue }
-        const { body, truncated } = payloadOf(mail, config)
+        // One message that cannot be read is skipped and remembered; the
+        // others in the round go on.
+        let prepared
+        try {
+          const mail = await parse(source)
+          const check = forwardable(mail, config)
+          prepared = check.forward ? { ...payloadOf(mail, config) } : { why: check.why }
+        } catch (error) {
+          prepared = { why: 'unreadable', error }
+        }
+        if (prepared.why) {
+          state.remember(key, 'skipped', prepared.why)
+          counts.skipped += 1
+          if (prepared.error) log(`skipped  uid ${uid}: could not be read (${String(prepared.error?.name || 'error')})`)
+          continue
+        }
+        const { body, truncated } = prepared
         const result = await post(config, body)
         if (result.outcome === 'stop') throw new BridgeStop(result)
         if (result.outcome === 'later') {
