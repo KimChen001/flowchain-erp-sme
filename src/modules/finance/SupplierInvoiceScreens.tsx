@@ -611,7 +611,7 @@ function LinkReceipt({ invoice, onDone }: { invoice: { id: string; version: numb
   return (
     <div className="w-full space-y-2 rounded-xl border border-slate-200 p-3" data-testid="link-receipt-panel">
       <label className={fieldLabelClass} style={fieldLabelStyle}>{t("finance.postedReceipt")}
-        <select data-testid="link-receipt-select" className={`${field} mt-1 w-full`} value={receiptId} onChange={(event) => { setReceiptId(event.target.value); setPlan(null); }}>
+        <select data-testid="link-receipt-select" className={`${field} mt-1.5 w-full font-normal`} style={{ color: A.label }} value={receiptId} onChange={(event) => { setReceiptId(event.target.value); setPlan(null); }}>
           {candidates.map((row) => <option key={row.id} value={row.id}>{row.documentNumber || row.id}</option>)}
         </select>
       </label>

@@ -679,7 +679,6 @@ export default function SupplierMasterPage({
                 style={inputStyle}
               />
               </Field>
-              {relationFormHistoryKey && <PriceHistoryFacts history={relationshipHistory.histories.get(relationFormHistoryKey)} state={relationshipHistory.state} testId="supplied-item-form-price-history" />}
             </div>
             {/* Nothing to add until an item is picked; the button says so. */}
             <button
@@ -693,6 +692,8 @@ export default function SupplierMasterPage({
               <Plus size={13} />
               {copy("Add supplied item")}</button>
           </div>}
+          {/* The picked item's earlier prices, under the row so the row stays level. */}
+          {writes.items && relationFormHistoryKey && <div className="mt-2"><PriceHistoryFacts history={relationshipHistory.histories.get(relationFormHistoryKey)} state={relationshipHistory.state} testId="supplied-item-form-price-history" /></div>}
           {relationships.length === 0 ? (
             <div className="py-8 text-center text-xs" style={{ color: A.sub }}>
               {copy("暂无可供应物料")}</div>
