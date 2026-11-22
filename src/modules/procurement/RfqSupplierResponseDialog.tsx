@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Check, RefreshCw, Save, Send } from "lucide-react";
 import { A, Card, Chip, Modal } from "../../components/ui";
+import { fieldControlStyle, fieldLabelClass, fieldLabelStyle } from "../../components/ui/formLayout";
 import { listButtonClass, listHeadRowStyle, listRowClass, listRowStyle } from "../../components/ui/listLayout";
 import { tableBodyTextClass, tdClass, thClass } from "../../components/ui/workbenchTable";
 import { ApiError } from "../../lib/api-client";
@@ -255,10 +256,10 @@ export function RfqSupplierResponseDialog({
         </div>
         {mode === "append" && <div className="rounded-lg border border-blue-100 bg-blue-50 p-3 text-xs text-blue-800">{tr("现有报价历史不会被修改，本次保存将创建新的报价修订。", "Existing quotation history will remain unchanged. Saving creates a new quote revision.")}</div>}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <label className="text-xs font-semibold" style={{ color: A.sub }}>{tr("币种", "Currency")}<input aria-label={tr("币种", "Currency")} className="mt-1 h-9 w-full rounded-lg border px-2 text-sm uppercase" maxLength={3} value={currency} onChange={(event) => setCurrency(event.target.value.toUpperCase())} /></label>
-          <label className="text-xs font-semibold" style={{ color: A.sub }}>{tr("付款条款", "Payment terms")}<input aria-label={tr("付款条款", "Payment terms")} className="mt-1 h-9 w-full rounded-lg border px-2 text-sm" placeholder={tr("例如 NET30", "For example, NET30")} value={paymentTerms} onChange={(event) => setPaymentTerms(event.target.value)} /></label>
-          <label className="text-xs font-semibold" style={{ color: A.sub }}>{tr("报价有效期", "Quotation valid until")}<input aria-label={tr("报价有效期", "Quotation valid until")} type="date" className="mt-1 h-9 w-full rounded-lg border px-2 text-sm" value={validUntil} onChange={(event) => setValidUntil(event.target.value)} /></label>
-          <label className="text-xs font-semibold">{tr("整体交付日期", "Overall delivery date")}<input aria-label={tr("整体交付日期", "Overall delivery date")} type="date" className="mt-1 h-9 w-full rounded-lg border px-2 text-sm" value={deliveryDate} onChange={(event) => setDeliveryDate(event.target.value)} /></label>
+          <label className={fieldLabelClass} style={fieldLabelStyle}>{tr("币种", "Currency")}<input aria-label={tr("币种", "Currency")} className="uppercase" style={fieldControlStyle} maxLength={3} value={currency} onChange={(event) => setCurrency(event.target.value.toUpperCase())} /></label>
+          <label className={fieldLabelClass} style={fieldLabelStyle}>{tr("付款条款", "Payment terms")}<input aria-label={tr("付款条款", "Payment terms")} style={fieldControlStyle} placeholder={tr("例如 NET30", "For example, NET30")} value={paymentTerms} onChange={(event) => setPaymentTerms(event.target.value)} /></label>
+          <label className={fieldLabelClass} style={fieldLabelStyle}>{tr("报价有效期", "Quotation valid until")}<input aria-label={tr("报价有效期", "Quotation valid until")} type="date" style={fieldControlStyle} value={validUntil} onChange={(event) => setValidUntil(event.target.value)} /></label>
+          <label className={fieldLabelClass} style={fieldLabelStyle}>{tr("整体交付日期", "Overall delivery date")}<input aria-label={tr("整体交付日期", "Overall delivery date")} type="date" style={fieldControlStyle} value={deliveryDate} onChange={(event) => setDeliveryDate(event.target.value)} /></label>
         </div>
         <div className="space-y-1 text-xs" style={{ color: A.sub }}>
           <p>{tr("保存草稿不会记录为供应商已响应。", "Saving a draft does not mark the supplier as having responded.")}</p>

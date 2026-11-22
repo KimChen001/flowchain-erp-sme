@@ -2,6 +2,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { A, Card } from "../../components/ui";
+import { RequiredMark, fieldControlStyle, fieldLabelClass, fieldLabelStyle } from "../../components/ui/formLayout";
 import { listButtonClass } from "../../components/ui/listLayout";
 import { useI18n } from "../../i18n/I18n";
 import { SUPPLIER_TIER_DEFINITIONS } from "../../../shared/supplier-tiers.mjs";
@@ -107,7 +108,7 @@ export function TierForm({ supplier, onSaved, onCancel, className = "" }: { supp
   const reviewDayId = `supplier-tier-next-review-${supplier.id}`;
   return <form noValidate data-testid="supplier-tier-form" className={`space-y-3 rounded-lg border p-4 ${className}`} onSubmit={(event) => { event.preventDefault(); submit(); }}>
     <fieldset>
-      <legend className="text-xs font-semibold">{t("Tier")}</legend>
+      <legend className={fieldLabelClass} style={fieldLabelStyle}>{t("Tier")}</legend>
       <div className="mt-2 grid gap-2 md:grid-cols-2">
         {TIER_OPTIONS.map((option) => <label key={String(option.tier)} className="flex cursor-pointer gap-2 rounded border p-3 text-xs" style={{ borderColor: tierChoice === option.tier ? A.blue : A.border }}>
           <input type="radio" name={`supplier-tier-${supplier.id}`} checked={tierChoice === option.tier} onChange={() => setTierChoice(option.tier)} aria-label={t(option.label)} />
@@ -119,15 +120,15 @@ export function TierForm({ supplier, onSaved, onCancel, className = "" }: { supp
       {tierChoice === 1 && supplier.businessOwner === null && <p className="mt-2 text-xs text-amber-700" data-testid="supplier-tier-owner-note">{t("Tier 1 needs a named owner. Set one under Business owner.")}</p>}
     </fieldset>
     <div>
-      <label htmlFor={reasonId} className="text-xs font-semibold">{t("Reason")}<span className="ml-1 text-blue-600">*</span></label>
+      <div className="flex items-baseline gap-0.5"><label htmlFor={reasonId} className={fieldLabelClass} style={fieldLabelStyle}>{t("Reason")}</label><RequiredMark /></div>
       <textarea id={reasonId} value={reason} maxLength={500} rows={3} onChange={(event) => { setReason(event.target.value); setErrors((current) => current.filter((error) => error.field !== "reason")); }}
-        aria-invalid={!!fieldError("reason")} placeholder={t("Why this tier? For example: the only approved source of our best-selling item.")} className="mt-1 block w-full rounded border p-2 text-xs" />
+        aria-required="true" aria-invalid={!!fieldError("reason")} placeholder={t("Why this tier? For example: the only approved source of our best-selling item.")} style={fieldControlStyle} />
       {fieldError("reason") && <p className="mt-1 text-xs text-red-600">{t(fieldError("reason") || "")}</p>}
     </div>
     <div>
-      <label htmlFor={reviewDayId} className="text-xs font-semibold">{t("Next review on")}<span className="ml-1 font-normal" style={{ color: A.sub }}>{t("Optional")}</span></label>
+      <label htmlFor={reviewDayId} className={fieldLabelClass} style={fieldLabelStyle}>{t("Next review on")}</label>
       <input id={reviewDayId} type="date" data-testid="supplier-tier-next-review" value={nextReviewOn} onChange={(event) => { setNextReviewOn(event.target.value); setErrors((current) => current.filter((error) => error.field !== "nextReviewOn")); }}
-        aria-invalid={!!fieldError("nextReviewOn")} className="mt-1 block rounded border p-2 text-xs" />
+        aria-invalid={!!fieldError("nextReviewOn")} style={{ ...fieldControlStyle, width: "auto" }} />
       {fieldError("nextReviewOn") && <p className="mt-1 text-xs text-red-600">{t(fieldError("nextReviewOn") || "")}</p>}
     </div>
     {generalErrors.map((error, index) => <p key={index} role="alert" className="text-xs text-red-600">{t(error.message || "Could not save. Please try again.")}</p>)}
@@ -199,8 +200,8 @@ export function SupplierTierPanel({ supplier, canEdit, onChanged }: { supplier: 
     {editing === "tier" && <TierForm className="mt-5" supplier={supplier} onCancel={() => setEditing(null)} onSaved={async () => { setEditing(null); await onChanged(); }} />}
 
     {editing === "owner" && <form noValidate data-testid="supplier-owner-form" className="mt-5 space-y-3 rounded-lg border p-4" onSubmit={(event) => { event.preventDefault(); submitOwner(); }}>
-      <label htmlFor="supplier-owner-select" className="text-xs font-semibold">{t("Business owner")}</label>
-      <select id="supplier-owner-select" value={ownerChoice} onChange={(event) => setOwnerChoice(event.target.value)} disabled={owners === null} className="block w-full rounded border p-2 text-xs">
+      <label htmlFor="supplier-owner-select" className={fieldLabelClass} style={fieldLabelStyle}>{t("Business owner")}</label>
+      <select id="supplier-owner-select" value={ownerChoice} onChange={(event) => setOwnerChoice(event.target.value)} disabled={owners === null} style={fieldControlStyle}>
         <option value="">{t("No owner")}</option>
         {(owners || []).map((owner) => <option key={owner.id} value={owner.id}>{owner.name || owner.id}</option>)}
       </select>

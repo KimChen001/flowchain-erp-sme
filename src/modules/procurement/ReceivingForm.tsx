@@ -308,7 +308,7 @@ function ReceivingFormBody({ mode, purchaseOrderId = "", receiptId = "" }: Recei
   // The lines table's inputs keep a fixed width each, so the text columns
   // (SKU, quantities) get the room and never wrap; on a card they take the
   // card's width.
-  const cellInputClass = "rounded-lg border px-2 py-1.5 text-sm";
+  const cellInputClass = "rounded-lg border px-2 py-1.5 text-[13px] leading-5";
   // A message under a table input wraps instead of widening its column.
   const cellErrorClass = "max-w-40";
   // Each line's controls, drawn in the table or on a card. The names stay

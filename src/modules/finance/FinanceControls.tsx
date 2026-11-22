@@ -1,7 +1,7 @@
 import { useId, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
-import { FieldError, RequiredMark, invalidProps } from "../../components/ui/formLayout";
+import { FieldError, RequiredMark, fieldLabelClass, fieldLabelStyle, invalidProps } from "../../components/ui/formLayout";
 import { StatusChip as ToneChip, listButtonClass, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
 import { useI18n } from "../../i18n/I18n";
 import { ApiError, apiJson } from "../../lib/api-client";
@@ -16,7 +16,9 @@ type TranslationKey = Parameters<ReturnType<typeof useI18n>["t"]>[0];
 type Issue = { code?: string; message?: string; details?: unknown };
 type Plan = { allowed: boolean; blockingIssues?: Issue[] };
 
-export const field = "rounded-lg border border-slate-200 px-3 py-2 text-sm";
+// The finance pages' control, sized as the shared input (inputStyle): 13 px on
+// a 20 px line, 10 px across.
+export const field = "rounded-lg border border-slate-200 px-2.5 py-2 text-[13px] leading-5";
 export const button = "inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium disabled:opacity-50";
 export const message = (reason: unknown, fallback: string) => (reason instanceof Error ? reason.message : fallback);
 const STATUS_KEYS: Record<string, TranslationKey> = {
@@ -200,7 +202,7 @@ export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reas
       {reasonLabel && (
         <div className="space-y-1">
           <div className="flex items-baseline gap-0.5">
-            <label htmlFor={reasonId} className="block text-xs">{reasonLabel}</label>
+            <label htmlFor={reasonId} className={fieldLabelClass} style={fieldLabelStyle}>{reasonLabel}</label>
             {reasonRequired && <RequiredMark />}
           </div>
           <input

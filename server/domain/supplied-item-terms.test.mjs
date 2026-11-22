@@ -8,6 +8,14 @@ import { numberSeparators, parseTermNumber, rebaseTermsForm, suppliedItemTermsCh
 // minimum order could only be set when the item was first added to the
 // supplier. They are now edited on the row, through the existing PATCH.
 const read = (file) => readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8')
+
+test('the supplied items add row labels its item and price, and keeps the price history under the row', () => {
+  const page = read('src/modules/srm/Page.tsx')
+  assert.match(page, /<Field label=\{copy\("Item"\)\}>\s*<select\s+aria-label=\{copy\("Select item"\)\}/)
+  assert.match(page, /<Field label=\{copy\("Reference price"\)\}>\s*<input\s+aria-label=\{copy\("参考价格"\)\}/)
+  assert.ok(page.includes('{writes.items && relationFormHistoryKey && <div className="mt-2"><PriceHistoryFacts '))
+  assert.match(read('src/modules/srm/supplierCopy.ts'), /'Item': '物料'/)
+})
 const EN = { decimal: '.', group: ',' }
 const DE = { decimal: ',', group: '.' }
 const TERMS = { leadTimeDays: 14, minimumOrderQuantity: 50, referencePrice: 2.75 }
