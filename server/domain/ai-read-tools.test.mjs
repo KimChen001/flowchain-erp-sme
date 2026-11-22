@@ -204,6 +204,14 @@ test('the stock projection places only dated lines in a week and lists the rest 
   const placed = new Set(projection.weeks.flatMap((week) => week.purchaseOrders))
   for (const entry of projection.notPlacedInAWeek.incomingPastPromisedDate) assert.ok(!placed.has(entry.orderNumber))
   assert.ok(projection.notPlacedInAWeek.incomingPastPromisedDate.some((entry) => entry.orderNumber === 'PO-001'), 'PO-001 is overdue')
+  // Each incoming line says what already came in on it, as the order's open
+  // line records it (2026-11-21 only-partly-en: the partly received order
+  // could not be told from the other).
+  const openLine = (orderNumber) => facts.purchaseOrders.index.find((po) => po.orderNumber === orderNumber).openLines.find((line) => line.sku === 'LDM-001')
+  const incoming = [...projection.notPlacedInAWeek.incomingPastPromisedDate, ...projection.notPlacedInAWeek.incomingWithoutDate]
+  // PO-001 is partly received (20 in, 30 to come); PO-008 has nothing in.
+  assert.deepEqual(incoming.map((entry) => [entry.orderNumber, entry.received, entry.quantity]), [['PO-001', 20, 30], ['PO-008', 0, 40]])
+  for (const entry of incoming) assert.deepEqual([entry.quantity, entry.received], [openLine(entry.orderNumber).remaining, Number(openLine(entry.orderNumber).received) || 0], entry.orderNumber)
   assert.deepEqual(await runAiReadTool('stock_projection', { sku: 'NOPE-1' }, { facts }), { ok: false, error: 'not_found' })
 })
 

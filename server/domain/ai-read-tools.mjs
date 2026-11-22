@@ -514,7 +514,10 @@ export function aiStockProjection(facts, { sku, weeks = 4 }) {
   if (facts.purchaseOrders) {
     for (const po of array(facts.purchaseOrders.index).filter((entry) => entry.isOpen)) {
       for (const line of array(po.openLines).filter((entry) => fold(entry.sku) === fold(row.sku) && sameUnit(entry.unit) && (entry.remaining || 0) > 0)) {
-        const entry = { orderNumber: po.orderNumber, quantity: line.remaining, promisedDate: line.promisedDate || null, ref: aiToolRef('purchase_order', po.id, po.orderNumber) }
+        // received: what already came in on the line, so a partly received
+        // order is told from one with nothing received (2026-11-21
+        // only-partly-en: "the projection shows no partly received order").
+        const entry = { orderNumber: po.orderNumber, quantity: line.remaining, received: Number(line.received) || 0, promisedDate: line.promisedDate || null, ref: aiToolRef('purchase_order', po.id, po.orderNumber) }
         if (!line.promisedDate) apart.incomingWithoutDate.push(entry)
         else if (dayIndex(line.promisedDate) < start) apart.incomingPastPromisedDate.push(entry)
         else incoming.push(entry)
