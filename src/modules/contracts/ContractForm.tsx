@@ -196,14 +196,14 @@ export function ContractForm({ contract = null, initialSupplierId = "", onSaved,
         <div>
           {/* A new contract's page already carries its title. */}
           {editing && <h2 className="mb-1 text-lg font-semibold" style={{ color: A.label }}>{`${t("Edit contract")} ${contract!.number}`}</h2>}
-          <p className="text-sm" style={{ color: A.sub }}>{t("Record a signed agreement. It is saved as a draft; activate it once the signed date and start date are in.")}</p>
+          <p className="text-xs" style={{ color: A.sub }}>{t("Record a signed agreement. It is saved as a draft; activate it once the signed date and start date are in.")}</p>
           {/* The server numbers a new contract (CT-YYYYMM-NNNN) when it is saved; the number on the signed document goes in Their reference. */}
-          {!editing && <p className="mt-1 text-sm" style={{ color: A.sub }} data-testid="contract-number-on-save">{t("The contract number is assigned when you save. Put the number on the signed document in Their reference.")}</p>}
+          {!editing && <p className="mt-1 text-xs" style={{ color: A.sub }} data-testid="contract-number-on-save">{t("The contract number is assigned when you save. Put the number on the signed document in Their reference.")}</p>}
           <RequiredNote />
         </div>
       </div>
 
-      <Card className="p-5">
+      <Card className="p-4 sm:p-5">
         <h3 className="fc-section-title" style={{ color: A.label }}>{t("Terms")}</h3>
         <div className="mt-4 grid gap-x-5 gap-y-4 md:grid-cols-2">
           <div className="md:col-span-2">
@@ -255,7 +255,7 @@ export function ContractForm({ contract = null, initialSupplierId = "", onSaved,
         </div>
       </Card>
 
-      <Card className="p-5">
+      <Card className="p-4 sm:p-5">
         <h3 className="fc-section-title" style={{ color: A.label }}>{t("Dates and renewal")}</h3>
         <div className="mt-4 grid gap-x-5 gap-y-4 md:grid-cols-3">
           <div>
@@ -300,7 +300,7 @@ export function ContractForm({ contract = null, initialSupplierId = "", onSaved,
         </div>
       </Card>
 
-      <Card className="p-5">
+      <Card className="p-4 sm:p-5">
         <h3 className="fc-section-title" style={{ color: A.label }}>{t("Value")}</h3>
         {valueHidden ? (
           <p className="mt-3 text-sm" style={{ color: A.sub }}>{t("Hidden for your role")}</p>
@@ -323,7 +323,7 @@ export function ContractForm({ contract = null, initialSupplierId = "", onSaved,
         )}
       </Card>
 
-      <Card className="p-5">
+      <Card className="p-4 sm:p-5">
         {label("notes", "Notes")}
         <textarea {...control("notes")} rows={3} maxLength={4000} onChange={(event) => set("notes", event.target.value)} />
         {fieldError("notes")}

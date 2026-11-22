@@ -21,7 +21,7 @@ const zh: Record<string, string> = {
   'Add supplied item': '添加可供应物料', 'No supplied items yet': '暂无可供应物料', 'Set as preferred': '设为首选', 'Yes': '是', 'No': '否',
   'Purchase records': '采购记录', 'No purchase records available': '暂无采购交易记录', 'Risks and exceptions': '风险与异常', 'No risks or exceptions available': '暂无风险或异常',
   'Supplied-item links are currently unavailable.': '可供应物料关联暂不可用。',
-  'Preferred': '首选', 'Approved': '已批准', 'Not approved': '未批准', 'Lead time (days)': '提前期（天）', 'MOQ': '最小起订量',
+  'Item': '物料', 'Preferred': '首选', 'Approved': '已批准', 'Not approved': '未批准', 'Lead time (days)': '提前期（天）', 'MOQ': '最小起订量',
   'Earlier PO prices': '以往采购价',
   // Supplier tiers and business owners.
   'Tier 1 · Strategic': '一级 · 战略', 'Tier 2 · Core': '二级 · 核心', 'Tier 3 · Transactional': '三级 · 一般', 'Not tiered': '未分级',

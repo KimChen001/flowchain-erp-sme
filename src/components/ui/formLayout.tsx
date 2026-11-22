@@ -1,6 +1,6 @@
 import React from "react";
 import { AlertCircle, ArrowLeft, Trash2 } from "lucide-react";
-import { A, Card } from "./index";
+import { A, Card, inputStyle } from "./index";
 import { listButtonClass } from "./listLayout";
 import { useI18n } from "../../i18n/I18n";
 
@@ -72,6 +72,13 @@ export function useFormCopy() {
 export const formGridClass = "grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4";
 
 export const requiredMarkClass = "text-[13px] leading-5 font-semibold text-blue-600";
+
+// A label or legend drawn by hand (a label wrapping its control, a fieldset's
+// legend) takes Field's label look: 13 px semibold in the sub-label grey.
+export const fieldLabelClass = "block text-[13px] leading-5 font-semibold";
+export const fieldLabelStyle: React.CSSProperties = { color: A.sub };
+// The control under such a label: the shared input, 6 px below it.
+export const fieldControlStyle: React.CSSProperties = { ...inputStyle, marginTop: 6 };
 
 // The "*" after a label. Screen readers get aria-required on the control.
 export function RequiredMark() {

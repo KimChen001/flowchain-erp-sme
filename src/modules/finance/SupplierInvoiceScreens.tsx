@@ -4,7 +4,7 @@ import { ArrowLeft, RefreshCw } from "lucide-react";
 import { Link, useNavigate } from "react-router";
 import { toast } from "sonner";
 import { A, Card, Field, inputStyle, useConfirm } from "../../components/ui";
-import { FieldError, FormActionBar, FormHeader, FormSection, focusFirstInvalid, formGridClass, invalidProps, useFormCopy } from "../../components/ui/formLayout";
+import { FieldError, FormActionBar, FormHeader, FormSection, focusFirstInvalid, formGridClass, invalidProps, useFormCopy, fieldLabelClass, fieldLabelStyle } from "../../components/ui/formLayout";
 import { FocusFirstField } from "../../components/ui/FocusFirstField";
 import { StatusChip as ToneChip, listButtonClass, listHeadRowStyle, listRowStyle, type StatusTone, RetryButton } from "../../components/ui/listLayout";
 import { listTableCardsRef, tableBodyTextClass } from "../../components/ui/workbenchTable";
@@ -436,7 +436,7 @@ export function NewSupplierInvoice() {
   const subtotal = fromUnits(billed.reduce((sum, line) => { const amount = amountOf(line); return amount === null ? sum : sum + toUnits(amount.toFixed(4)); }, 0n));
   const tax = fromUnits(billed.reduce((sum, line) => { const entered = (lines[line.id]?.tax || "").trim(); return DECIMAL.test(entered) ? sum + toUnits(entered) : sum; }, 0n));
   const quantityText = (value: string, unit: string | null) => `${formatNumber(Number(value))}${unit ? ` ${unitLabel(unit, language, Number(value))}` : ""}`;
-  const cellInputClass = "w-24 rounded-lg border px-2 py-1.5 text-sm tabular-nums";
+  const cellInputClass = "w-24 rounded-lg border px-2 py-1.5 text-[13px] leading-5 tabular-nums";
   const lineErrorId = (lineId: string, key: LineKey) => `supplier-invoice-${key}-${lineId}`;
   // How far a typed unit price is above the order's: a hint under the field,
   // never a refusal (the match raises the difference for review).
@@ -610,7 +610,7 @@ function LinkReceipt({ invoice, onDone }: { invoice: { id: string; version: numb
   };
   return (
     <div className="w-full space-y-2 rounded-xl border border-slate-200 p-3" data-testid="link-receipt-panel">
-      <label className="block text-xs">{t("finance.postedReceipt")}
+      <label className={fieldLabelClass} style={fieldLabelStyle}>{t("finance.postedReceipt")}
         <select data-testid="link-receipt-select" className={`${field} mt-1 w-full`} value={receiptId} onChange={(event) => { setReceiptId(event.target.value); setPlan(null); }}>
           {candidates.map((row) => <option key={row.id} value={row.id}>{row.documentNumber || row.id}</option>)}
         </select>

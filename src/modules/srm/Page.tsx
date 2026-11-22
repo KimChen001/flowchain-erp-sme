@@ -629,7 +629,8 @@ export default function SupplierMasterPage({
         <Card className="p-4 sm:p-5">
           <h2 className="fc-section-title" style={{ color: A.label }}>{copy("可供应物料")}</h2>
           {relationshipLimitation && <p role="alert" className="mt-2 text-xs text-amber-700">{copy("Supplied-item links are currently unavailable.")}</p>}
-          {writes.items && <div className="mt-3 grid items-start gap-2 md:grid-cols-[minmax(0,2fr)_auto_minmax(0,1fr)_auto]">
+          {writes.items && <div className="mt-3 grid items-end gap-2 md:grid-cols-[minmax(0,2fr)_auto_minmax(0,1fr)_auto]">
+            <Field label={copy("Item")}>
             <select
               aria-label={copy("Select item")}
               value={relationForm.itemId}
@@ -649,6 +650,7 @@ export default function SupplierMasterPage({
                   </option>
                 ))}
             </select>
+            </Field>
             <label className="inline-flex h-9 items-center gap-2 whitespace-nowrap text-xs">
               <input
                 type="checkbox"
@@ -663,6 +665,7 @@ export default function SupplierMasterPage({
               {copy("Preferred")}
             </label>
             <div>
+              <Field label={copy("Reference price")}>
               <input
                 aria-label={copy("参考价格")}
                 placeholder={copy("参考价格")}
@@ -675,6 +678,7 @@ export default function SupplierMasterPage({
                 }
                 style={inputStyle}
               />
+              </Field>
               {relationFormHistoryKey && <PriceHistoryFacts history={relationshipHistory.histories.get(relationFormHistoryKey)} state={relationshipHistory.state} testId="supplied-item-form-price-history" />}
             </div>
             {/* Nothing to add until an item is picked; the button says so. */}
