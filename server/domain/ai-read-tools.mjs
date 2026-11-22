@@ -207,10 +207,12 @@ const stockPosition = defineAiTool({
       if (!rows.length) return { asOf: facts.asOf, sku: found.sku, noStockOrOrders: true }
     }
     if (args.only === 'at_risk') rows = rows.filter((row) => array(facts.inventory.atRisk).includes(row.sku) || RISK_STATUSES.has(row.stockStatus))
-    // Below safety stock as each row judges it: the stock available now under
-    // the safety stock (2026-11-21 question set: the 22 such items could only
-    // be read among the 70 at risk, 20 a page by SKU).
-    if (args.only === 'below_safety_stock') rows = rows.filter((row) => Number.isFinite(row.safetyStock) && Number.isFinite(row.available) && row.available < row.safetyStock)
+    // The rows counts.belowSafetyStock counts, so the list and its count
+    // agree: the status below_safety_stock (stock available, under the safety
+    // stock). An item out of stock has its own status and count (2026-11-21
+    // question set: the 22 below safety stock could only be read among the
+    // 70 at risk, 20 a page by SKU).
+    if (args.only === 'below_safety_stock') rows = rows.filter((row) => row.stockStatus === 'below_safety_stock')
     rows = [...rows].sort((a, b) => text(a.sku).localeCompare(text(b.sku)))
     return {
       asOf: facts.asOf,
