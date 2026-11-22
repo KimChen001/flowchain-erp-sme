@@ -302,10 +302,18 @@ export const SALES_BASIS = 'Customer invoices dated in the period, not drafts or
 const money2 = (value) => Math.round(value * 100) / 100
 const share = (part, whole) => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : null)
 export const salesDay = (value) => (value instanceof Date ? value.toISOString() : text(value)).slice(0, 10)
+// The phrase of a named period whose words carry a figure, as an answer
+// writes it: the period's name in the result (sales_summary, cash_movements
+// and gross_profit), so that exact phrase reads as a name and its figure is
+// not one to check. Only these presets, never a range given by from and to
+// (2026-11-21 question set, margin-en: "45.8% over the last 12 months" had
+// its 12 flagged).
+const PERIOD_NAMES = Object.freeze({ last_30_days: 'the last 30 days', last_90_days: 'the last 90 days', last_12_months: 'the last 12 months' })
 export function salesRange(args, today) {
   if (args.from || args.to) return args.from && args.to && args.from <= args.to ? { from: args.from, to: args.to } : null
   const period = args.period || 'last_12_months'
-  return aiSkillSpendPeriod(SALES_DAYS[period] ? { kind: 'last_days', days: SALES_DAYS[period] } : { kind: period }, today)
+  const range = aiSkillSpendPeriod(SALES_DAYS[period] ? { kind: 'last_days', days: SALES_DAYS[period] } : { kind: period }, today)
+  return range && PERIOD_NAMES[period] ? { ...range, name: PERIOD_NAMES[period] } : range
 }
 // The item a sales question names, by its SKU, its name or its item id; an
 // SKU no item holds any more is counted as asked (2026-11-12 on Flash:

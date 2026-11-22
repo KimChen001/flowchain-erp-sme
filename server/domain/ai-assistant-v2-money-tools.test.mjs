@@ -6,6 +6,7 @@ import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { aiReadToolsFor, runAiReadTool } from './ai-read-tool-runner.mjs'
 import { cashByMonth, grossProfitOf, receiptsNotInvoiced } from './ai-assistant-v2-money-tools.mjs'
 import { ASSISTANT_V2_SYSTEM } from './ai-assistant-v2.mjs'
+import { checkAiModelFirstGrounding } from './ai-model-first-grounding.mjs'
 
 // The money tools (2026-11-14) on the skill scenario, seeded 2026-09-29:
 // payables still owed, recorded payments and customer invoices, read through
@@ -150,6 +151,42 @@ test('gross_profit: sales less the units at the preferred supplier\'s reference 
   const blind = await hidden.run('gross_profit', { from: '2026-09-01', to: '2026-09-30' })
   assert.equal(blind.pricesHidden, true)
   assert.deepEqual([blind.cost, blind.grossMarginPercent, blind.linesWithoutCost], [0, null, 2])
+})
+
+// 2026-11-21 question set, margin-en: "45.8% over the last 12 months" had its
+// 12 flagged. A named period whose phrase carries a figure gives that phrase
+// as the period's name, and only that exact phrase is grounded; the probe
+// lines of the 11/22 review stay as they were.
+test('a named period gives its phrase as its name, and only that exact phrase is grounded', async () => {
+  const { run } = await money2()
+  const year = await run('gross_profit', {})
+  assert.equal(year.period.name, 'the last 12 months')
+  const quarter = await run('cash_movements', { period: 'last_90_days' })
+  assert.equal(quarter.period.name, 'the last 90 days')
+  assert.equal((await run('cash_movements', { period: 'last_30_days' })).period.name, 'the last 30 days')
+  // No name for a range given by its days, nor for a preset without a figure.
+  assert.deepEqual(Object.keys((await run('gross_profit', { from: '2026-09-01', to: '2026-09-30' })).period), ['from', 'to'])
+  assert.deepEqual(Object.keys((await run('cash_movements', { period: 'last_month' })).period), ['from', 'to'])
+  const flagged = (answer, period) => checkAiModelFirstGrounding({ answer: { title: 'Answer', answer, records: [] }, results: [{ period, grossMarginPercent: 36.7 }], today: '2026-09-29' })
+    .problems.filter((row) => row.kind === 'number').map((row) => row.value)
+  // The exact phrase is grounded, at any case.
+  assert.deepEqual(flagged('The gross margin is 36.7% over the last 12 months.', year.period), [])
+  assert.deepEqual(flagged('Over the last 12 months the margin was 36.7%.', year.period), [])
+  // Everything else stays flagged: another span, the same figure as units,
+  // money or stock, and the figure beside the phrase.
+  assert.deepEqual(flagged('The gross margin is 36.7% over the last 11 months.', year.period), ['11'])
+  assert.deepEqual(flagged('The margin is 36.7%; order 12 units.', year.period), ['12'])
+  assert.deepEqual(flagged('You sold 12 units over the last 12 months.', year.period), ['12'])
+  assert.deepEqual(flagged('The margin is 36.7%, about £12 a unit.', year.period), ['£12'])
+  assert.deepEqual(flagged('It has 12 months of stock.', year.period), ['12'])
+  // Another period's phrase is not grounded by this one.
+  assert.deepEqual(flagged('The margin is 36.7% over the last 12 months.', quarter.period), ['12'])
+  assert.deepEqual(flagged('Over the last 90 days you sold 90 units at 36.7%.', quarter.period), ['90'])
+  // Only the exact English phrase: these correct wordings stay flagged.
+  assert.deepEqual(flagged('The margin is 36.7% over the past 90 days.', quarter.period), ['90 days'])
+  assert.deepEqual(flagged('过去 90 天的毛利率是 36.7%。', quarter.period), ['90 天'])
+  // A range given by its days has no name: the phrase is flagged.
+  assert.deepEqual(flagged('The margin is 36.7% over the last 12 months.', { from: '2025-09-30', to: '2026-09-29' }), ['12'])
 })
 
 test('the pure money figures: receipts, cash by month and gross profit', () => {
