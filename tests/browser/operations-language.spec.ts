@@ -103,7 +103,11 @@ for (const language of ['en-US', 'zh-CN']) {
     else await expect(page.getByTestId('three-way-match-record-list')).toContainText('需复核后处理');
     records = false;
     await page.getByRole('button', { name: language === 'en-US' ? 'Refresh' : '刷新', exact: true }).click();
-    await expect(page.getByTestId('three-way-match-record-list')).toContainText(language === 'en-US' ? 'No matching records' : '暂无可匹配记录');
+    // The empty list in the reader's language, and no rows left behind (#435
+    // review: "No three-way matches yet" / 暂无三单匹配记录).
+    await expect(page.getByTestId('three-way-match-record-list')).toContainText(language === 'en-US' ? 'No three-way matches yet' : '暂无三单匹配记录');
+    await expect(page.getByTestId('three-way-match-record-list')).toContainText(language === 'en-US' ? 'A match needs a real purchase order' : '需要真实采购订单');
+    await expect(page.getByTestId('three-way-match-row')).toHaveCount(0);
     if (language === 'en-US') await expectEnglish(page);
   });
 }
