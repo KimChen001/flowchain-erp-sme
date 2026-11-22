@@ -689,6 +689,34 @@ test('reorder_list returns the preferred supplier\'s name, lead time and minimum
   assert.equal((await runAiReadTool('reorder_list', { supplier: 'Nobody Ltd' }, { facts, context })).error, 'supplier_not_found')
 })
 
+// 2026-11-22 question set: 64 items due on one day came by SKU, so the first
+// page was the 20 lowest SKUs and an answer's "most urgent" was among them.
+test('reorder_list puts the item furthest below its reorder point first within a day', async () => {
+  const scenario = aiSkillScenario()
+  const row = (sku, orderByDate, shortfall) => ({ itemId: `ID-${sku}`, sku, itemName: sku, unit: 'pcs', orderByDate, orderNow: true, daysUntilOrderBy: 0, onHand: 0, reserved: 0, incoming: 0, position: 0, reorderPoint: shortfall, shortfall, purchaseRequest: { quantity: shortfall + 10 } })
+  const reorderList = { read: async (input) => ({ rows: [row('A-1', input.today, 5), row('B-2', input.today, 0), row('C-3', input.today, 431), row('D-4', addCalendarDays(input.today, 1), 900), row('E-5', input.today, 65)], notJudged: [] }) }
+  const context = await loadAiSkillContext({ ...scenario.ctx, aiReadServices: { reorderList } })
+  const facts = await readAiSkillFacts(context)
+  const list = (await runAiReadTool('reorder_list', {}, { facts, context })).result
+  // By the day first, then the shortfall, then the SKU.
+  assert.deepEqual(list.rows.map((entry) => entry.sku), ['C-3', 'E-5', 'A-1', 'B-2', 'D-4'])
+  assert.deepEqual((await runAiReadTool('reorder_list', { due: 'now', limit: 2 }, { facts, context })).result.rows.map((entry) => [entry.sku, entry.requestQuantity]), [['C-3', 441], ['E-5', 75]])
+})
+
+// What to reorder is the reorder list's: its count, its rows and their
+// quantities, in a table that links the whole list; the solver is for a
+// budget, a what-if or a proposed order (2026-11-22: "what should I order
+// this week?" was the solver's example, and its quantities replaced the
+// list's).
+test('the instructions send what to reorder to the reorder list and keep the solver for budgets and what-ifs', () => {
+  const prompt = ASSISTANT_V2_SYSTEM
+  const line = prompt.split('\n').find((entry) => entry.startsWith('- What to reorder'))
+  assert.match(line, /^- What to reorder \("what should I order this week\?", 这周补什么货\): the count reorder_list gives to order now, then its rows with their quantities in show_table, which links the whole list\./)
+  assert.match(line, /An order under a budget, a what-if or a proposed order: optimize_order_plan, an exact solver\./)
+  assert.doesNotMatch(prompt, /What to order now across items/)
+  assert.doesNotMatch(prompt, /refills to the reorder point/)
+})
+
 test('reorder_list carries the suggested reorder point beside the recorded one, with what it rests on', async () => {
   const scenario = aiSkillScenario()
   const items = scenario.data.items.map((row) => ({ ...row, status: 'active', reorderPoint: row.sku === 'LDM-001' ? 200 : row.reorderPoint }))

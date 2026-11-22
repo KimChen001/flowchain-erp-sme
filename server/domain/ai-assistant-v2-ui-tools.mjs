@@ -69,6 +69,10 @@ const valueAt = (row, key) => {
 const fail = (code, message) => ({ error: { code, message } })
 const MAX_TEXT = 200
 const TABLE_ROWS = 20
+// The page that lists every row of a data tool, for the table's "Show all"
+// (2026-11-22: a reorder answer showed 20 of 64 items due with no way to
+// the rest).
+const LIST_ROUTES = Object.freeze({ reorder_list: 'inventory:reorder' })
 const CHART_POINTS = 60
 
 // The input schemas the model sees double as the first check of its input.
@@ -448,7 +452,8 @@ const showTable = defineUiTool({
     }
     // A list cut by the data tool says how many it had in all.
     const total = Math.max(rows.length, table.path === 'rows' && Number.isInteger(output.total) ? output.total : 0)
-    const props = { ...(input.title ? { title: input.title } : {}), source: source.id, columns, rows: cells, total, more: total > shown.length }
+    const listRoute = table.path === 'rows' && LIST_ROUTES[tool] ? { listRoute: { moduleId: LIST_ROUTES[tool] } } : {}
+    const props = { ...(input.title ? { title: input.title } : {}), source: source.id, columns, rows: cells, total, more: total > shown.length, ...listRoute }
     return part('table', props, [...shown.map((row) => refOf(row.ref)), ...cells.flatMap((row) => Object.values(row).map(refOf))])
   },
 })
