@@ -997,14 +997,38 @@ export function lineNamedElsewhere(order, quote, ref, { date = null, receivedOn 
 //   none    in text that belongs to no order (a greeting, a general line)
 //   other   in another order's part only
 //   across  over two parts or more
-function quotePlace(parts, number, quote) {
+function quotePlace(parts, number, quote, receivedOn) {
   const form = quoteForm(quote)
   const own = String(number ?? '').trim().toUpperCase()
   const places = parts.runs.filter((run) => quoteForm(run.text).includes(form))
   if (places.some((run) => run.owners.length === 1 && run.owners[0] === own)) return 'own'
+  // One sentence that lists this order with others and gives one day ("PO-a
+  // and PO-b both ship 4 Dec", §9): the day is each listed order's.
+  if (places.some((run) => run.joint && run.owners.includes(own) && oneDay(run.text, receivedOn))) return 'own'
   if (places.some((run) => run.owners.includes(own))) return 'shared'
   if (places.some((run) => !run.owners.length)) return 'none'
-  return places.length ? 'other' : 'across'
+  if (places.length) return 'other'
+  // Over two parts or more: none of them another order's alone (this order's,
+  // shared, of no order) is for the person; into another order's, dropped.
+  const allowed = (run) => !run.owners.length || run.owners.includes(own)
+  for (let start = 0; start < parts.runs.length; start += 1) {
+    let joined = ''
+    for (let end = start; end < parts.runs.length && allowed(parts.runs[end]); end += 1) {
+      joined += parts.runs[end].text
+      if (quoteForm(joined).includes(form)) return 'none'
+    }
+  }
+  return 'across'
+}
+
+// The text names exactly one day: one calendar date, or one relative day.
+function oneDay(value, receivedOn) {
+  const written = datesInQuote(value, receivedOn)
+  if (written.ambiguous.length) return false
+  const days = new Set([...written.exact, ...written.dayOnly.map((row) => row.date)])
+  const relative = relativeDateInQuote(value, receivedOn)
+  if (relative?.date) days.add(relative.date)
+  return days.size === 1
 }
 
 // The reading checked against the reply and the order (supplierReplyOrderSchema):
@@ -1028,7 +1052,7 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
     return at >= 0 && spans.some(([start, end]) => at < end && at + part.length > start)
   }
   const emailSplit = emailParts(reply, order?.number)
-  const placeOf = (quote) => (emailSplit ? quotePlace(emailSplit, order?.number, quote) : 'own')
+  const placeOf = (quote) => (emailSplit ? quotePlace(emailSplit, order?.number, quote, receivedOn) : 'own')
   let dropped = 0
   const flags = []
   for (const flag of array(reading?.flags)) {

@@ -1029,7 +1029,9 @@ test('an email naming several orders: a value counts for this order only from it
     '',
     `${B}: the brackets ship on 10 December, the price goes up 4%.`,
     '',
-    `PO-202611-0012 and ${C} both have springs, those ship on 9 December.`,
+    `PO-202611-0012 and ${C} both ship their hinges on 9 December.`,
+    `${C} is late, so PO-202611-0012 keeps its brackets until 11 December.`,
+    `Either PO-202611-0012 or ${C} can take the samples on 15 December.`,
     '',
     'Regards, Pat',
   ].join('\n')
@@ -1044,15 +1046,27 @@ test('an email naming several orders: a value counts for this order only from it
   // Another order's date, on this order's line: dropped, never proposed.
   const wrong = check(reply, reading([line('L1', '2026-12-10', 'the brackets ship on 10 December')]))
   assert.deepEqual(outcomes(wrong), [['L1', 'dropped', 'other_order_text', null]])
-  // A quote across two parts is dropped too.
+  // A quote across into another order's part is dropped too; one across this
+  // order's part and text of no order goes to the person.
   const across = check(reply, reading([line('L1', '2026-12-04', 'The hinges follow on 8 December.\n\nPO-202611-0013: the brackets')]))
   assert.equal(across.lines[0].issue, 'other_order_text')
-  // Text of no single order (the greeting, a sentence naming two orders): the
-  // person decides, the day offered.
+  const intoGreeting = check(reply, reading([line('L1', '2026-12-04', 'brackets can go on 2 December.\n\nPO-202611-0012: the brackets ship on 4 December.')])).lines[0]
+  assert.deepEqual([intoGreeting.outcome, intoGreeting.issue], ['needs_you', 'no_order_part'])
+  // Text of no single order (the greeting, a sentence naming two orders that
+  // do not form one list, or that offers them as alternatives): the person
+  // decides, the day offered.
   const greeting = check(reply, reading([line('L1', '2026-12-02', 'the brackets can go on 2 December')])).lines[0]
   assert.deepEqual([greeting.outcome, greeting.issue, greeting.readings], ['needs_you', 'no_order_part', ['2026-12-02']])
-  const shared = check(reply, reading([line('L1', '2026-12-09', 'those ship on 9 December')])).lines[0]
-  assert.deepEqual([shared.outcome, shared.issue, shared.readings], ['needs_you', 'no_order_part', ['2026-12-09']])
+  for (const [quote, date] of [['keeps its brackets until 11 December', '2026-12-11'], ['can take the samples on 15 December', '2026-12-15']]) {
+    const shared = check(reply, reading([line('L1', date, quote)])).lines[0]
+    assert.deepEqual([shared.outcome, shared.issue, shared.readings], ['needs_you', 'no_order_part', [date]], quote)
+  }
+  // One sentence that lists both orders and gives one day (§9): that day is
+  // each listed order's.
+  assert.deepEqual(outcomes(check(reply, reading([line('L2', '2026-12-09', 'both ship their hinges on 9 December')]))), [['L2', 'proposed', null, '2026-12-09']])
+  assert.deepEqual(outcomes(check(reply, reading([line('L2', '2026-12-09', 'both ship their hinges on 9 December')]), { order: { ...order, number: C } })), [['L2', 'proposed', null, '2026-12-09']])
+  // Not for an order the list leaves out.
+  assert.equal(check(reply, reading([line('L2', '2026-12-09', 'both ship their hinges on 9 December')]), { order: { ...order, number: B } }).lines[0].issue, 'other_order_text')
   // A hedged day of no single order is held with no day offered.
   const hedged = check(reply, reading([line('L1', '2026-12-24', 'Our factory closes from 24 December')])).lines[0]
   assert.deepEqual([hedged.outcome, hedged.issue], ['needs_you', 'no_order_part'])

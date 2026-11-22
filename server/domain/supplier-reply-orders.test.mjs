@@ -89,3 +89,14 @@ test('which named orders are read: the pasted order first, then open orders of i
   // A pasted order with no supplier reads no other order.
   assert.deepEqual(emailOrdersToRead({ named: [A, B], pastedOn: A, orders: [{ number: A, status: 'issued', supplier: null }, orders[1]], openStates: open }).notRead, [{ number: B, why: 'other_supplier' }])
 })
+
+test('a sentence whose numbers form one list is joint; two orders named apart or as alternatives are not', () => {
+  const joint = (sentence) => emailParts(`${sentence}\n${C}: the rest ships later.`, A).runs.find((run) => run.owners.length > 1)?.joint
+  assert.equal(joint(`${A} and ${B} both ship on 4 December.`), true)
+  assert.equal(joint(`${A}, ${B} & PO-202611-0015 ship on 4 December.`), true)
+  assert.equal(joint(`${A}、${B}都在12月4日发货。`), true)
+  assert.equal(joint(`${A}和${B}一起12月4日发货。`), true)
+  assert.equal(joint(`${B} is late, so ${A} ships on 4 December.`), false)
+  assert.equal(joint(`Either ${A} or ${B} ships on 4 December.`), false)
+  assert.equal(joint(`${A} and ${B} ship on 4 December, unlike PO-202611-0015.`), false)
+})

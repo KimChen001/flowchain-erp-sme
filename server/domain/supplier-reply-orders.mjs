@@ -11,7 +11,9 @@
 //   - a sentence that names one order starts that order's part;
 //   - a sentence that names no order continues the part it is in;
 //   - a sentence that names two or more orders belongs to all of them
-//     together (shared), and the text after it to no order;
+//     together (shared), and the text after it to no order; when its numbers
+//     form one list ("PO-a and PO-b both ship 4 Dec") it is marked joint, and
+//     the check lets its one day count for each order listed;
 //   - a blank line ends a part, unless the part so far is only a line naming
 //     the order ("PO-202611-0012:", "关于订单 PO-202611-0012：");
 //   - text before the first order number belongs to no order.
@@ -65,11 +67,16 @@ export function emailParts(text, number) {
   const named = numbersIn(source, prefix)
   if (named.length < 2) return null
   const runs = []
-  const add = (sentence, owners) => {
+  const add = (sentence, owners, joint = false) => {
     const last = runs[runs.length - 1]
-    if (last && last.owners.join(' ') === owners.join(' ')) last.text += sentence
-    else runs.push({ text: sentence, owners })
+    if (last && !joint && !last.joint && last.owners.join(' ') === owners.join(' ')) last.text += sentence
+    else runs.push({ text: sentence, owners, joint })
   }
+  // A sentence whose numbers form one list ("PO-a and PO-b", "PO-a, PO-b 和
+  // PO-c", "PO-a、PO-b"; never "or"): it may speak for each order listed.
+  const shape = `${prefix}-\\d{6}-\\d{4,6}`
+  const list = new RegExp(`\\b${shape}\\b(?:\\s*(?:,|、|&|\\band\\b|和|及|与|以及)\\s*\\b${shape}\\b)+`, 'gi')
+  const listsAll = (sentence, numbers) => [...sentence.matchAll(list)].some((match) => numbersIn(match[0], prefix).length === numbers.length)
   let current = null
   let headerOnly = false
   let lineStart = true
@@ -89,7 +96,7 @@ export function emailParts(text, number) {
       } else if (numbers.length > 1) {
         current = null
         headerOnly = false
-        add(sentence, [...numbers].sort())
+        add(sentence, [...numbers].sort(), listsAll(sentence, numbers))
       } else {
         if (current && headerOnly && sentence.trim()) headerOnly = false
         add(sentence, current ? [current] : [])
