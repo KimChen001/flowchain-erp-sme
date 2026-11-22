@@ -24,6 +24,37 @@ const orders = {
   more: 3,
 }
 
+// 2026-11-21 question set, the after run: four answers were flagged for a
+// figure a tool gave, written as the tool did not.
+test('figures the results hold: a basis sentence, a name\'s number alone, a list of records\' count, a period\'s length', () => {
+  // The suggested reorder point's basis, a sentence the tool writes.
+  const suggestion = [{ sku: '85123A', reorderPointSuggestion: { suggestedReorderPoint: 626, coverDays: 21, basis: 'Enough for the next 21 days (lead time 14 + 7 review days) in 5 of 6 past 21-day stretches of the last 90 days of shipments.' } }]
+  assert.deepEqual(kinds(check('626 pcs would have covered 5 of the 6 past 21-day stretches.', suggestion)), [])
+  assert.deepEqual(kinds(check('626 pcs would have covered 5 of the 8 past 21-day stretches.', suggestion)), ['number:8'])
+  // A customer's number written alone, as a list of customers writes it.
+  const sales = [{ rows: [
+    { orderNumber: 'SO-202611-0202', customer: 'Customer 14448 (United Kingdom)', ref: { type: 'sales_order', id: 'SO-202611-0202', label: 'SO-202611-0202' } },
+    { orderNumber: 'SO-202611-0232', customer: 'Customer 14216 (United Kingdom)', ref: { type: 'sales_order', id: 'SO-202611-0232', label: 'SO-202611-0232' } },
+  ], total: 2, more: 0 }]
+  assert.deepEqual(kinds(check('It is on SO-202611-0202 and SO-202611-0232 (customers 14448 and 14216, both in the United Kingdom).', sales)), [])
+  assert.deepEqual(kinds(check('It is on SO-202611-0202 (customer 14449).', sales)), ['number:14449'])
+  // Short figures inside a name are no figures: "448 pcs" is not read from 14448.
+  assert.deepEqual(kinds(check('SO-202611-0202 still needs 448 pcs.', sales)), ['number:448'])
+  // The count of a list of record numbers.
+  const position = [{ rows: [{ sku: '85123A', available: 48, incomingOnPurchaseOrders: 550, purchaseOrders: ['PO-202610-0028', 'PO-202611-0009'] }], total: 1, more: 0 }]
+  assert.deepEqual(kinds(check('当前可用 48 件；有 2 张未结采购订单共 550 件尚未到货。', position)), [])
+  assert.deepEqual(kinds(check('当前可用 48 件；有 3 张未结采购订单共 550 件尚未到货。', position)), ['number:3'])
+  const oneOrder = [{ rows: [{ sku: '85123A', available: 48, purchaseOrders: ['PO-202610-0028'] }], total: 1, more: 0 }]
+  assert.deepEqual(kinds(check('There are 2 open orders for 85123A.', oneOrder)), ['number:2'])
+  // A period's length, in months when it runs whole months, and in days.
+  const profit = [{ period: { from: '2025-11-22', to: '2026-11-21' }, marginPercent: 45.8 }]
+  assert.deepEqual(kinds(check('The gross margin is 45.8% over the last 12 months.', profit)), [])
+  assert.deepEqual(kinds(check('The gross margin is 45.8% over the last 365 days.', profit)), [])
+  assert.deepEqual(kinds(check('The gross margin is 45.8% over the last 11 months.', profit)), ['number:11'])
+  const october = [{ period: { from: '2026-10-01', to: '2026-10-31' }, revenue: 1200 }]
+  assert.deepEqual(kinds(check('Sales were 1,200 over the 31 days of October.', october)), [])
+})
+
 test('false positive fixed: a count a document passage writes as a word grounds the same count in figures', () => {
   const escalation = policy('Escalate when the supplier has not responded for two business days, or when a customer delivery within three business days is affected.')
   assert.deepEqual(kinds(check('政策规定，供应商两个工作日内未回复，或 3 个工作日内的客户交付受影响时，才需升级。', [escalation])), [])
