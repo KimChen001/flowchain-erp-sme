@@ -78,7 +78,7 @@ export const requiredMarkClass = "text-[13px] leading-5 font-semibold text-blue-
 export const fieldLabelClass = "block text-[13px] leading-5 font-semibold";
 export const fieldLabelStyle: React.CSSProperties = { color: A.sub };
 // The control under such a label: the shared input, 6 px below it.
-export const fieldControlStyle: React.CSSProperties = { ...inputStyle, marginTop: 6 };
+export const fieldControlStyle: React.CSSProperties = { ...inputStyle, marginTop: 6, fontWeight: 400 };
 
 // The "*" after a label. Screen readers get aria-required on the control.
 export function RequiredMark() {

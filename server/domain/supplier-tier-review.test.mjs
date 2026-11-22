@@ -87,6 +87,15 @@ test('the tier form keeps a tier by recording a review, and changes it through t
   assert.ok(form.includes('nextReviewOn: nextReviewOn || null'))
 })
 
+test('the tier form marks Reason required with the form standard mark, and tags no field optional', () => {
+  const form = source('src/modules/srm/SupplierTier.tsx')
+  assert.ok(form.includes('<label htmlFor={reasonId} className={fieldLabelClass} style={fieldLabelStyle}>{t("Reason")}</label><RequiredMark />'))
+  assert.ok(form.includes('aria-required="true" aria-invalid={!!fieldError("reason")}'))
+  assert.ok(form.includes('<label htmlFor={reviewDayId} className={fieldLabelClass} style={fieldLabelStyle}>{t("Next review on")}</label>'))
+  assert.ok(!form.includes('t("Optional")'))
+  assert.doesNotMatch(source('src/modules/srm/supplierCopy.ts'), /'Optional'/)
+})
+
 // A stand-in transaction for the command: one supplier, and the rows written.
 function standInPrisma(supplier) {
   const written = { audit: [], updates: [] }
