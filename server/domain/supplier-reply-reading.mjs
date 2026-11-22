@@ -307,8 +307,31 @@ const nextOccurrence = (receivedOn, weekday) => addDays(receivedOn, ((weekday - 
 // The day a relative phrase in the quote gives from the reply date, with the
 // phrase; null when the quote has none, or two that disagree. Phrases that
 // name no day ("next week", "within two weeks", "end of the month") are not
-// computed: the line goes to the person.
+// computed: the line goes to the person. "next Friday" said early in a week
+// may be that week's Friday or the next one's: it names no one day either
+// (ambiguousWeekdayInQuote offers both).
 export function relativeDateInQuote(quote, receivedOn) {
+  const found = relativePlaces(quote, receivedOn)
+  if (!found.length) return null
+  const dates = new Set(found.map((row) => row.date))
+  if (dates.size !== 1 || dates.has(null)) return null
+  return { phrase: found[0].phrase, from: receivedOn, date: found[0].date }
+}
+
+// "next <weekday>" when the coming one falls in the reply's own week
+// (Tue 17 Nov: "next Friday" is the 20th, or the 27th, the Friday of next
+// week, as #363 §4.5 read it): { phrase, readings: [the two days] }, when it
+// is the only relative day in the quote; null otherwise. 下周五 names next
+// week's Friday and is not ambiguous.
+export function ambiguousWeekdayInQuote(quote, receivedOn) {
+  const found = relativePlaces(quote, receivedOn)
+  const pairs = found.filter((row) => row.readings)
+  if (!pairs.length || pairs.length !== found.length) return null
+  if (new Set(pairs.map((row) => row.readings.join())).size !== 1) return null
+  return { phrase: pairs[0].phrase, readings: pairs[0].readings }
+}
+
+function relativePlaces(quote, receivedOn) {
   const source = String(quote ?? '').normalize('NFKC')
   const found = []
   const hit = (phrase, date) => { if (date) found.push({ phrase: phrase.trim().slice(0, 80), date }) }
@@ -331,7 +354,12 @@ export function relativeDateInQuote(quote, receivedOn) {
   for (const m of lower.matchAll(new RegExp(`\\b(next|this|coming|on|by)\\s+(${WEEKDAY})\\b`, 'g'))) {
     if (besideDate(m.index, m.index + m[0].length)) continue
     const weekday = WEEKDAYS[m[2]]
-    if (m[1] === 'next') hit(m[0], addDays(mondayOf(receivedOn), 7 + weekday))
+    if (m[1] === 'next') {
+      const coming = nextOccurrence(receivedOn, weekday)
+      const following = addDays(mondayOf(receivedOn), 7 + weekday)
+      if (coming === following) hit(m[0], following)
+      else found.push({ phrase: m[0], date: null, readings: [coming, following] })
+    }
     else if (m[1] === 'this') {
       const date = addDays(mondayOf(receivedOn), weekday)
       if (date > receivedOn) hit(m[0], date)
@@ -356,10 +384,20 @@ export function relativeDateInQuote(quote, receivedOn) {
       else found.push({ phrase: m[0], date: null })
     } else hit(m[0], nextOccurrence(receivedOn, weekday))
   }
-  if (!found.length) return null
-  const dates = new Set(found.map((row) => row.date))
-  if (dates.size !== 1 || dates.has(null)) return null
-  return { phrase: found[0].phrase, from: receivedOn, date: found[0].date }
+  return found
+}
+
+// A clause that says the goods move (ship, deliver, 发货, 交货 …): a relative
+// day the reading called vague is read by code only in one.
+const DELIVERY_WORDS = /\b(?:ship(?:s|ped|ping|ment)?|deliver(?:s|ed|y|ies|ing)?|dispatch(?:es|ed|ing)?|send(?:s|ing)?|sent|arriv(?:e|es|al|ing)|collect(?:ion|ed)?|leaves?)\b|发货|发出|发运|出货|送货|送到|送达|到货|交货|装运|寄出|发走|提货|交付/
+function deliveryClause(quote, phrase) {
+  const form = quoteForm(quote)
+  const at = form.indexOf(quoteForm(phrase))
+  if (at < 0) return false
+  const breaks = [...form.matchAll(/[,，;；。!?！？]|\.\s/g)]
+  const start = Math.max(0, ...breaks.filter((mark) => mark.index + mark[0].length <= at).map((mark) => mark.index + mark[0].length))
+  const end = Math.min(form.length, ...breaks.filter((mark) => mark.index >= at + phrase.length).map((mark) => mark.index))
+  return DELIVERY_WORDS.test(form.slice(start, end))
 }
 
 // --- The reading call (#363 §4.4, #392 appendix D) ------------------------------------
@@ -498,7 +536,7 @@ const CONDITIONED = /\b(?:depend(?:s|ing|ent)?\s+on|subject\s+to|pending|provide
 const HEDGE_BEFORE = /(?:\b(?:starting|start(?:s|ing)?\s+(?:on|from)|from|after|once|following|around|approx(?:imately)?|roughly|circa|about|week\s+of|beginning\s+of|end\s+of|no\s+earlier\s+than|not\s+before)(?:\s+(?:on|the|of|about|around))?\s*$)|(?:大概|大约|约|等到?|要等)[^。，,]{0,4}$/i
 // Right after the date, in its own clause (no comma between): "3号统一发货，
 // 发出后把物流单号发给您" is a firm day, the 后 being about the tracking number.
-const HEDGE_AFTER = /^[^.!?;。！？；，,]{0,3}?(?:\b(?:onwards?|or\s+(?:so|later|thereabouts|after)|at\s+the\s+earliest|and\s+later)\b|起|开始|以后|之后|左右|前后|(?<!交|发)后(?!天))/i
+const HEDGE_AFTER = /^[^.!?;。！？；，,]{0,3}?(?:\b(?:onwards?|or\s+(?:so|later|thereabouts|after)|at\s+the\s+earliest|and\s+later)\b|(?<!一)起|开始|以后|之后|左右|前后|(?<!交|发)后(?!天))/i
 // A window between two days ("between 3 and 5 December", 12月3日到5日之间):
 // neither day is the delivery day.
 const DAY_WINDOW = /\bbetween\b[^.!?;]{0,40}\band\b|(?:到|至|-|~|～)[^。，,.;；]{0,8}之间|\bfrom\b[^.!?;]{0,20}\b(?:to|until|till)\b[^.!?;]{0,20}\b(?:depending|whichever)\b/i
@@ -573,6 +611,10 @@ function resolveDate(entry, receivedOn, currentDate = null, reply = null) {
   let inferred = false
   const pair = written.ambiguous.find((readings) => readings.includes(claimed)) || (written.exact.length || written.dayOnly.length ? null : written.ambiguous[0])
   if (pair) return { issue: 'ambiguous_numeric', readings: pair }
+  // "next Friday" early in the week: both Fridays offered, neither chosen,
+  // unless the reading gave a calendar date the quote writes.
+  const weekdayPair = ambiguousWeekdayInQuote(quote, receivedOn)
+  if (weekdayPair && !(claimed && written.exact.includes(claimed))) return { issue: 'ambiguous_weekday', readings: weekdayPair.readings }
   const sentence = reply ? sentenceAround(reply, quote) : quoteForm(quote)
   if (!claimed && entry.dateKind === 'relative') {
     if (!relative || HEDGED.test(sentence)) return { issue: 'relative_unreadable' }
@@ -580,14 +622,19 @@ function resolveDate(entry, receivedOn, currentDate = null, reply = null) {
     inferred = true
   } else if (entry.dateKind === 'vague' || !claimed) {
     const lone = written.exact.length === 1 && !written.dayOnly.length && !written.ambiguous.length && !relative ? written.exact[0] : null
-    if (!lone || HEDGED.test(sentence)) {
+    // A relative day code computes on its own, the only day in the quote,
+    // unhedged, in a clause about the goods moving: read by code and marked
+    // so (inferred), as a lone calendar date is.
+    const rescued = !lone && relative && !written.exact.length && !written.dayOnly.length && !written.ambiguous.length
+      && !HEDGED.test(sentence) && !CONDITIONED.test(sentence) && !DAY_WINDOW.test(sentence) && deliveryClause(quote, relative.phrase) ? relative.date : null
+    if (!(lone || rescued) || HEDGED.test(sentence)) {
       const seen = [...new Set([...written.exact, ...written.dayOnly.map((row) => row.date), relative?.date].filter(Boolean))].sort()
       // The days found are offered as one-click readings only when nothing
       // hedges them: a window or a condition is not a day to pick.
       const offer = !HEDGED.test(sentence) && !CONDITIONED.test(sentence) && !DAY_WINDOW.test(sentence)
       return { issue: 'vague', readings: offer && seen.length && seen.length <= 2 ? seen : null }
     }
-    claimed = lone
+    claimed = lone || rescued
     inferred = true
   }
   const dayOnly = written.dayOnly.find((row) => row.date === claimed)

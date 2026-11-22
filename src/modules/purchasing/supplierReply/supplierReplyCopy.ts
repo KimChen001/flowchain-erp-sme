@@ -91,6 +91,7 @@ export const SUPPLIER_REPLY_COPY = {
   issue_before_reply: ["the date is before the reply date", "日期早于回复日期"],
   issue_too_far: ["the date is more than a year after the reply", "日期晚于回复日期一年以上"],
   issue_unknown_line: ["not a line of this order", "不是本订单的行"],
+  issue_ambiguous_weekday: ["\"next\" with a weekday can mean this week or next: pick the day", "英文 “next + 星期几” 可能指本周或下周：请选择日期"],
   issue_line_mismatch: ["the reply names another line's item code or name here", "回复此处写的是另一行的物料编码或名称"],
   issue_not_open: ["nothing left to receive on this line", "该行已无待收数量"],
   issue_unchanged: ["same as the current date", "与当前交期相同"],
