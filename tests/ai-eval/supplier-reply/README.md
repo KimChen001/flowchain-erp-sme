@@ -349,8 +349,13 @@ UCI and 2 on M5. Every reply text is written by us, like the rest of this set.
   served as the format. The reading's code, its fixes and their branches were
   not read.
 - **Not run yet.** A run calls a paid model and needs the owner's approval.
-  Nothing reads several orders yet, so no runner takes this shape;
-  `held-out-4-cases.test.mjs` checks the cases only.
+  `held-out-4-cases.test.mjs` checks the cases only; the runner for this
+  shape is `score-several.mjs` in #449.
+- **No longer blind for #449.** Batch 4 was used during #449's development
+  (oracle check at 9f453b81); its results are development evidence, not
+  held-out evidence. Held-out evidence for reading several orders would need
+  a new batch, written by a fresh agent and left unread until its first
+  model run.
 - **A different shape.** A case names several orders, so it does not go
   through `kase()`. Each case gives `source` (`paste` or `email`), `pastedOn`
   (null for an emailed reply), `orders` (every named order that exists, as its
