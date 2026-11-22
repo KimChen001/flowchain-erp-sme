@@ -381,6 +381,13 @@ function relativePlaces(quote, receivedOn) {
     unsure(match[0])
     return found
   }
+  // Any two relative days offered as alternatives ("tomorrow or Friday",
+  // "today or tomorrow", 明天或后天, 明天或者周五): no one day.
+  const RELATIVE_DAY = `(?:the\\s+day\\s+after\\s+tomorrow|today|tomorrow|(?:next|this|coming|on)?\\s*(?:${WEEKDAY}))`
+  if ((match = new RegExp(`\\b${RELATIVE_DAY}\\s*(?:or|/)\\s*${RELATIVE_DAY}\\b`).exec(lower)) || (match = /(?:今天|明天|大后天|后天|(?:下|这|本)?\s*(?:周|星期|礼拜)\s*[一二三四五六日天])\s*(?:或者?|还是|\/)\s*(?:今天|明天|大后天|后天|(?:下|这|本)?\s*(?:周|星期|礼拜)?\s*[一二三四五六日天])/.exec(source))) {
+    unsure(match[0])
+    return found
+  }
   // A bare weekday in a clause that says the goods already went ("we
   // shipped on Wednesday", 已于周一发出) is the last one.
   const past = (index) => pastClause(clauseAt(source, index))
