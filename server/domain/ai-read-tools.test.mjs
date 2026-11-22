@@ -451,6 +451,10 @@ test('sales_summary totals customer invoices in a period by customer, item or mo
   // A named period is counted from the workspace day; to before from is refused.
   const lastMonth = (await runAiReadTool('sales_summary', { period: 'last_month' }, { facts, context })).result
   assert.ok(lastMonth.period.from.endsWith('-01') && lastMonth.period.to < String(facts.today || facts.asOf))
+  // A preset whose phrase carries a figure names it; last_month does not.
+  assert.equal('name' in lastMonth.period, false)
+  assert.equal((await runAiReadTool('sales_summary', {}, { facts, context })).result.period.name, 'the last 12 months')
+  assert.equal((await runAiReadTool('sales_summary', { period: 'last_90_days', unsold: true }, { facts, context })).result.period.name, 'the last 90 days')
   assert.equal((await runAiReadTool('sales_summary', { from: '2026-10-31', to: '2026-10-01' }, { facts, context })).error, 'invalid_period')
   // Only for users who may read customer invoices.
   const tool = AI_READ_SERVICE_TOOLS.find((entry) => entry.name === 'sales_summary')
