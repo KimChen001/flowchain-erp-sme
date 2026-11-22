@@ -112,7 +112,12 @@ const CURRENCY_WORDS = [
   [/^(?:US\$|\$|USD|美元)$/i, ['USD', 'CAD', 'AUD', 'NZD', 'SGD', 'HKD']], [/^(?:€|EUR|欧元)$/i, ['EUR']], [/^(?:£|GBP|英镑)$/i, ['GBP']],
   [/^(?:¥|￥|CNY|RMB|元|人民币)$/i, ['CNY', 'JPY']], [/^(?:JPY|日元)$/i, ['JPY']], [/^(?:CAD)$/i, ['CAD']], [/^(?:AUD)$/i, ['AUD']],
 ]
-const NUMBER = /(?<cur>US\$|\$|€|£|¥|￥|\b(?:USD|EUR|GBP|CNY|RMB|JPY|CAD|AUD)\b)?\s?(?<![\w.])(?<num>[-−]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?![\d.,]\d)(?!(?:st|nd|rd|th)\b)(?<scale>[kK](?![a-zA-Z])|[mM](?![a-zA-Z])|bn\b|万|亿|千)?\s?(?<suffix>%|％|percent\b|per cent\b|个百分点|USD\b|EUR\b|GBP\b|CNY\b|美元|欧元|英镑|人民币|元|days?\b|天|日)?/g
+// A figure is read wherever it starts, also right after a word (or a Chinese
+// character) and a full stop with no space ("to come.5 more"), which was
+// skipped (2026-11-22 probe review). After a digit and a full stop it is a
+// decimal's part, so it stays unread on its own; so does one after ".." or a
+// leading ".5".
+const NUMBER = /(?<cur>US\$|\$|€|£|¥|￥|\b(?:USD|EUR|GBP|CNY|RMB|JPY|CAD|AUD)\b)?\s?(?<!\w)(?<!(?:^|[^A-Za-z一-鿿])\.)(?<num>[-−]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?![\d.,]\d)(?!(?:st|nd|rd|th)\b)(?<scale>[kK](?![a-zA-Z])|[mM](?![a-zA-Z])|bn\b|万|亿|千)?\s?(?<suffix>%|％|percent\b|per cent\b|个百分点|USD\b|EUR\b|GBP\b|CNY\b|美元|欧元|英镑|人民币|元|days?\b|天|日)?/g
 const SCALES = { k: 1e3, K: 1e3, m: 1e6, M: 1e6, bn: 1e9, 千: 1e3, 万: 1e4, 亿: 1e8 }
 // Periods a question names in words, and their days.
 const PERIOD_WORDS = Object.freeze([

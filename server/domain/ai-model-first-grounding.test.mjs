@@ -71,6 +71,20 @@ test('a date is read only where it is written in one piece, never across a recor
   assert.deepEqual(flagged('10 月 PO-202610-0028 30 日到货。'), ['number:10', 'number:30 日'])
 })
 
+// 2026-11-22 probe review: a figure right after a word and a full stop, with
+// no space ("to come.5 more"), was never read, so it was never checked.
+test('a figure right after a word and a full stop is read and checked; decimals are not split', () => {
+  const results = [{ rows: [{ orderNumber: 'PO-202610-0028', remaining: 220, coverDays: 7.5, perDay: 29.3, promisedDate: '2026-10-14', ref: { type: 'purchase_order', id: 'UCI-PO-329', label: 'PO-202610-0028' } }], total: 1, more: 0 }]
+  const flagged = (answer) => kinds(check(answer, results)).filter((row) => row.startsWith('number:'))
+  assert.deepEqual(flagged('PO-202610-0028 has 220 pcs to come.5 more arrive tomorrow.'), ['number:5'])
+  assert.deepEqual(flagged('Order 220 pcs now.9 days late.'), ['number:9 days'])
+  assert.deepEqual(flagged('PO-202610-0028 还有 220 件未到.5 件明天到。'), ['number:5'])
+  // Read as before: whole figures, decimals, a figure after a sentence's space.
+  assert.deepEqual(flagged('PO-202610-0028 has 220 pcs to come.'), [])
+  assert.deepEqual(flagged('It is 7.5 days of cover at 29.3 a day.'), [])
+  assert.deepEqual(flagged('PO-202610-0028 has 220 pcs to come. 7.5 days of cover remain.'), [])
+})
+
 test('false positive fixed: a count a document passage writes as a word grounds the same count in figures', () => {
   const escalation = policy('Escalate when the supplier has not responded for two business days, or when a customer delivery within three business days is affected.')
   assert.deepEqual(kinds(check('政策规定，供应商两个工作日内未回复，或 3 个工作日内的客户交付受影响时，才需升级。', [escalation])), [])
