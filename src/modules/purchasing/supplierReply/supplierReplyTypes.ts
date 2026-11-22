@@ -9,7 +9,8 @@ export type SupplierReplyFlagKind = "quantity_change" | "price_change" | "cancel
 export type SupplierReplyDismissReason = "wrong_reading" | "supplier_will_confirm" | "other";
 export type SupplierReplyLineIssue =
   | "quote_not_found" | "date_mismatch" | "ambiguous_numeric" | "vague" | "relative_unreadable"
-  | "before_reply" | "too_far" | "unknown_line" | "not_open" | "unchanged" | "split_incomplete" | "several_dates";
+  | "before_reply" | "too_far" | "unknown_line" | "not_open" | "unchanged" | "split_incomplete" | "several_dates"
+  | "refused" | "addressed_to_system" | "line_mismatch" | "ambiguous_weekday";
 
 export type SupplierReplyLine = {
   ref: string | null;
