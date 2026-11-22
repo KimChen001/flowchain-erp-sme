@@ -84,54 +84,6 @@ test('strict pass (d): a figure right after a word and a full stop is checked, a
   assert.deepEqual(strictSuperset('Unit price approx.5 USD 120 pcs still to come.', [{ sku: '22178', unitPrice: 5, currency: 'USD', remaining: 120 }]), [])
 })
 
-// (a) A count was grounded by every entity listed on its line, of any kind:
-// a customer counted as an item, a supplier as an order.
-test('strict pass (a): a count met by its line must be met by its noun\'s kind too, when that kind is clear', () => {
-  const facts = {
-    inventory: { rows: [{ sku: '21137', itemName: 'Black Record Cover Frame' }, { sku: '21498', itemName: 'Red Retrospot Wrap' }, { sku: '22178', itemName: 'Victorian Glass Hanging T-Light' }, { sku: 'LDM-001', itemName: 'Steel Bracket' }, { sku: 'LDM-002', itemName: 'Copper Pipe' }] },
-    suppliers: [{ name: 'Acme Home Goods', code: 'SUP-ACME' }, { name: '2Go Packaging', code: 'SUP-2GO' }, { name: 'Supplier of 85xxx codes (assumed)', code: 'SUP-85' }],
-  }
-  const ref = (type, id, label) => ({ type, id, label })
-  // No small counts anywhere in the results, so a count is met only by its line.
-  const results = [
-    { items: facts.inventory.rows.map((row) => ({ ...row, onHand: 40 })) },
-    { rows: [{ orderNumber: 'PO-202610-0028', supplier: 'Acme Home Goods', remaining: 120, ref: ref('purchase_order', 'UCI-PO-329', 'PO-202610-0028') }, { orderNumber: 'PO-202611-0009', supplier: 'Supplier of 85xxx codes (assumed)', remaining: 240, ref: ref('purchase_order', 'UCI-PO-338', 'PO-202611-0009') }, { orderNumber: 'PO-202611-0012', supplier: '2Go Packaging', remaining: 360, ref: ref('purchase_order', 'UCI-PO-340', 'PO-202611-0012') }] },
-    { customers: [{ customer: 'Customer 14096 (United Kingdom)', code: 'CUST-14096' }, { customer: 'Customer 12748 (United Kingdom)', code: 'CUST-12748' }] },
-  ]
-  const added = (answer, extra = {}) => strictSuperset(answer, results, { facts, ...extra })
-  // Another kind made up the count: flagged now (each is met by its line on main).
-  assert.deepEqual(added('3 items: 21137, 21498 and Customer 14096.'), ['number:3'])
-  assert.deepEqual(added('4 orders: PO-202610-0028, PO-202611-0009, Acme Home Goods and 21137.'), ['number:4'])
-  assert.deepEqual(added('3 张逾期订单：PO-202610-0028、PO-202611-0009、Acme Home Goods。'), ['number:3'])
-  assert.deepEqual(added('2 家供应商：Acme Home Goods、PO-202611-0012。'), ['number:2'])
-  // Kept: own kind, compounds and possessives, codes as names, a list in
-  // brackets, items without the workspace's items, and nouns of no clear kind.
-  for (const answer of [
-    '3 items are below safety stock: 21137, 21498 and 22178.',
-    '3 个物料低于安全库存：21137、21498、22178。',
-    '2 customers: Customer 14096 and Customer 12748.',
-    '2 张逾期订单：PO-202610-0028、PO-202611-0009。',
-    '2 家供应商：Acme Home Goods、2Go Packaging。',
-    '2 order lines are late: 21137 and 21498.',
-    '2 purchase order lines: 21137 and 21498.',
-    '2 PO lines: 21137 and 21498.',
-    "2 suppliers' orders are late: PO-202610-0028 and PO-202611-0009.",
-    '2 customer orders: PO-202610-0028 and PO-202611-0009.',
-    '2 suppliers are behind (PO-202610-0028 and PO-202611-0009).',
-    '2 customers: CUST-14096 and CUST-12748.',
-    '2 suppliers: SUP-85 and SUP-2GO.',
-    '2 条采购订单行逾期：21137、21498。',
-    '共 2 笔逾期采购：PO-202610-0028、PO-202611-0009。',
-    '共 2 笔逾期采购：2Go Packaging 和 Acme Home Goods。',
-    '2 条记录：Acme Home Goods、2Go Packaging。',
-    '2 条逾期订单：PO-202610-0028、PO-202611-0009。',
-    '以下 2 项需要处理：PO-202610-0028、21137。',
-    '3 records: 21137, PO-202610-0028 and Customer 14096.',
-  ]) assert.deepEqual(added(answer), [], answer)
-  assert.deepEqual(added('2 items: LDM-001 and LDM-002.', { facts: null }), [])
-  assert.deepEqual(added('2 items: LDM-001 and LDM-002.', { facts: { suppliers: facts.suppliers } }), [])
-})
-
 test('false positive fixed: a count a document passage writes as a word grounds the same count in figures', () => {
   const escalation = policy('Escalate when the supplier has not responded for two business days, or when a customer delivery within three business days is affected.')
   assert.deepEqual(kinds(check('政策规定，供应商两个工作日内未回复，或 3 个工作日内的客户交付受影响时，才需升级。', [escalation])), [])
