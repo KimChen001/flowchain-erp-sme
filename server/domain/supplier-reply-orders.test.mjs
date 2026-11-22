@@ -137,3 +137,12 @@ test('a header is the number with at most one label word and a colon; a short st
     assert.deepEqual(runsOf(`${header}\n\nBrackets ship on 4 December.\n\n${B}: hinges ship on 9 December.`).map(([owners]) => owners), [A, B], header)
   }
 })
+
+test('an order number written straight before a date stops at the numbering\'s length', () => {
+  assert.deepEqual(orderNumbersNamed(`${A}12月4日发货，${B}延后。`, A), [A, B])
+  assert.deepEqual(orderNumbersNamed(`${A}12日发货，${B}延后。`, A), [A, B])
+  assert.deepEqual(orderNumbersNamed(`PO 202611-001312月4日, ${A}`, A, [A, B]), [B, A])
+  // Another length is still read when it is one: PO-202611-00125.
+  assert.deepEqual(orderNumbersNamed(`PO-202611-00125 and ${B}`, A, [A, B, 'PO-202611-00125']), ['PO-202611-00125', B])
+  assert.deepEqual(runsOf(`${A}12月4日发货。\n${B}12月9日发货。`).map(([owners]) => owners), [A, B])
+})

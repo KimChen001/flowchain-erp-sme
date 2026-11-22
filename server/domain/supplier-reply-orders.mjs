@@ -49,6 +49,10 @@ const parsed = (number) => {
 // than one.
 function tokensIn(source, prefix, known) {
   const orders = known.map(parsed).filter((row) => row && row.prefix === prefix)
+  // The sequence has the length of the order read on (known[0]): a number
+  // written straight before a date (PO-202611-001212月4日) stops there.
+  const length = NUMBERED.exec(String(known[0] ?? '').trim())?.[3].length || 4
+  const stop = '(?=\\d{1,2}\\s*[月日号]|\\D|$)'
   const out = []
   const add = (match, month, seq, exact = null) => {
     const start = match.index
@@ -57,11 +61,11 @@ function tokensIn(source, prefix, known) {
     const candidates = exact ? [] : orders.filter((row) => row.seq === Number(seq) && (!month || row.month === month))
     out.push({ index: start, end, text: match[0], number: exact || (candidates.length === 1 ? candidates[0].number : null) })
   }
-  for (const match of source.matchAll(new RegExp(`\\b${prefix}-(\\d{6})-(\\d{4,6})\\b`, 'gi'))) add(match, match[1], match[2], match[0].toUpperCase())
-  // Written another way: spaces or other dashes, a short sequence.
-  for (const match of source.matchAll(new RegExp(`\\b${prefix}\\s*[-–—_]?\\s*(\\d{6})\\s*[-–—_ ]\\s*(\\d{1,6})\\b`, 'gi'))) add(match, match[1], match[2])
+  for (const match of source.matchAll(new RegExp(`\\b${prefix}-(\\d{6})-(\\d{${length}})${stop}`, 'gi'))) add(match, match[1], match[2], match[0].toUpperCase())
+  // Written another way: spaces or other dashes, another sequence length.
+  for (const match of source.matchAll(new RegExp(`\\b${prefix}\\s*[-–—_]?\\s*(\\d{6})\\s*[-–—_ ]\\s*(\\d{1,6}?)${stop}`, 'gi'))) add(match, match[1], match[2])
   // A short form: PO 13, PO-0013, PO#13.
-  for (const match of source.matchAll(new RegExp(`\\b${prefix}\\s*[-#.:]?\\s*(\\d{1,6})\\b`, 'gi'))) add(match, null, match[1])
+  for (const match of source.matchAll(new RegExp(`\\b${prefix}\\s*[-#.:]?\\s*(\\d{1,6}?)${stop}`, 'gi'))) add(match, null, match[1])
   // A label and a number: order no. 13, order #13, 订单号 0013, 订单 0013.
   // Not a date written after it (订单12月5日发货).
   for (const match of source.matchAll(/(?:\border\s*(?:no\.?|number|#)|采购单号?|订单号?|单号)\s*[:#]?\s*(\d{1,6})(?![\d月日号年/.-])/gi)) add(match, null, match[1])
