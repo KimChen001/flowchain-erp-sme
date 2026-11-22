@@ -226,6 +226,25 @@ test('at risk covers short, out of stock, below safety stock and below the reord
   })
 })
 
+// 2026-11-21 question set: "Which items are below their safety stock?" read
+// the 70 at-risk rows, 20 a page, and showed 8 of the 22.
+test('below_safety_stock gives the items whose available stock is under their safety stock, and only those', async () => {
+  const facts = await factsFor()
+  const all = facts.inventory.rows
+  const calm = all.find((row) => Number.isFinite(row.safetyStock) && row.available >= row.safetyStock && !facts.inventory.atRisk.includes(row.sku))
+  // Below its reorder point but not its safety stock: at risk, not listed here.
+  calm.stockStatus = 'below_reorder_point'
+  const below = all.filter((row) => Number.isFinite(row.safetyStock) && Number.isFinite(row.available) && row.available < row.safetyStock)
+  assert.ok(below.length > 0, 'the fixture has an item below safety stock')
+  const result = (await runAiReadTool('stock_position', { only: 'below_safety_stock', limit: 50 }, { facts })).result
+  assert.deepEqual(result.rows.map((row) => row.sku), below.map((row) => row.sku).sort())
+  assert.ok(result.rows.every((row) => row.belowSafetyStock === true))
+  assert.equal(result.rows.some((row) => row.sku === calm.sku), false)
+  assert.equal(result.total, below.length)
+  // The counts stay over every SKU.
+  assert.equal(result.counts.atRisk, (await runAiReadTool('stock_position', {}, { facts })).result.counts.atRisk)
+})
+
 test('a stock row gives each incoming order\'s promised date and days overdue, as the order list does', async () => {
   const facts = await factsFor()
   const row = (await runAiReadTool('stock_position', { sku: 'LDM-001' }, { facts })).result.rows[0]
