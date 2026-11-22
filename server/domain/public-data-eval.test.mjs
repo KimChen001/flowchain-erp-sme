@@ -447,7 +447,9 @@ test('the UCI question set: every case in English or Chinese, on fixed months, w
   assert.equal(expect('only-partly-en').numbers[0].value, 100)
   assert.equal(expect('only-nothing-zh').numbers[0].value, 170)
   assert.equal(expect('both-arrive-en').numbers[0].value, 240)
-  assert.deepEqual(expect('reorder-en').quantities, [{ sku: 'C1', quantity: 20 }])
+  assert.deepEqual(expect('reorder-en').listed, { rows: [{ sku: 'C1', quantity: 20 }], atLeast: 1 })
+  assert.deepEqual(expect('reorder-en').numbers, [{ label: 'items to order now', value: 1 }])
+  assert.deepEqual(expect('conv-reorder-form-en').formAt, { rows: [{ sku: 'C1', quantity: 20 }] })
   // A rise or fall in either sign, the words saying which (2026-11-20).
   assert.deepEqual(expect('month-compare-zh').numbers[2].anyOf, [188.6, 188.6])
   assert.equal(expect('month-compare-zh').matches[0].label, '说增长')
@@ -491,6 +493,28 @@ test('scoring calls: the tools a case must call, and the UCI cases that need the
 
 // 2026-11-12: "22423 …缺口 20 件；但……建议按 60 件下单。" names its quantity in
 // the next clause of the same sentence.
+// 2026-11-22: a reorder question that names no item is scored on items due
+// at the reorder list's quantity, any of them, and the form on its items.
+test('scoring listed items and a form at their quantities', () => {
+  const rows = [{ sku: '23309', quantity: 570 }, { sku: '22961', quantity: 503 }, { sku: '22423', quantity: 112 }, { sku: '84077', quantity: 665 }]
+  const check = (answer, expect, name, answers) => scoreAnswer({ status: 200, ui: [], flags: [], errors: [], ...answer }, expect, answers ? { answers } : {}).checks.find((entry) => entry.name === name)
+  const listed = (answer) => check(answer, { listed: { rows, atLeast: 3 } }, 'lists items at their quantity')
+  // Three named at their quantity, in sentences or table rows.
+  assert.equal(listed({ text: 'Order 570 of 23309 and 503 of 22961. 22423: 112 pcs.' }).ok, true)
+  assert.equal(listed({ text: 'Order 570 of 23309.', ui: [{ component: 'table', props: { rows: [{ item: { label: '22961' }, request_quantity: 503 }, { item: { label: '84077' }, request_quantity: 665 }] } }] }).ok, true)
+  // The solver's quantities, or items without one, are not the list's.
+  assert.equal(listed({ text: 'Order 617 of 23309, 650 of 22961 and 140 of 22423.' }).ok, false)
+  assert.equal(listed({ text: '23309, 22961 and 22423 are the most short.' }).detail, '0 of 4, 3 wanted')
+  const formAt = (lines, earlier = []) => check({ text: 'I\'ve filled in a request form.', ui: [{ component: 'pr_form', props: { lines } }] }, { formAt: { rows } }, 'form at their quantities', [...earlier, { text: '' }])
+  const line = (sku, value) => ({ item: { sku }, suggestedQuantity: { value } })
+  assert.equal(formAt([line('23309', 570), line('99999', 10)]).ok, true)
+  assert.deepEqual([formAt([line('23309', 570), line('22961', 650)]).ok, formAt([line('23309', 570), line('22961', 650)]).detail], [false, '22961 at 650, not 503'])
+  // At a quantity an earlier answer gave, the user agreed to it.
+  assert.equal(formAt([line('22961', 650)], [{ text: 'I recommend 650 of 22961.' }]).ok, true)
+  assert.deepEqual([formAt([line('99999', 10)]).ok, formAt([line('99999', 10)]).detail], [false, 'none of the items on the form'])
+  assert.equal(check({ text: 'No form.' }, { formAt: { rows } }, 'form at their quantities').detail, 'no form')
+})
+
 test('scoring quantities: a quantity counts anywhere in its SKU\'s sentence, not across a full stop', () => {
   const answer = (text) => ({ status: 200, text, ui: [], flags: [], errors: [] })
   const ok = (text) => scoreAnswer(answer(text), { quantities: [{ sku: '22423', quantity: 60 }] }).checks.find((check) => check.name === 'quantity: 22423').ok

@@ -10,6 +10,11 @@
 //   quantities  each positive quantity of the optimal order appears next to
 //               its SKU in a display row, or in the text;
 //   form        a purchase request form holds the SKU at the quantity;
+//   listed      (2026-11-22) at least atLeast of the rows (items due, with
+//               the reorder list's quantity) named with their quantity, in
+//               a display row or the sentence that names them;
+//   formAt      the form holds one of the rows' items or more, each at its
+//               quantity or at the one an earlier answer gave it;
 //   mentions    each group has one of its words in the text or a display
 //               (an item by its SKU or its name, a supplier by its name);
 //   dates       each date appears, written as 2026-11-04, Nov 4, 4 November,
@@ -307,6 +312,21 @@ export function scoreAnswer(answer, expect = {}, { language = 'en-US', answers =
       const inText = text.split(SENTENCE).some((line) => names.some((value) => line.includes(value)) && numbersIn(line).includes(quantity))
       add(`quantity: ${sku}`, inRow || inText, `expected ${quantity}`)
     }
+  }
+  if (expect.listed) {
+    const rows = displayRows(answer)
+    const sentences = String(answer.text || '').split(SENTENCE)
+    const atQuantity = ({ sku, quantity }) => rows.some((row) => JSON.stringify(row).includes(sku) && numbersIn(JSON.stringify(row)).includes(quantity)) || sentences.some((line) => line.includes(sku) && numbersIn(line).includes(quantity))
+    const named = expect.listed.rows.filter(atQuantity)
+    add('lists items at their quantity', named.length >= expect.listed.atLeast, `${named.length} of ${expect.listed.rows.length}, ${expect.listed.atLeast} wanted${named.length ? `: ${named.slice(0, 8).map((row) => row.sku).join(', ')}` : ''}`)
+  }
+  if (expect.formAt) {
+    const wanted = new Map(expect.formAt.rows.map((row) => [row.sku, row.quantity]))
+    const onForm = formRows(answer).filter((row) => wanted.has(row.item?.sku)).map((row) => ({ sku: row.item.sku, value: Number(row.suggestedQuantity?.value ?? row.quantity) }))
+    const saidEarlier = ({ sku, value }) => answers.slice(0, -1).some((earlier) => String(earlier?.text || '').split(SENTENCE).some((line) => line.includes(sku) && numbersIn(line).includes(value)))
+    const off = onForm.filter((row) => row.value !== wanted.get(row.sku) && !saidEarlier(row))
+    const form = (answer.ui || []).some((part) => part.component === 'pr_form')
+    add('form at their quantities', onForm.length > 0 && !off.length, !form ? 'no form' : !onForm.length ? 'none of the items on the form' : off.length ? off.map((row) => `${row.sku} at ${row.value}, not ${wanted.get(row.sku)}`).join(', ') : `${onForm.length} on the form`)
   }
   // The item on the form at the expected quantity, or (orSaidEarlier) at the
   // quantity an earlier answer gave it, when the user agrees to that answer
