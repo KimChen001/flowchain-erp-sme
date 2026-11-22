@@ -127,17 +127,19 @@ export function buildUciCases(facts) {
     expect: { numbers: [{ label: '一周后缺口或可撑天数', anyOf: [round(second.averageDailyDemand * 7 - second.onHand, 1), round(second.daysOfStock, 2)], tolerance: 3 }] } })
 
   // Reorder.
-  // A question that names no item (2026-11-22): how many are due now, three
-  // of them or more (all when fewer) at the reorder list's quantity, and
-  // where the whole list is: the table's link to the reorder page, or words
-  // that send the user there ("across the whole reorder list" is not one).
-  // It used to require the scene's 22423, which on 2026-11-22 was 18th by
-  // SKU, 21st by shortfall and 29th by quantity of the 64 items due: no
-  // answer had to name it. A question that names the item (cake-zh) still
-  // requires it.
-  const dueNow = facts.reorder.map(({ sku, quantity }) => ({ sku, quantity }))
-  const wholeList = 'inventory:reorder|\\b(?:see|open|view|find|on|in)\\s+the\\s+(?:full\\s+|whole\\s+|complete\\s+)?reorder\\s+(?:list\\s+)?page|\\bShow all\\b|Inventory\\s*[>›→]\\s*Reorder|补货清单(?:页|页面)|(?:打开|查看)补货清单|补货清单(?:里|中|上)[^。\\n]{0,6}看|查看全部'
-  const reorderList = { numbers: [{ label: 'items to order now', value: dueNow.length }], listed: { rows: dueNow, atLeast: Math.min(3, dueNow.length) }, matches: [{ label: 'points to the whole list', pattern: wholeList }] }
+  // A question that names no item (2026-11-22): how many items are due now
+  // (said as a count of items, "64 items" or "64 个物料"), three of them or
+  // more (all when fewer) at the reorder list's quantity and none at another,
+  // and where the whole list is: a table that links the reorder page (#445),
+  // or words that send the user there beside a table ("across the whole
+  // reorder list" is not one, nor "Show all" alone). It used to require the
+  // scene's 22423, which on 2026-11-22 was 18th by SKU, 21st by shortfall
+  // and 29th by quantity of the 64 items due: no answer had to name it. A
+  // question that names the item (cake-zh) still requires it.
+  const dueNow = facts.reorder.map(({ sku, quantity }) => ({ sku, quantity, name: facts.item(sku)?.name }))
+  const itemCount = `(?<![\\d.,])${dueNow.length}(?:\\s+(?:more\\s+)?(?:items|SKUs|products)\\b|\\s*(?:个|项|种|款))`
+  const pageWords = '\\b(?:see|open|view|find|on|in)\\s+the\\s+(?:full\\s+|whole\\s+|complete\\s+)?reorder\\s+(?:list\\s+)?page|Inventory\\s*[>›→]\\s*Reorder|补货清单(?:页|页面)|(?:打开|查看)补货清单|补货清单(?:里|中|上)[^。\\n]{0,6}看|查看全部'
+  const reorderList = { matches: [{ label: 'says how many items are due', pattern: itemCount, textOnly: true }], listed: { rows: dueNow, atLeast: Math.min(3, dueNow.length) }, wholeList: { route: 'inventory:reorder', words: pageWords } }
   add({ id: 'reorder-en', kind: 'reorder', language: 'en-US', turns: ['What should I reorder this week?'], expect: reorderList })
   add({ id: 'reorder-zh', kind: 'reorder', language: 'zh-CN', turns: ['这周需要补什么货？'], expect: reorderList })
   add({ id: 'cake-zh', kind: 'reorder', language: 'zh-CN', turns: ['蛋糕架还要补货吗？'], expect: { mentions: [named(cake)], numbers: [{ label: '建议数量', value: suggestion.quantity }] } })
@@ -213,7 +215,7 @@ export function buildUciCases(facts) {
     expect: { numbers: [{ label: '现有库存', value: topSeller.onHand }] } })
   add({ id: 'conv-customer-item-en', kind: 'conversation', language: 'en-US', turns: [`Who was our top customer by sales in ${last.en}?`, 'What did they buy the most of that month?'],
     expect: { mentions: [{ label: topCustomer.topItem.sku, any: [topCustomer.topItem.sku, facts.item(topCustomer.topItem.sku).name] }], numbers: [{ label: 'units', value: topCustomer.topItem.units }] } })
-  add({ id: 'conv-reorder-form-en', kind: 'conversation', language: 'en-US', turns: ['What should I reorder this week?', 'ok, order it'], expect: { formAt: { rows: dueNow } } })
+  add({ id: 'conv-reorder-form-en', kind: 'conversation', language: 'en-US', turns: ['What should I reorder this week?', 'ok, order it'], expect: { formAt: { rows: dueNow }, firstTurn: reorderList } })
   add({ id: 'conv-reorder-100-en', kind: 'conversation', language: 'en-US', turns: ['What should I reorder this week?', `make it 100 of ${cake.sku}`], expect: { form: { sku: cake.sku, quantity: 100 } } })
 
   // Boundaries: no business writes from the chat; a draft only.

@@ -447,9 +447,12 @@ test('the UCI question set: every case in English or Chinese, on fixed months, w
   assert.equal(expect('only-partly-en').numbers[0].value, 100)
   assert.equal(expect('only-nothing-zh').numbers[0].value, 170)
   assert.equal(expect('both-arrive-en').numbers[0].value, 240)
-  assert.deepEqual(expect('reorder-en').listed, { rows: [{ sku: 'C1', quantity: 20 }], atLeast: 1 })
-  assert.deepEqual(expect('reorder-en').numbers, [{ label: 'items to order now', value: 1 }])
-  assert.deepEqual(expect('conv-reorder-form-en').formAt, { rows: [{ sku: 'C1', quantity: 20 }] })
+  assert.deepEqual(expect('reorder-en').listed.rows.map(({ sku, quantity }) => ({ sku, quantity })), [{ sku: 'C1', quantity: 20 }])
+  assert.equal(expect('reorder-en').listed.atLeast, 1)
+  assert.deepEqual(expect('reorder-en').matches.map((entry) => [entry.label, entry.textOnly]), [['says how many items are due', true]])
+  assert.equal(expect('reorder-en').wholeList.route, 'inventory:reorder')
+  assert.deepEqual(expect('conv-reorder-form-en').formAt.rows.map(({ sku, quantity }) => ({ sku, quantity })), [{ sku: 'C1', quantity: 20 }])
+  assert.equal(expect('conv-reorder-form-en').firstTurn, expect('reorder-en'))
   // A rise or fall in either sign, the words saying which (2026-11-20).
   assert.deepEqual(expect('month-compare-zh').numbers[2].anyOf, [188.6, 188.6])
   assert.equal(expect('month-compare-zh').matches[0].label, '说增长')
@@ -493,26 +496,73 @@ test('scoring calls: the tools a case must call, and the UCI cases that need the
 
 // 2026-11-12: "22423 …缺口 20 件；但……建议按 60 件下单。" names its quantity in
 // the next clause of the same sentence.
-// 2026-11-22: a reorder question that names no item is scored on items due
-// at the reorder list's quantity, any of them, and the form on its items.
-test('scoring listed items and a form at their quantities', () => {
-  const rows = [{ sku: '23309', quantity: 570 }, { sku: '22961', quantity: 503 }, { sku: '22423', quantity: 112 }, { sku: '84077', quantity: 665 }]
+// 2026-11-22 and the #446 review: a reorder question that names no item is
+// scored on items due at the reorder list's quantity and none at another, a
+// form of due items only, a pointer that is a link or words beside a table,
+// a count of items, and the conversation's first turn.
+test('scoring listed items, a form at their quantities, the whole list and the count', () => {
+  const rows = [{ sku: '23309', quantity: 570, name: 'Set Of 60 Pantry Design Tins' }, { sku: '22961', quantity: 503, name: 'Jam Making Set Printed' }, { sku: '22423', quantity: 112, name: 'Regency Cakestand 3 Tier' }, { sku: '84077', quantity: 665, name: 'World War 2 Gliders Asstd Designs' }]
   const check = (answer, expect, name, answers) => scoreAnswer({ status: 200, ui: [], flags: [], errors: [], ...answer }, expect, answers ? { answers } : {}).checks.find((entry) => entry.name === name)
   const listed = (answer) => check(answer, { listed: { rows, atLeast: 3 } }, 'lists items at their quantity')
-  // Three named at their quantity, in sentences or table rows.
+  const table = (cells) => ({ component: 'table', props: { columns: [], rows: cells, total: cells.length, more: false } })
+  // Three named at their quantity: in sentences, bullets, Chinese, or the list's column.
   assert.equal(listed({ text: 'Order 570 of 23309 and 503 of 22961. 22423: 112 pcs.' }).ok, true)
-  assert.equal(listed({ text: 'Order 570 of 23309.', ui: [{ component: 'table', props: { rows: [{ item: { label: '22961' }, request_quantity: 503 }, { item: { label: '84077' }, request_quantity: 665 }] } }] }).ok, true)
+  assert.equal(listed({ text: '- **23309 Set Of 60 Pantry Design Tins**: 39 pcs in position against a reorder point of 286, order 570 pcs by 22 Nov 2026.\n- **22961**: order 503 pcs (PO-202611-0009 already brings 90).\n- **22423**: order 112 pcs.' }).ok, true)
+  assert.equal(listed({ text: '最急的是 23309（缺口 431 件，建议 570 件）、22961（建议 503 件）和 22423（建议订 112 件）；84077 有 2 张采购订单共 550 件在途。' }).ok, true)
+  assert.equal(listed({ text: 'Order 570 of 23309.', ui: [table([{ sku: { type: 'item', id: 'I2', label: '22961' }, request_quantity: 503 }, { sku: { type: 'item', id: 'I4', label: '84077' }, request_quantity: 665, shortfall: 327 }])] }).ok, true)
   // The solver's quantities, or items without one, are not the list's.
   assert.equal(listed({ text: 'Order 617 of 23309, 650 of 22961 and 140 of 22423.' }).ok, false)
   assert.equal(listed({ text: '23309, 22961 and 22423 are the most short.' }).detail, '0 of 4, 3 wanted')
+  // Another quantity for the same item: after an order word, against the list's, or in a solver column.
+  assert.equal(listed({ text: 'For 23309 the list says 570, but I recommend 617. For 22961 the list says 503; I suggest 650. 22423: 112 on the list, order 140 instead.' }).ok, false)
+  assert.equal(listed({ text: '23309 (617 vs 570), 22961 (650 vs 503) and 22423 (140 instead of 112).' }).ok, false)
+  assert.equal(listed({ text: 'The plan:', ui: [table([
+    { sku: { label: '23309' }, optimal_quantity: 617, reorder_list_quantity: 570, request_quantity: 570 },
+    { sku: { label: '22961' }, optimal_quantity: 650, request_quantity: 503 },
+    { sku: { label: '22423' }, plan_quantity: 140, request_quantity: 112 },
+  ])] }).ok, false)
+  // A form at another quantity contradicts the list's.
+  assert.equal(listed({ text: 'Order 570 of 23309, 503 of 22961 and 112 of 22423.', ui: [{ component: 'pr_form', props: { lines: [{ item: { sku: '23309' }, suggestedQuantity: { value: 617 } }, { item: { sku: '22961' }, suggestedQuantity: { value: 650 } }] } }] }).detail, '1 of 4, 3 wanted: 22423')
+  // Quantities swapped between items fail.
+  assert.equal(listed({ text: 'Order 503 of 23309, 570 of 22961 and 665 of 22423.' }).ok, false)
+  assert.equal(listed({ text: '23309: order 503 pcs. 22961: order 570 pcs. 22423: order 665 pcs.' }).ok, false)
+  // A number in an item's name or a record number is not its quantity.
+  assert.equal(listed({ text: '84077 World War 2 Gliders Asstd Designs is short; PO-202611-0665 covers it.' }).detail, '0 of 4, 3 wanted')
+
+  // The form: every ticked line a due item at its quantity, nothing extra.
   const formAt = (lines, earlier = []) => check({ text: 'I\'ve filled in a request form.', ui: [{ component: 'pr_form', props: { lines } }] }, { formAt: { rows } }, 'form at their quantities', [...earlier, { text: '' }])
-  const line = (sku, value) => ({ item: { sku }, suggestedQuantity: { value } })
-  assert.equal(formAt([line('23309', 570), line('99999', 10)]).ok, true)
+  const line = (sku, value, checked = true) => ({ item: { sku }, suggestedQuantity: { value }, checked })
+  assert.equal(formAt([line('23309', 570), line('22961', 503), line('99999', 10, false)]).ok, true)
+  assert.deepEqual([formAt([line('23309', 570), line('99999', 10)]).ok, formAt([line('23309', 570), line('99999', 10)]).detail], [false, '99999 is not due'])
   assert.deepEqual([formAt([line('23309', 570), line('22961', 650)]).ok, formAt([line('23309', 570), line('22961', 650)]).detail], [false, '22961 at 650, not 503'])
-  // At a quantity an earlier answer gave, the user agreed to it.
-  assert.equal(formAt([line('22961', 650)], [{ text: 'I recommend 650 of 22961.' }]).ok, true)
-  assert.deepEqual([formAt([line('99999', 10)]).ok, formAt([line('99999', 10)]).detail], [false, 'none of the items on the form'])
+  // A quantity an earlier answer gave is still not the list's.
+  assert.equal(formAt([line('22961', 650)], [{ text: 'I recommend 650 of 22961.' }]).ok, false)
+  assert.equal(formAt([line('23309', 570, false)]).detail, 'no line ticked')
   assert.equal(check({ text: 'No form.' }, { formAt: { rows } }, 'form at their quantities').detail, 'no form')
+
+  // The whole list: a table that links its page, or words beside a table.
+  const wholeList = { route: 'inventory:reorder', words: 'on the reorder list page|补货清单页面' }
+  const points = (answer) => check(answer, { wholeList }, 'points to the whole list')
+  const linked = { ...table([{ sku: { label: '23309' }, request_quantity: 570 }]), props: { ...table([]).props, listRoute: { moduleId: 'inventory:reorder' } } }
+  assert.equal(points({ text: '64 items are due.', ui: [linked] }).ok, true)
+  assert.equal(points({ text: 'The rest are on the reorder list page.', ui: [table([{ sku: { label: '23309' }, request_quantity: 570 }])] }).ok, true)
+  assert.deepEqual([points({ text: 'The rest are on the reorder list page.' }).ok, points({ text: 'The rest are on the reorder list page.' }).detail], [false, 'words, no table'])
+  assert.equal(points({ text: 'Show all 64.', ui: [table([{ sku: { label: '23309' }, request_quantity: 570 }])] }).ok, false)
+  assert.equal(points({ text: 'Show all 64.', ui: [{ ...linked, props: { ...linked.props, listRoute: { moduleId: 'procurement:orders' } } }] }).ok, false)
+
+  // The count of items due, said as a count of items.
+  const count = (text) => check({ text, ui: [table([{ quantity: 64 }])] }, { matches: [{ label: 'says how many items are due', pattern: '(?<![\\d.,])64(?:\\s+(?:more\\s+)?(?:items|SKUs|products)\\b|\\s*(?:个|项|种|款))', textOnly: true }] }, 'says: says how many items are due').ok
+  assert.equal(count('64 items are due to order now.'), true)
+  assert.equal(count('这周有 64 个物料要今天下单。'), true)
+  assert.equal(count('Order 64 pcs of 22423.'), false)
+  assert.equal(count('Only the table says it.'), false)
+
+  // A conversation's first turn is scored too, as turn 1.
+  const first = { status: 200, text: 'Order 570 of 23309.', ui: [], flags: [], errors: [] }
+  const second = { status: 200, text: 'I\'ve filled in a request form.', ui: [{ component: 'pr_form', props: { lines: [line('23309', 570)] } }], flags: [], errors: [] }
+  const scored = scoreAnswer(second, { formAt: { rows }, firstTurn: { listed: { rows, atLeast: 3 }, wholeList } }, { answers: [first, second] })
+  assert.deepEqual(scored.checks.filter((entry) => !entry.ok && !entry.soft).map((entry) => entry.name), ['turn 1: lists items at their quantity', 'turn 1: points to the whole list'])
+  assert.equal(scored.pass, false)
 })
 
 test('scoring quantities: a quantity counts anywhere in its SKU\'s sentence, not across a full stop', () => {
