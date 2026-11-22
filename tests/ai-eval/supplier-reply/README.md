@@ -337,6 +337,107 @@ fields or tags are checked exactly as before.
   `>` lines before cutting at a header, as §4.3 does. A quote between `>`
   lines therefore counts as the supplier's new text.
 
+## The fourth held-out batch (several orders)
+
+`held-out-4-cases.mjs` exports `HELD_OUT_4_CASES`: 10 replies, each one email
+that names several purchase orders. 6 are in English and 4 in Chinese, 8 on
+UCI and 2 on M5. Every reply text is written by us, like the rest of this set.
+
+- **Written blind:** from the design note for reading several orders in one
+  email (§9 of the supplier email reading note of 2026-11-21, a design, not
+  built), #363 (§4.3 and §4.8) and the contract. This folder's case files
+  served as the format. The reading's code, its fixes and their branches were
+  not read.
+- **Not run yet.** A run calls a paid model and needs the owner's approval.
+  Nothing reads several orders yet, so no runner takes this shape;
+  `held-out-4-cases.test.mjs` checks the cases only.
+- **A different shape.** A case names several orders, so it does not go
+  through `kase()`. Each case gives `source` (`paste` or `email`), `pastedOn`
+  (null for an emailed reply), `orders` (every named order that exists, as its
+  `orders.mjs` snapshot, with the status changed for a closed order) and
+  `expected`:
+  - `read`: the orders whose part is read: the pasted order, plus the other
+    named orders that are open and have the same supplier, at most 5 in all;
+  - `notRead`: named orders that are only listed, as `{ number, why }`, with
+    `why` one of `closed`, `other_supplier`, `unknown` or `over_limit`;
+  - `byOrder`: per read order, `state`, `replyKind`, `lines`, `flags` and
+    `mustNotPropose` (and `alsoAccept` where used), with the meanings of
+    `expected` above, read against that order's own lines.
+
+What it covers, one case each (orders by their last four digits):
+- **A paragraph per order** (`en-uci-0030-two-orders-paragraphs`): 0030 gets
+  1 Dec and 0019 gets 4 Dec.
+- **A line per order, "PO-x: item date"** (`zh-uci-0029-line-per-order`): 0029
+  gets 27 Nov; on 0018 only the one line named gets 3 Dec.
+- **One sentence naming two orders** (`en-m5-0012-one-sentence-two-orders`):
+  4 Dec on every line of 0012 and 0019.
+- **An item on both orders, a date in each part** (`zh-uci-0014-shared-item`):
+  20972 gets 10 Dec on 0014, whose other lines are confirmed, and 4 Dec on
+  0008, whose other lines get 27 Nov.
+- **Dates in the greeting**, a call and a factory closure
+  (`zh-uci-0020-general-dates`): 0020 gets 7 Dec and 0013 gets 2 Dec; the
+  greeting's dates go nowhere.
+- **A closed order beside an open one** (`en-m5-0021-closed-order`): 0021 gets
+  3 Dec; the closed 0014 is listed, not read.
+- **Another supplier's order by mistake** (`en-uci-0012-other-supplier-order`):
+  0012 gets "next Wednesday", 25 Nov; 0013, another supplier's, is listed, not
+  read.
+- **Inline answers in a two-order chase** (`en-uci-0028-inline-two-order-chase`):
+  0028 gets 26 Nov and 0030 gets 3 Dec, for the same item.
+- **A forwarded older reply about a third order** (`zh-uci-0018-forwarded-thread`):
+  0018 gets 9 Dec and 0012 gets 2 Dec; 0029's part has no date (needs you),
+  and the forwarded 27 Nov goes nowhere.
+- **An emailed reply naming three orders** (`en-uci-0028-emailed-three-orders`):
+  0028 gets 26 Nov, 0030's "around 3 December" goes to the person, and 0019
+  keeps 30 Nov on one line and gets 8 Dec on the other; an unknown number is
+  listed, not read.
+
+How the cases read §9. Where it is silent, the conservative reading was taken
+(nothing doubtful is proposed, and the line goes to the person), and the case
+says so in a comment.
+- **Parts.** A part runs from one order number to the next. Text before the
+  first order number belongs to no order. A date is proposed on an order only
+  from text in its own part, and every other order's date is in that order's
+  `mustNotPropose`: a date on the wrong order is a hard fail.
+- **Quoted and forwarded text** is cut before reading (§4.3), so a part that
+  lies in it gives nothing. The forwarded older reply's date is proposed
+  nowhere.
+- **One sentence naming both orders**, with nothing hedging it, is proposed on
+  both, as §9 allows, though the part rule alone would leave the first order
+  without a date. A hold for the person there is a miss, not a hard fail.
+- **Dates in the greeting** are not delivery dates. Each order's own date is
+  still proposed; a card that offers the greeting's dates to the person is
+  also accepted (`alsoAccept: ['needs_you']`).
+- **`other_order` flags** are expected only for named orders that exist and are
+  not read (closed, another supplier's), where §4.8's "flag with a link,
+  nothing recorded on it from here" applies unchanged. A read sibling gets
+  §9's "This reply also names …" instead, so a flag for it is allowed but not
+  required. No flag is required for an unknown number, which has nothing to
+  link to.
+- **Another supplier's order** is not mapped to the order the supplier
+  probably meant: an order the reply does not name is not read.
+
+Not covered: more than 5 orders (no supplier in `orders.mjs` has more than
+three open orders), a delivery date that belongs to no order, and an item on
+two orders whose part does not make the order clear.
+
+`held-out-4-cases.test.mjs` checks, with no model and no dependencies:
+- unique ids, at least three Chinese cases, and each kind once;
+- every `read` and `notRead` number, and every snapshot, is named in the
+  reply, and every named order is read or listed;
+- every `read` order has a `byOrder` entry and a snapshot, the pasted order is
+  read, and an emailed reply has no `pastedOn`;
+- the snapshots are `orders.mjs`'s own with only the status changed, read
+  orders are open with one supplier, and each `notRead` reason holds;
+- the contract's values, each line on its own order, and each proposed quote
+  in the supplier's new text and in its own order's part;
+- every `mustNotPropose` date differs from that order's expected proposals;
+- `other_order` flags name exactly the listed orders that exist.
+
+```
+node --test tests/ai-eval/supplier-reply/held-out-4-cases.test.mjs
+```
+
 ## Draft cases from "wrong reading"
 
 When a person dismisses a card with "Don't record: wrong reading", the reply
