@@ -150,7 +150,7 @@ export function ReceivablePurchaseOrderChooser() {
         )}
       </ListSearchCard>
 
-      <ListCard title={tr("listTitle")} total={canReceive && state === "loaded" ? orders.length : undefined} shown={shown.length} testId="receiving-po-chooser-list">
+      <ListCard title={tr("listTitle")} total={canReceive && state === "loaded" ? shown.length : undefined} shown={shown.length} all={canReceive && state === "loaded" ? orders.length : undefined} testId="receiving-po-chooser-list">
         <div className={tableScrollClass}>
           <table className={`w-full min-w-[860px] text-left ${tableBodyTextClass}`}>
             <thead>

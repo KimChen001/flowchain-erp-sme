@@ -4,7 +4,7 @@ import { apiJson } from "../../lib/api-client";
 import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
 import { listTableCardsRef, tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass } from "../../components/ui/workbenchTable";
 import { EntityLink } from "../../components/business/EntityLink";
-import { ListSearchCard, RefreshButton, ResetButton, StatusChip, listRowClass, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
+import { ListSearchCard, ListStateBlock, RefreshButton, ResetButton, StatusChip, listRowClass, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
 import { useI18n } from "../../i18n/I18n";
 import { useMasterDataWriteAccess } from "../master-data/writeAccess";
 import { supplierCopy } from "./supplierCopy";
@@ -202,7 +202,7 @@ export default function SupplierEvaluationPage() {
       </ListSearchCard>
 
       <Card>
-        <div className="flex flex-wrap items-center gap-3 px-5 py-3.5" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
+        <div className="flex flex-wrap items-center gap-3 px-4 py-3.5 sm:px-5" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
           <div className="min-w-0">
             <div className="text-sm font-semibold" style={{ color: A.label }}>{t("Supplier indicators")}</div>
             <div className="mt-0.5 text-[11px]" style={{ color: A.sub }} data-testid="supplier-evaluation-count">
@@ -216,21 +216,15 @@ export default function SupplierEvaluationPage() {
             </select>
           </label>
         </div>
-        <p className="px-5 pt-3 text-[11px]" style={{ color: A.sub }}>{t("Tiers are set by your team with a reason and kept in each supplier's history. FlowChain does not suggest tiers.")}</p>
-        {insightsFailed && <p role="alert" className="px-5 pt-2 text-xs" style={{ color: A.danger }}>{t("Indicators could not be loaded. Refresh to try again.")}</p>}
+        <p className="px-4 pt-3 text-[11px] sm:px-5" style={{ color: A.sub }}>{t("Tiers are set by your team with a reason and kept in each supplier's history. FlowChain does not suggest tiers.")}</p>
+        {insightsFailed && <p role="alert" className="px-4 pt-2 text-xs sm:px-5" style={{ color: A.danger }}>{t("Indicators could not be loaded. Refresh to try again.")}</p>}
+        {/* Loading, a load error and nothing to show as every list shows them. */}
         {error ? (
-          <div className="p-8 text-center">
-            <div className="text-sm" style={{ color: A.danger }}>{t("Could not load suppliers.")}</div>
-            <button type="button" onClick={load} className="mt-3 text-xs text-blue-600">{t("Retry")}</button>
-          </div>
+          <ListStateBlock state="error" title={t("Could not load suppliers.")} onRetry={load} />
         ) : loading && rows.length === 0 ? (
-          <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{t("Loading…")}</div>
+          <ListStateBlock state="loading" />
         ) : rows.length === 0 ? (
-          <div className="py-14 text-center text-sm" style={{ color: A.sub }}>
-            <span className="font-semibold" style={{ color: A.label }}>{t(filtered ? "No suppliers match these filters" : "No suppliers yet")}</span>
-            <br />
-            <span className="text-xs">{t(filtered ? "Reset the filters to see every supplier." : "Add suppliers on the Suppliers tab, or import a file of suppliers, to evaluate them here.")}</span>
-          </div>
+          <ListStateBlock state="empty" title={t(filtered ? "No suppliers match these filters" : "No suppliers yet")} detail={t(filtered ? "Reset the filters to see every supplier." : "Add suppliers on the Suppliers tab, or import a file of suppliers, to evaluate them here.")} />
         ) : (
           <div className={tableScrollClass} ref={listTableCardsRef}>
             {/* The table is sized to fit the card on a 1366 px screen and wider:

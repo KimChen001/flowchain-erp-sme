@@ -4,7 +4,7 @@ import { apiJson } from "../../lib/api-client";
 import { useSearchParams } from "react-router";
 import { A, Card, Field, inputStyle } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
-import { RefreshButton, ResetButton } from "../../components/ui/listLayout";
+import { ListSearchCard, ListStateBlock, RefreshButton, ResetButton } from "../../components/ui/listLayout";
 import { listTableCardsRef, tableBodyTextClass, tableLinkClass, tableScrollClass, tdNameClass, tdNowrapClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { EntityLink } from "../../components/business/EntityLink";
 import { useI18n } from "../../i18n/I18n";
@@ -92,18 +92,15 @@ export default function SupplierRisksPage() {
         ))}
       </div>
 
-      <Card className="p-5">
-        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="fc-section-title" style={{ color: A.label }}>{t("Supplier risk search")}</h2>
-            <div className="mt-1 text-xs" style={{ color: A.sub }}>{t("Search open issues by supplier and issue type.")}</div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <ResetButton onClick={resetFilters} />
-            <RefreshButton onClick={() => setTick((value) => value + 1)} />
-          </div>
-        </div>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+      <ListSearchCard
+        title={t("Supplier risk search")}
+        subtitle={t("Search open issues by supplier and issue type.")}
+        activeFilters={type ? 1 : 0}
+        actions={<>
+          <ResetButton onClick={resetFilters} />
+          <RefreshButton onClick={() => setTick((value) => value + 1)} />
+        </>}
+      >
           <Field label={t("Supplier")}>
             <input aria-label={t("Search suppliers")} placeholder={t("Supplier code or name")} value={query} onChange={(event) => setQuery(event.target.value)} style={inputStyle} />
           </Field>
@@ -113,11 +110,10 @@ export default function SupplierRisksPage() {
               {KINDS.map((kind) => <option key={kind.type} value={kind.type}>{t(kind.label)}</option>)}
             </select>
           </Field>
-        </div>
-      </Card>
+      </ListSearchCard>
 
       <Card>
-        <div className="flex items-center gap-3 px-5 py-3.5" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
+        <div className="flex items-center gap-3 px-4 py-3.5 sm:px-5" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
           <div>
             <div className="text-sm font-semibold" style={{ color: A.label }}>{t("Open issues")}</div>
             <div className="mt-0.5 text-[11px]" style={{ color: A.sub }} data-testid="supplier-risks-count">
@@ -125,28 +121,20 @@ export default function SupplierRisksPage() {
             </div>
           </div>
         </div>
-        {data?.issues && <p className="px-5 pt-3 text-[11px]" style={{ color: A.sub }}>{t("Earliest date first: an overdue purchase order by its promised date, any other issue by the day it started. Never ordered by a score.")}</p>}
-        {data?.issues && <p className="px-5 pt-1 text-[11px]" style={{ color: A.sub }} data-testid="supplier-risks-current">{t("Only issues open now: an issue leaves this list once it is resolved, and past issues are not kept here.")}</p>}
-        {hiddenKinds.length > 0 && <p className="px-5 pt-1 text-[11px]" style={{ color: A.sub }} data-testid="supplier-risks-partial">
+        {data?.issues && <p className="px-4 pt-3 text-[11px] sm:px-5" style={{ color: A.sub }}>{t("Earliest date first: an overdue purchase order by its promised date, any other issue by the day it started. Never ordered by a score.")}</p>}
+        {data?.issues && <p className="px-4 pt-1 text-[11px] sm:px-5" style={{ color: A.sub }} data-testid="supplier-risks-current">{t("Only issues open now: an issue leaves this list once it is resolved, and past issues are not kept here.")}</p>}
+        {hiddenKinds.length > 0 && <p className="px-4 pt-1 text-[11px] sm:px-5" style={{ color: A.sub }} data-testid="supplier-risks-partial">
           {t("Some kinds of issue are hidden for your role: {kinds}.").replace("{kinds}", hiddenKinds.map((kind) => t(kind.label)).join(listSeparator))}
         </p>}
+        {/* Loading, a load error and nothing to show as every list shows them. */}
         {error ? (
-          <div className="p-8 text-center">
-            <div className="text-sm" style={{ color: A.danger }}>{t("Could not load supplier risks.")}</div>
-            <button type="button" onClick={() => setTick((value) => value + 1)} className="mt-3 text-xs text-blue-600">{t("Retry")}</button>
-          </div>
+          <ListStateBlock state="error" title={t("Could not load supplier risks.")} onRetry={() => setTick((value) => value + 1)} />
         ) : loading && !data ? (
-          <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{t("Loading…")}</div>
+          <ListStateBlock state="loading" />
         ) : data && !data.issues ? (
-          <div className="py-14 text-center text-sm" style={{ color: A.sub }} data-testid="supplier-risks-hidden">
-            {t("Hidden for your role: you cannot read the purchase orders, receipts or supplier invoices behind these issues.")}
-          </div>
+          <ListStateBlock state="empty" detail={t("Hidden for your role: you cannot read the purchase orders, receipts or supplier invoices behind these issues.")} testId="supplier-risks-hidden" />
         ) : shown.length === 0 ? (
-          <div className="py-14 text-center text-sm" style={{ color: A.sub }} data-testid="supplier-risks-empty">
-            <span className="font-semibold" style={{ color: A.label }}>{t(filtered ? "No issues match these filters" : "No open supplier issues")}</span>
-            <br />
-            <span className="text-xs">{t(filtered ? "Reset the filters to see every open issue." : "Overdue purchase orders, receipts with rejections and invoice variances are listed here while they are open. Nothing needs following up now.")}</span>
-          </div>
+          <ListStateBlock state="empty" title={t(filtered ? "No issues match these filters" : "No open supplier issues")} detail={t(filtered ? "Reset the filters to see every open issue." : "Overdue purchase orders, receipts with rejections and invoice variances are listed here while they are open. Nothing needs following up now.")} testId="supplier-risks-empty" />
         ) : (
           <div className={tableScrollClass} ref={listTableCardsRef}>
             <table className={`w-full min-w-[960px] text-left ${tableBodyTextClass}`} data-testid="supplier-risks-table">
