@@ -827,7 +827,7 @@ export default function ReorderListPage() {
                               <Link
                                 to={purchaseRequestHref(row, reason)}
                                 data-testid={`reorder-create-request-${row.sku}`}
-                                className={`${rowActionClass.primary} inline-block whitespace-nowrap !no-underline max-sm:px-3 max-sm:py-1.5 max-sm:text-[12px]`}
+                                className={`${rowActionClass.primary} inline-block whitespace-nowrap !no-underline max-sm:px-3 max-sm:py-1.5`}
                               >
                                 {t("createRequest")}
                               </Link>

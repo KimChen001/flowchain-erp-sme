@@ -56,7 +56,10 @@ export const listButtonClass = {
 // Buttons inside a table row: the main one tinted, the others neutral. On a
 // phone the row is a card and these are thumb targets: at least 36 px tall,
 // with room between them (theme.css spaces the card's action row).
-const rowActionSize = "inline-flex items-center justify-center rounded-md px-2 py-1 text-[11px] font-medium max-sm:min-h-9 max-sm:px-3 max-sm:text-xs";
+// The type is the 13 px a <button> renders at (theme.css sets every button
+// so, outside the utility layers), so a row's links (View, Compare) read the
+// same size as its buttons beside them.
+const rowActionSize = "inline-flex items-center justify-center rounded-md px-2 py-1 text-[13px] leading-5 font-medium max-sm:min-h-9 max-sm:px-3";
 export const rowActionClass = {
   primary: `${rowActionSize} bg-blue-50 text-blue-600 hover:bg-blue-100`,
   neutral: `${rowActionSize} bg-slate-100 text-slate-700 hover:bg-slate-200`,
