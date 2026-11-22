@@ -74,6 +74,14 @@ export function ExportButton({ onClick }: { onClick: () => void }) {
   return <button type="button" onClick={onClick} className={listButtonClass.export}><FileSpreadsheet size={13} />{say("export")}</button>;
 }
 
+// Retry under a page that could not read its record: the secondary button
+// with the refresh icon, the same on every detail page. `label` keeps a
+// page's own wording of it.
+export function RetryButton({ onClick, label, className = "mt-4" }: { onClick: () => void; label?: string; className?: string }) {
+  const say = useListCopy();
+  return <button type="button" onClick={onClick} className={`${className} ${listButtonClass.secondary}`}><RefreshCw size={13} />{label ?? say("retry")}</button>;
+}
+
 export function PrimaryButton({ onClick, children, testId }: { onClick: () => void; children: React.ReactNode; testId?: string }) {
   return <button type="button" onClick={onClick} className={listButtonClass.primary} data-testid={testId}><Plus size={13} />{children}</button>;
 }

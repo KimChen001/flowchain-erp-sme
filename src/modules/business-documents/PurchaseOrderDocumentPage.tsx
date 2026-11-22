@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, RefreshCw, TriangleAlert } from "lucide-react";
+import { RetryButton } from "../../components/ui/listLayout";
+import { ArrowLeft } from "lucide-react";
 import { Link } from "react-router";
 import type { DocumentLanguage, PurchaseOrderDocument } from "../../../shared/business-documents.mjs";
 import { A, Card } from "../../components/ui";
@@ -170,13 +171,12 @@ export function PurchaseOrderDocumentPage({ orderId }: { orderId: string }) {
   const message = { notFound: t("documents.notFound"), forbidden: t("documents.forbidden"), error: t("documents.loadFailed") };
   return (
     <div className="space-y-4" data-testid="po-document-state">
-      <Card className="p-8 text-center">
+      <Card className="py-16 text-center">
         {state === "loading"
           ? <div className="text-sm" style={{ color: A.sub }}>{t("documents.loading")}</div>
           : <>
-              <TriangleAlert className="mx-auto text-amber-600" size={30} />
-              <div className="mt-3 text-sm font-semibold" data-testid="po-document-unavailable">{message[state as keyof typeof message]}</div>
-              {state === "error" && <button type="button" onClick={() => void load()} className="mt-4 inline-flex items-center gap-2 text-sm font-semibold" style={{ color: A.blue }}><RefreshCw size={15} />{t("documents.retry")}</button>}
+              <div className="text-sm font-semibold" style={{ color: A.label }} data-testid="po-document-unavailable">{message[state as keyof typeof message]}</div>
+              {state === "error" && <RetryButton onClick={() => void load()} label={t("documents.retry")} />}
             </>}
       </Card>
       <Link to={backTo} className="inline-flex items-center gap-2 text-sm font-semibold" style={{ color: A.blue }}><ArrowLeft size={16} />{t("documents.back")}</Link>

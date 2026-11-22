@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { A, Card, Field, inputStyle, useConfirm } from "../../components/ui";
 import { FieldError, FormActionBar, FormHeader, FormSection, focusFirstInvalid, formGridClass, invalidProps, useFormCopy } from "../../components/ui/formLayout";
 import { FocusFirstField } from "../../components/ui/FocusFirstField";
-import { StatusChip as ToneChip, listButtonClass, listHeadRowStyle, listRowStyle, type StatusTone } from "../../components/ui/listLayout";
+import { StatusChip as ToneChip, listButtonClass, listHeadRowStyle, listRowStyle, type StatusTone, RetryButton } from "../../components/ui/listLayout";
 import { listTableCardsRef, tableBodyTextClass } from "../../components/ui/workbenchTable";
 import { typography } from "../../components/ui/typography";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
@@ -397,7 +397,7 @@ export function NewSupplierInvoice() {
       setBusy(false);
     }
   };
-  if (!entry) return notice ? <Notice>{notice}</Notice> : <Card className="p-6">{t("common.loading")}</Card>;
+  if (!entry) return notice ? <Notice>{notice}</Notice> : <Card className="py-16 text-center text-sm" style={{ color: A.sub }}>{t("common.loading")}</Card>;
   const enabled = Boolean(entry.capabilities?.["supplier-invoice"]?.enabled);
   const shown = checked ? validation : noProblems();
   const problems: Problems = refused
@@ -1170,19 +1170,19 @@ export function SupplierInvoiceDetail() {
       <div className="space-y-3">
       <BackToListLink list="bills" />
       <Card className="py-16 text-center" data-testid={testId}>
-        <div className="text-sm font-semibold">{text}</div>
-        <div className="mt-2 text-xs text-slate-500">{id}</div>
+        <div className="text-sm font-semibold" style={{ color: A.label }}>{text}</div>
+        <div className="mt-2 text-xs" style={{ color: A.sub }}>{id}</div>
         {/* Invoice numbers repeat between suppliers, so a typed number may not open one (design audit L1-24). */}
         {failure === "notFound" && <>
           <p className="mx-auto mt-3 max-w-md text-xs text-slate-500" data-testid="supplier-invoice-not-found-hint">{t("finance.billNotFoundHint")}</p>
           <Link to="/app/procurement/bills" className="mt-2 inline-block text-sm font-semibold text-blue-600 hover:underline">{t("finance.billListLink")}</Link>
         </>}
-        {failure === "error" && <button type="button" onClick={load} className="mt-3 text-sm font-semibold text-blue-600">{t("finance.retry")}</button>}
+        {failure === "error" && <RetryButton onClick={load} label={t("finance.retry")} />}
       </Card>
       </div>
     );
   }
-  if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
+  if (!data) return <Card className="py-16 text-center text-sm" style={{ color: A.sub }}>{t("common.loading")}</Card>;
   const base = `/api/finance/supplier-invoices/${encodeURIComponent(data.id)}`;
   const actions: string[] = Array.isArray(data.availableActions) ? data.availableActions : [];
   const version = { expectedVersion: data.version };

@@ -31,7 +31,7 @@ import { BackToListLink } from "../procurement/BackToListLink";
 import { ListPager, usePagedRows } from "../procurement/listPaging";
 import { EntityLink } from "../../components/business/EntityLink";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdClass, tdIdClass, tdNameClass, tdNowrapClass, tdNumericClass, tdNumericRightClass, thClass, thRightClass } from "../../components/ui/workbenchTable";
-import { ExportButton, ListCard, ListSearchCard, ListStateRow, PrimaryButton, RefreshButton, ResetButton, RowMenu, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
+import { ExportButton, ListCard, ListSearchCard, ListStateRow, PrimaryButton, RefreshButton, ResetButton, RowMenu, StatusChip, listButtonClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf, RetryButton } from "../../components/ui/listLayout";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { FormActionBar, FormHeader, FormLineCard, FormSection, focusFirstInvalid, formGridClass, useFormCopy } from "../../components/ui/formLayout";
 import { statusCodeLabel } from "../../i18n/statusLabels";
@@ -1149,14 +1149,11 @@ export default function CanonicalProcurementPanel({
   if (loadError)
     return (
       <Card className="p-12 text-center">
-        <h1 className="text-base font-semibold">{copy("采购申请数据加载失败")}</h1>
+        <h1 className="text-sm font-semibold" style={{ color: A.label }}>{copy("采购申请数据加载失败")}</h1>
         <p className="mt-2 text-xs" style={{ color: A.sub }}>
           {copy(loadError)}
         </p>
-        <button
-          onClick={() => load().catch((error) => toast.error(errorText(error, LOAD_FAILED)))}
-          className="mt-3 text-sm text-blue-600"
-        >{copy("重试")}</button>
+        <RetryButton onClick={() => void load().catch((error) => toast.error(errorText(error, LOAD_FAILED)))} label={copy("重试")} />
       </Card>
     );
   const editingSelected = Boolean(selected && formOpen && editing?.id === selected.id);

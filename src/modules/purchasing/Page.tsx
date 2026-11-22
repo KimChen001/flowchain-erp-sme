@@ -75,7 +75,7 @@ import {
   listTableCardsRef,
 } from "../../components/ui/workbenchTable";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
-import { ExportButton, ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, RowMenu, StatusChip, metricGridClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
+import { ExportButton, ListCard, ListSearchCard, ListStateRow, RefreshButton, ResetButton, RowMenu, StatusChip, metricGridClass, listHeadRowStyle, listRowClass, listRowStyle, rowActionClass, statusToneOf, type StatusTone, RetryButton } from "../../components/ui/listLayout";
 import { BackToListLink } from "../procurement/BackToListLink";
 import { procurementErrorCode, procurementErrorText } from "../procurement/procurementErrors";
 import { BILLABLE_PO_STATUSES, PurchaseOrderReceiveAction, PurchaseOrderWorkflowActions, poSecondaryButtonClass, receiveOrderPath, recordBillPath, usePurchaseOrderActionNotes, usePurchaseOrderEntryRules } from "./components/PurchaseOrderWorkflowActions";
@@ -1754,9 +1754,9 @@ export default function PurchasingOrdersPage({
   if (loadError) {
     return (
       <Card className="p-12 text-center" data-testid="po-error-state">
-        <div className="text-sm font-semibold">{copy("采购订单加载失败")}</div>
+        <div className="text-sm font-semibold" style={{ color: A.label }}>{copy("采购订单加载失败")}</div>
         <div className="mt-2 text-xs" style={{ color: A.sub }} title={procurementErrorCode(loadError.error)}>{procurementErrorText(loadError.error, language, ["Try again in a moment.", "请稍后重试。"])}</div>
-        <button type="button" onClick={() => loadWorkbench()} className="mt-4 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white">{copy("重试")}</button>
+        <RetryButton onClick={() => loadWorkbench()} label={copy("重试")} />
       </Card>
     );
   }
