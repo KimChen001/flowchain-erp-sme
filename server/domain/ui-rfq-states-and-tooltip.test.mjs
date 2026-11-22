@@ -52,6 +52,10 @@ test('the supplier performance definition stays inside the screen on a phone', (
   const panel = read('src/modules/srm/supplierPerformance.tsx')
   // Desktop is unchanged: it still opens 28rem wide below the icon.
   assert.ok(panel.includes('<span ref={panel} role="tooltip" data-testid="supplier-performance-definition" className="absolute left-0 top-7 z-20 w-[min(28rem,80vw)] '))
+  // It sits inside the section heading, so its text is set back to normal
+  // weight; only its own title stays bold (the 11/22 shots showed it all semibold).
+  assert.ok(panel.includes('text-left text-[11px] font-normal leading-5 shadow-lg"'))
+  assert.ok(panel.includes('<span className="mb-1 block font-semibold">{tr("definitionTitle")}</span>'))
   // Once open, it moves left by however much runs past the right edge, 8 px in.
   assert.ok(panel.includes('const panel = useRef<HTMLSpanElement>(null);'))
   assert.ok(panel.includes('useLayoutEffect(() => {'))

@@ -240,7 +240,7 @@ function Definition() {
         <Info size={14} color={A.blue} />
       </button>
       {open && (
-        <span ref={panel} role="tooltip" data-testid="supplier-performance-definition" className="absolute left-0 top-7 z-20 w-[min(28rem,80vw)] rounded-lg border bg-white p-3 text-left text-[11px] leading-5 shadow-lg" style={{ color: A.label, borderColor: A.border }}>
+        <span ref={panel} role="tooltip" data-testid="supplier-performance-definition" className="absolute left-0 top-7 z-20 w-[min(28rem,80vw)] rounded-lg border bg-white p-3 text-left text-[11px] font-normal leading-5 shadow-lg" style={{ color: A.label, borderColor: A.border }}>
           <span className="mb-1 block font-semibold">{tr("definitionTitle")}</span>
           {tr("definition")}
         </span>
