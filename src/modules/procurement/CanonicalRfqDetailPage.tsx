@@ -10,6 +10,7 @@ import { listButtonClass } from "../../components/ui/listLayout";
 import { procurementApi } from "./procurementApi";
 import { RfqSupplierResponseDialog } from "./RfqSupplierResponseDialog";
 import { useI18n } from "../../i18n/I18n";
+import { unitLabel } from "../../i18n/unitLabels";
 import { formatCalendarDay, formatDateTimeInTimeZone } from "../../lib/format";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { useDocumentNumber } from "../../lib/documentNumbers";
@@ -191,7 +192,7 @@ function RevisionSummary({ revision, currency }: { revision: ProcurementQuotatio
       </div>
       {revision.lines.map((line) => (
         <div key={line.id} className="mt-1 text-[11px]" style={{ color: A.sub }} data-testid={`rfq-revision-line-${line.id}`}>
-          {line.sku || line.itemName || line.itemId || line.id} · {number(line.quantity, locale)} {line.unit || ""} · {money(line.unitPrice, revision.currency || currency, locale)}
+          {line.sku || line.itemName || line.itemId || line.id} · {number(line.quantity, locale)} {unitLabel(line.unit, language, Number(line.quantity))} · {money(line.unitPrice, revision.currency || currency, locale)}
         </div>
       ))}
     </div>
@@ -206,7 +207,7 @@ function QuotationRow({ quotation, currency, index, count }: { quotation: Procur
   return (
     <tr className={`${listRowClass} align-top`} style={listRowStyle(index, count)} data-testid={`rfq-quotation-${quotation.id}`}>
       <td className="whitespace-nowrap px-4 py-3 font-medium tabular-nums">{quotation.id}</td>
-      <td className="px-4 py-3"><div>{quotation.supplierName || quotation.supplierId || tr("未提供", "Not provided")}</div>{quotation.lines.length > 0 && <div className="mt-1 space-y-0.5 text-[11px]" style={{ color: A.sub }}>{quotation.lines.map((line) => <div key={line.id} data-testid={`rfq-quotation-line-${line.id}`}>{line.sku || line.itemName || line.itemId || line.id} · {number(line.quantity, locale)} {line.unit || ""} · <span className="whitespace-nowrap">{money(line.unitPrice, quotation.currency || currency, locale)}</span></div>)}</div>}</td>
+      <td className="px-4 py-3"><div>{quotation.supplierName || quotation.supplierId || tr("未提供", "Not provided")}</div>{quotation.lines.length > 0 && <div className="mt-1 space-y-0.5 text-[11px]" style={{ color: A.sub }}>{quotation.lines.map((line) => <div key={line.id} data-testid={`rfq-quotation-line-${line.id}`}>{line.sku || line.itemName || line.itemId || line.id} · {number(line.quantity, locale)} {unitLabel(line.unit, language, Number(line.quantity))} · <span className="whitespace-nowrap">{money(line.unitPrice, quotation.currency || currency, locale)}</span></div>)}</div>}</td>
       <td className="px-4 py-3">{hasAuthority ? <StatusChip label={statusLabel(quotation.status, QUOTATION_STATUS_LABELS, language)} tone={statusToneOf(quotation.status)} /> : <StatusChip label={tr("缺少报价修订", "Quote revision missing")} tone="warning" />}</td>
       <td className="whitespace-nowrap px-4 py-3 text-right font-medium tabular-nums">{hasAuthority ? money(quotation.quotedAmount, quotation.currency || currency, locale) : tr("不可用", "Unavailable")}</td>
       <td className="px-4 py-3">{hasAuthority ? <><div className="whitespace-nowrap">{when(quotation.submittedAt)}</div><div className="mt-1 text-[11px]" style={{ color: A.sub }}>{tr("交期", "Delivery")}: <span className="whitespace-nowrap">{quotation.deliveryDate ? day(quotation.deliveryDate) : tr("未提供", "Not provided")}</span></div><div className="text-[11px]" style={{ color: A.sub }}>{tr("付款", "Payment")}: {quotation.paymentTerms || tr("未提供", "Not provided")} · {tr("有效期", "Valid until")}: <span className="whitespace-nowrap">{quotation.validity ? day(quotation.validity) : tr("未提供", "Not provided")}</span></div></> : <div style={{ color: A.sub }}>{tr("尚无可用的报价条款", "No quotation terms recorded")}</div>}</td>
@@ -327,7 +328,7 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, canTransition, no
               <td className="whitespace-nowrap px-4 py-3 font-medium tabular-nums" title={line.id}>{tr(`第 ${index + 1} 行`, `Line ${index + 1}`)}</td>
               <td className="px-4 py-3"><div>{line.itemName || "—"}</div><div className="mt-1" style={{ color: A.sub }}>{line.sku || line.itemId || "—"}</div></td>
               <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{number(line.quantity, locale)}</td>
-              <td className="px-4 py-3">{line.unit || "—"}</td>
+              <td className="px-4 py-3">{line.unit ? unitLabel(line.unit, language) : "—"}</td>
               <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{money(line.targetUnitPrice, record.currency, locale)}</td>
               <td className="whitespace-nowrap px-4 py-3">{line.requiredDate ? day(line.requiredDate) : "—"}</td>
               <td className="px-4 py-3">{warehouseName(line.deliveryLocation) || "—"}</td>

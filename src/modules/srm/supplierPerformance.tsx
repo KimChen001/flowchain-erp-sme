@@ -469,6 +469,7 @@ function useUrlPeriod() {
 // The Performance tab of the supplier detail page.
 export function SupplierPerformancePanel({ supplierId }: { supplierId: string }) {
   const tr = useCopy();
+  const { locale } = useI18n();
   const [period, setPeriod] = usePeriod();
   const { data, error, loading, reload } = useSupplierScorecard({ supplierId, ...period });
   const row = data?.suppliers.find((item) => item.supplierId === supplierId);
@@ -478,7 +479,7 @@ export function SupplierPerformancePanel({ supplierId }: { supplierId: string })
         <div>
           <h2 className="fc-section-title flex items-center gap-1" style={{ color: A.label }}>{tr("title")}<Definition /></h2>
           <p className="mt-1 text-xs" style={{ color: A.sub }}>{tr("subtitle")}{data?.rules.promiseBasis === "po_date" && <span data-testid="supplier-performance-basis"> {tr("basisNote")}</span>}</p>
-          {data && <p className="mt-1 text-[11px]" style={{ color: A.gray1 }} data-testid="supplier-performance-scope">{data.period.from} — {data.period.to} · {tr("graceDays")}: {data.rules.graceDays}</p>}
+          {data && <p className="mt-1 text-[11px]" style={{ color: A.gray1 }} data-testid="supplier-performance-scope">{formatCalendarDay(data.period.from, locale)} — {formatCalendarDay(data.period.to, locale)} · {tr("graceDays")}: {data.rules.graceDays}</p>}
         </div>
         <PeriodFilter from={period.from || data?.period.from || ""} to={period.to || data?.period.to || ""} graceDays={period.graceDays} asOf={data?.asOf} onChange={setPeriod} onReload={reload} />
       </div>
