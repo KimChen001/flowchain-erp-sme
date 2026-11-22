@@ -243,6 +243,17 @@ function listSizesOf(results) {
   return sizes
 }
 const STEP_BEFORE = /(?:\bsteps?|步骤|第)[^.\n。！？!?]{0,16}$/i
+// What a counted noun counts, by the kinds of entity listed on its line:
+// items (SKUs and item names), record numbers, or other names (suppliers,
+// customers). A noun of no clear kind (records, 个, 项) counts every entity,
+// as before (2026-11-22 probe review: "3 items: LDM-001, LDM-002 and
+// Customer 14096" passed, a customer counted as an item).
+const COUNT_KIND = [
+  [/^\s*(?:[\p{L}\p{N}_-]+\s+){0,2}(?:items?|skus?|products?)(?![\p{L}])|^\s*(?:个|项|种|款)\s*(?:物料|商品|产品|SKU)/iu, ['item']],
+  [/^\s*(?:[\p{L}\p{N}_-]+\s+){0,2}(?:orders?|requests?)(?![\p{L}])|^\s*(?:张|笔)|^\s*个\s*(?:采购)?(?:订单|申请|发票)/iu, ['record']],
+  [/^\s*(?:[\p{L}\p{N}_-]+\s+){0,2}(?:suppliers?|customers?)(?![\p{L}])|^\s*(?:家|位)|^\s*个\s*(?:客户|供应商)/iu, ['name']],
+  [/^\s*(?:[\p{L}\p{N}_-]+\s+){0,2}lines?(?![\p{L}])|^\s*条/iu, ['item', 'record']],
+]
 const COUNT_NOUN =/^\s*(?:(?:[\p{L}\p{N}_-]+\s+){0,2}(?:items?|skus?|products?|orders?|requests?|suppliers?|customers?|lines?|records?)(?![\p{L}])|(?:个|项|张|家|种|笔|条|款))/iu
 // An answer about overdue or aged amounts, and the bucket labels it may write:
 // 1–30, 31–60, 61–90, 91–120, 121–180, over 90 days, over-90-day, 90+ days,
@@ -700,7 +711,15 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
     if (!(rest[at - 1] === '(' && /^\s*\)/.test(after)) && !COUNT_NOUN.test(after)) return null
     const start = rest.lastIndexOf('\n', at) + 1
     const end = rest.indexOf('\n', at) === -1 ? rest.length : rest.indexOf('\n', at)
-    return new Set(listed.filter((row) => row.at >= start && row.at < end).map((row) => row.key)).size
+    const onLine = listed.filter((row) => row.at >= start && row.at < end)
+    const all = new Set(onLine.map((row) => row.key)).size
+    const kinds = COUNT_KIND.find(([pattern]) => pattern.test(after))?.[1] || null
+    if (!kinds) return all
+    // Both the line's count and its own kind's: never more than before
+    // (2026-11-22 replay: "2 approved requests" beside one request, one order
+    // and a supplier matched the two record numbers once others were dropped).
+    const own = new Set(onLine.filter((row) => kinds.includes(row.key.split(':')[0])).map((row) => row.key)).size
+    return own === all ? all : null
   }
   // Dates: the same day (and year, when written) as a date in the results.
   const dayKnown = ({ year, month, day }) => {

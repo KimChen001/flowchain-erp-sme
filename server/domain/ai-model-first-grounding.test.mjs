@@ -24,6 +24,36 @@ const orders = {
   more: 3,
 }
 
+// 2026-11-22 probe review: a count before its noun was grounded by every
+// entity listed on its line, of any kind: a customer counted as an item, a
+// supplier and an item as orders. It counts its own kind now; a noun of no
+// clear kind counts as before.
+test('a list count counts only its noun\'s kind: items, record numbers or names', () => {
+  const facts = { inventory: { rows: [{ sku: '21137', itemName: 'Black Record Cover Frame' }, { sku: '21498', itemName: 'Red Retrospot Wrap' }, { sku: '22178', itemName: 'Victorian Glass Hanging T-Light' }, { sku: '85123A', itemName: 'White Hanging Heart T-Light Holder' }] }, suppliers: [{ name: 'Acme Home Goods' }] }
+  const results = [
+    { items: facts.inventory.rows, customers: [{ customer: 'Customer 14096 (United Kingdom)' }, { customer: 'Customer 12748 (United Kingdom)' }], suppliers: [{ supplier: 'Acme Home Goods' }] },
+    { rows: [{ orderNumber: 'PO-202610-0028', ref: { type: 'purchase_order', id: 'UCI-PO-329', label: 'PO-202610-0028' } }, { orderNumber: 'PO-202611-0009', ref: { type: 'purchase_order', id: 'UCI-PO-338', label: 'PO-202611-0009' } }], total: 2, more: 0 },
+    { request: { number: 'PR-202611-0001', ref: { type: 'purchase_request', id: 'PR-45C73E67', label: 'PR-202611-0001' } } },
+  ]
+  const flagged = (answer) => kinds(check(answer, results, { facts })).filter((row) => row.startsWith('number:'))
+  // Its own kind, in English and Chinese: grounded as before.
+  assert.deepEqual(flagged('3 items are below safety stock: 21137, 21498 and 22178.'), [])
+  assert.deepEqual(flagged('3 个物料低于安全库存：21137、21498、22178。'), [])
+  assert.deepEqual(flagged('2 customers: Customer 14096 and Customer 12748.'), [])
+  assert.deepEqual(flagged('2 张逾期订单：PO-202610-0028、PO-202611-0009。'), [])
+  // Another kind on the line does not make up the count, and dropping it
+  // never lets a count through that the whole line did not match (2026-11-22
+  // replay: one request, one order and a supplier beside "2 requests").
+  assert.deepEqual(flagged('3 late orders: PO-202610-0028, PO-202611-0009 and PR-202611-0001, all from Acme Home Goods.'), ['number:3'])
+  assert.deepEqual(flagged('3 items: 21137, 21498 and Customer 14096.'), ['number:3'])
+  assert.deepEqual(flagged('3 customers: Customer 14096, Customer 12748 and 21137.'), ['number:3'])
+  assert.deepEqual(flagged('3 suppliers are late: PO-202610-0028, PO-202611-0009 and Acme Home Goods.'), ['number:3'])
+  assert.deepEqual(flagged('3 张逾期订单：PO-202610-0028（Acme Home Goods），涉及 85123A。'), ['number:3'])
+  // A noun of no clear kind counts every entity, as before.
+  assert.deepEqual(flagged('3 records: 21137, PO-202610-0028 and Customer 14096.'), [])
+  assert.deepEqual(flagged('共 3 项：21137、21498、PO-202610-0028。'), [])
+})
+
 test('false positive fixed: a count a document passage writes as a word grounds the same count in figures', () => {
   const escalation = policy('Escalate when the supplier has not responded for two business days, or when a customer delivery within three business days is affected.')
   assert.deepEqual(kinds(check('政策规定，供应商两个工作日内未回复，或 3 个工作日内的客户交付受影响时，才需升级。', [escalation])), [])
