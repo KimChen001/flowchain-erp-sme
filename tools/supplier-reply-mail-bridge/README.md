@@ -22,14 +22,29 @@ What happens to each message:
 
 | FlowChain answers | The bridge | In the mailbox |
 | --- | --- | --- |
-| 201, or 200 "already in" | done | marked read; moved to the done folder if one is set |
+| 201 with the new reply, or 200 "already in" | done | marked read; moved to the done folder if one is set and the server offers MOVE |
 | 422 and other 4xx (no order named, several open orders, too long …) | done, logged with the code | stays unread for a person |
 | 200 "still being read", 409, 429, 5xx, no answer | tries again next round | unchanged |
-| 401 token, 403 workspace switch, 404 endpoint off | stops and says what to fix | unchanged |
+| 401 token, 403 workspace switch, 404 endpoint off, a redirect, or an answer that is not FlowChain's (a web page) | stops and says what to fix | unchanged |
 
-Messages that name no order number, or come from an unlisted sender, are never sent: they stay unread and are
-remembered so they are not read again. Attachments are not sent. The bridge remembers each message it handled (by its
-Message-ID) in a state file next to the settings file, and FlowChain keeps the same message only once.
+- **Not sent:**
+  - messages that name no order number;
+  - messages from a sender not on the list, when senders are listed;
+  - messages larger than `MAX_BYTES` (5 MB by default).
+
+  These stay unread and are remembered, so they are not read again.
+- **Each round:**
+  - The bridge first reads only the unread messages' envelopes. It then reads up to 50 messages it has not handled before in full, so old unread mail never blocks a new reply.
+  - Attachments are never sent.
+- **Each message reaches FlowChain once:**
+  - The bridge remembers each message it handled in a state file next to the settings file.
+  - FlowChain keeps a message only once, by its Message-ID.
+  - A message without a usable Message-ID gets an id made from its sender, date, subject and text, so a retry is still kept once.
+- **Never deleted:**
+  - The bridge never deletes or expunges mail.
+  - It moves a message only when the server offers IMAP MOVE.
+  - Without MOVE (163 or QQ may not offer it), a sent message is only marked read, and the bridge says so once.
+- **Redirects:** the bridge never follows one, so the token and the text go only to the address you set.
 
 ## Set it up
 
@@ -48,8 +63,10 @@ Message-ID) in a state file next to the settings file, and FlowChain keeps the s
      Hosts: `imap.163.com` and `imap.qq.com`, port 993.
    - **Not supported here:** Outlook.com personal accounts no longer take a password for IMAP; they need OAuth, which this
      bridge does not do yet. Work and school Microsoft 365 mailboxes usually need an admin's consent for the same reason.
-4. **A settings file outside the FlowChain folder.** For example `C:\Users\<you>\flowchain-mail-bridge.env`. The bridge
-   refuses a file inside the checkout, so the password and token are never committed.
+4. **A settings file outside the FlowChain folder.** For example `C:\Users\<you>\flowchain-mail-bridge.env`.
+   - The bridge refuses a file inside the checkout or any of its git worktrees. It compares real paths, so a link or
+     junction into the checkout is refused too.
+   - `.gitignore` also ignores `*bridge*.env` and the state file. The password and token are never committed.
 
        FLOWCHAIN_MAIL_BRIDGE_ENDPOINT=http://localhost:18831/api/integrations/supplier-replies
        FLOWCHAIN_MAIL_BRIDGE_TOKEN=fcsr.…
@@ -91,6 +108,14 @@ The log shows file names or message numbers and FlowChain's answer. It never sho
 They use a stub endpoint on this machine and a stub IMAP client, with no account and no FlowChain running. FlowChain's
 own `npm test` runs them too. The test that parses `examples/` with mailparser runs when this folder's packages are
 installed (`npm ci`); otherwise it is skipped.
+
+## What the bridge does not check (FlowChain and a person do)
+
+The bridge sends a message when it names an order number anywhere, including in the quoted earlier thread, and it
+takes the From address as written. Anyone can forge a From address. These cases are caught later:
+- **The reading** drops the quoted thread before it reads.
+- **The card** shows "sender not on record" when the address is not the supplier's.
+- **A person** records every reply. Nothing is recorded on an order by the bridge or by the reading alone.
 
 ## Not done yet
 

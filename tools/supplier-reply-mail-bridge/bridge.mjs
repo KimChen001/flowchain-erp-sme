@@ -55,7 +55,8 @@ async function main() {
       if (Object.values(counts).some(Boolean)) log(`round: ${JSON.stringify(counts)}`)
     } catch (error) {
       if (error instanceof BridgeStop) throw error
-      log(`round failed: ${error?.message || error} (trying again next round)`)
+      // The code and the first words only: never a server's full answer.
+      log(`round failed: ${[error?.code, String(error?.message || error).slice(0, 160)].filter(Boolean).join(' ')} (trying again next round)`)
     }
     if (args.once || stopped) return
     await new Promise((done) => setTimeout(done, args.interval * 1000))

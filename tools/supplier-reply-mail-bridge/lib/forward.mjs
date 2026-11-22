@@ -10,7 +10,12 @@ export const TEXT_LIMIT = 16000
 // A reading calls the model, which may take a while.
 export const POST_TIMEOUT_MS = 120_000
 
+const sha256 = (value) => createHash('sha256').update(String(value), 'utf8').digest('hex')
 const senderOf = (mail) => String(mail?.from?.value?.[0]?.address || '').trim().toLowerCase()
+const usableId = (value) => {
+  const id = String(value || '').trim()
+  return id && id.length <= 998 && /^[\x21-\x7e]+$/.test(id) ? id : null
+}
 
 // The day a message was received, in the workspace's time zone.
 export function receivedDay(date, timeZone) {
@@ -20,11 +25,12 @@ export function receivedDay(date, timeZone) {
 }
 
 // Whether a message is for FlowChain: it names an order number in the
-// numbering (PO-202611-0012) in its subject or text, and, when senders are
-// listed, comes from one of them (an address, or a domain).
+// numbering (PO-202611-0012, also written full-width or with another dash)
+// in its subject or text, and, when senders are listed, comes from one of
+// them (an address, or a domain).
 export function forwardable(mail, { orderPrefix = 'PO', from = [] } = {}) {
-  const number = new RegExp(`\\b${orderPrefix}\\s*-?\\s*\\d{6}\\s*-\\s*\\d{4,6}\\b`, 'i')
-  if (!number.test(`${mail?.subject || ''}\n${mail?.text || ''}`)) return { forward: false, why: 'no_order_number' }
+  const number = new RegExp(`\\b${orderPrefix}\\s*[-–—]?\\s*\\d{6}\\s*[-–—]\\s*\\d{4,6}\\b`, 'i')
+  if (!number.test(`${mail?.subject || ''}\n${mail?.text || ''}`.normalize('NFKC'))) return { forward: false, why: 'no_order_number' }
   if (from.length) {
     const sender = senderOf(mail)
     const domain = sender.split('@')[1] || ''
@@ -33,42 +39,48 @@ export function forwardable(mail, { orderPrefix = 'PO', from = [] } = {}) {
   return { forward: true, why: null }
 }
 
-// A key that names the message across rounds: its Message-ID, or a hash of
-// its source when it has none.
-export function messageKey(mail, source = '') {
-  const id = String(mail?.messageId || '').trim()
-  return id || `sha256:${createHash('sha256').update(source).digest('hex')}`
+// The message's id for FlowChain: its Message-ID, or, when it has none (or
+// one FlowChain does not take), an id made from its sender, date, subject
+// and text, so a retry of the same message is still kept once.
+export function messageIdOf(mail) {
+  const own = usableId(mail?.messageId)
+  if (own) return own
+  const date = mail?.date ? new Date(mail.date).toISOString() : ''
+  return `<${sha256([senderOf(mail), date, String(mail?.subject || ''), sha256(String(mail?.text || ''))].join('\n'))}@flowchain-mail-bridge.local>`
 }
+export const messageKey = (mail) => messageIdOf(mail)
 
 // The endpoint's body for a parsed message.
 export function payloadOf(mail, { timeZone }) {
   const textValue = String(mail?.text || '').replace(/\r\n/g, '\n').trim()
-  const body = { text: textValue.slice(0, TEXT_LIMIT) }
+  const body = { text: textValue.slice(0, TEXT_LIMIT), messageId: messageIdOf(mail) }
   const subject = String(mail?.subject || '').trim()
   if (subject) body.subject = subject.slice(0, 998)
   const sender = senderOf(mail)
   if (sender) body.from = sender.slice(0, 320)
-  const id = String(mail?.messageId || '').trim()
-  if (id && /^[\x21-\x7e]+$/.test(id)) body.messageId = id.slice(0, 998)
   const day = mail?.date ? receivedDay(mail.date, timeZone) : null
   if (day) body.receivedOn = day
   return { body, truncated: textValue.length > TEXT_LIMIT }
 }
 
 // What the endpoint's answer means for the message:
-//   sent     201, or 200 when it is already in FlowChain: done
-//   later    200 still being read elsewhere, 409, 429, 5xx, or no answer: next round
+//   sent     201 with the new reply's id, or 200 when it is already in
+//            FlowChain (duplicate): done
+//   later    200 still being read elsewhere, 409, 429, 5xx, or no answer:
+//            next round
 //   refused  any other 4xx about this message (no order named, several open
 //            orders, too long …): done; it stays for a person in the mailbox
-//   stop     401, 403, 404: the token, the workspace switch or the URL is
-//            wrong; the bridge stops so nothing is marked as handled
+//   stop     401, 403, 404, a redirect, or a 2xx that is not FlowChain's
+//            answer (the URL points at something else): the bridge stops, so
+//            nothing is marked as handled
 export function outcomeOf(status, body = null) {
-  if (status === 201) return 'sent'
-  if (status === 200) return body?.pending ? 'later' : 'sent'
+  if (status === 201) return body?.replyId ? 'sent' : 'stop'
+  if (status === 200) return body?.duplicate === true ? (body.pending ? 'later' : 'sent') : 'stop'
+  if (status >= 300 && status < 400) return 'stop'
   if ([401, 403, 404].includes(status)) return 'stop'
   if (status === 409 || status === 429 || status === null || status >= 500) return 'later'
   if (status >= 400) return 'refused'
-  return 'later'
+  return 'stop'
 }
 
 export async function postReply(config, body, { fetchImpl = fetch, timeoutMs = POST_TIMEOUT_MS } = {}) {
@@ -78,6 +90,9 @@ export async function postReply(config, body, { fetchImpl = fetch, timeoutMs = P
       method: 'POST',
       headers: { authorization: `Bearer ${config.token}`, 'content-type': 'application/json' },
       body: JSON.stringify(body),
+      // A redirect is never followed: the body and the token would go to
+      // another address.
+      redirect: 'manual',
       signal: AbortSignal.timeout(timeoutMs),
     })
   } catch {
@@ -86,7 +101,8 @@ export async function postReply(config, body, { fetchImpl = fetch, timeoutMs = P
   let json = null
   try { json = await response.json() } catch { /* not JSON */ }
   const retryAfter = Number(response.headers?.get?.('retry-after')) || null
-  return { outcome: outcomeOf(response.status, json), status: response.status, code: json?.code || null, replyId: json?.replyId || null, orderNumber: json?.purchaseOrderNumber || null, retryAfter }
+  const code = json?.code || (response.status >= 300 && response.status < 400 ? 'REDIRECT' : null) || (response.status >= 200 && response.status < 300 && outcomeOf(response.status, json) === 'stop' ? 'NOT_FLOWCHAIN' : null)
+  return { outcome: outcomeOf(response.status, json), status: response.status, code, replyId: json?.replyId || null, orderNumber: json?.purchaseOrderNumber || null, retryAfter }
 }
 
 // Handled messages, remembered between rounds (key → outcome).
