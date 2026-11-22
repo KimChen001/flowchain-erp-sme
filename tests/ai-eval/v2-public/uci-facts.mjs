@@ -147,6 +147,9 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
   // Ordering it brings the position to the level, so the item is no longer due.
   const ORDER_UP_TO_DAYS = 7
   const UNITS = 10000
+  // Items not due today whose order-by day is within 7 days (on the list
+  // "this week", not to order now).
+  const reorderSoon = []
   const reorder = plan.items.flatMap((row) => {
     if (!(row.reorderPoint > 0)) return []
     const position = plan.purchasing.closing[row.key] + onOrder(row.key) + pendingFor(row.key) + requestedFor(row.key)
@@ -157,8 +160,13 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
     const due = positionUnits <= pointUnits || (shippedUnits !== null && Math.floor(((positionUnits - pointUnits) * DEMAND_WINDOW_DAYS) / shippedUnits) === 0)
     const levelUnits = pointUnits + (shippedUnits === null ? 0 : ORDER_UP_TO_DAYS * Math.round(shippedUnits / DEMAND_WINDOW_DAYS))
     const gap = Math.ceil((levelUnits - positionUnits) / UNITS)
+    if (!due && shippedUnits !== null && Math.floor(((positionUnits - pointUnits) * DEMAND_WINDOW_DAYS) / shippedUnits) <= 7) reorderSoon.push(row.sku)
     if (!due || gap <= 0) return []
-    return [{ sku: row.sku, shortfall: Math.max(0, row.reorderPoint - position), orderUpTo: levelUnits / UNITS, quantity: Math.max(gap, row.minimumOrderQuantity) }]
+    // What the list shows beside the quantity: its position, each open
+    // order's quantity still to come, each order waiting to be issued and
+    // the open requests.
+    const incomingLines = [...open.map((order) => ordered(order, row.key) - received(order, row.key)), ...notIssued.map((order) => ordered(order, row.key)), ...requests.filter((request) => ['draft', 'submitted', 'approved'].includes(request.state) && request.itemKey === row.key).map((request) => request.quantity)].filter((value) => value > 0)
+    return [{ sku: row.sku, shortfall: Math.max(0, row.reorderPoint - position), orderUpTo: levelUnits / UNITS, quantity: Math.max(gap, row.minimumOrderQuantity), position, incomingLines }]
   })
   const belowSafetyStock = plan.items.filter((row) => onHandOf(row.key) < row.safetyStock).map((row) => row.sku)
 
@@ -312,6 +320,7 @@ export function uciFacts(plan, { today = plan.seedDay } = {}) {
     item,
     late,
     reorder,
+    reorderSoon,
     belowSafetyStock,
     month,
     receivables,

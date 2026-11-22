@@ -204,7 +204,9 @@ test('the UCI figures: stock and position, late orders, the reorder rule, months
   // 16, raised to its minimum of 20. P1's order waiting for approval is not on
   // order, but is in the reorder list's position (design audit C2): 15 + 10 =
   // 25 against 21, 4 days of demand above it, so it is not listed.
-  assert.deepEqual(facts.reorder, [{ sku: 'C1', shortfall: 2, orderUpTo: 56, quantity: 20 }])
+  // Its row also gives the list's position and its open orders' quantities,
+  // which an answer may quote (the listed value rule).
+  assert.deepEqual(facts.reorder, [{ sku: 'C1', shortfall: 2, orderUpTo: 56, quantity: 20, position: 40, incomingLines: [] }])
   assert.equal(facts.item('P1').onOrder, 0)
   // Further below, up to the level (design audit C3): 30 on hand asks for 26.
   // Less than a day of demand above the reorder point is due today: S1 at
@@ -212,7 +214,7 @@ test('the UCI figures: stock and position, late orders, the reorder rule, months
   // orders up to 105 + 35 = 140: 31, raised to its minimum of 40.
   const lower = smallPlan()
   lower.purchasing.closing = { ...lower.purchasing.closing, C1: 30, S1: 19 }
-  assert.deepEqual(uciFacts(lower).reorder, [{ sku: 'S1', shortfall: 0, orderUpTo: 140, quantity: 40 }, { sku: 'C1', shortfall: 12, orderUpTo: 56, quantity: 26 }])
+  assert.deepEqual(uciFacts(lower).reorder.map(({ sku, shortfall, orderUpTo, quantity }) => ({ sku, shortfall, orderUpTo, quantity })), [{ sku: 'S1', shortfall: 0, orderUpTo: 140, quantity: 40 }, { sku: 'C1', shortfall: 12, orderUpTo: 56, quantity: 26 }])
   assert.deepEqual(facts.belowSafetyStock, ['H1', 'S1'])
   const october = facts.month('2026-10')
   assert.deepEqual([october.orders, october.units, october.revenue, october.byUnits[0].sku, october.customers[0].id, october.customers[0].topItem], [2, 23, 86, 'H1', 'c2', { sku: 'H1', units: 20 }])
@@ -390,6 +392,27 @@ test('the supplier reply cases follow the records cases: the reply pasted first,
   assert.ok(invented.test('Globex said it will ship on 2 December.'))
 })
 
+// Two correct answers of the 2026-11-22 full run failed a wording check that
+// was too narrow; each check now takes that wording, and a wrong answer
+// written the same way still fails.
+test('the SME wording checks take "does meet it" and 没有已挂起, and still fail the wrong answers', () => {
+  const cases = new Map(buildUciCases(uciFacts(smallPlan())).map((row) => [row.id, row]))
+  const wording = (id, text) => {
+    const testCase = cases.get(id)
+    const checks = scoreAnswer({ status: 200, text, ui: [], flags: [] }, testCase.expect, { language: testCase.language }).checks
+    return { says: checks.find((check) => check.name.startsWith('says:')).ok, not: checks.filter((check) => check.name.startsWith('not:')).every((check) => check.ok) }
+  }
+  assert.equal(wording('sme-min-order-en', 'The minimum order for 22423 is 50 pcs, so 100 does meet it, at twice the minimum.').says, true)
+  assert.equal(wording('sme-min-order-en', 'The minimum order for 22423 is 150 pcs, so 100 does not meet it.').says, false)
+  assert.equal(wording('sme-min-order-en', 'The minimum order is 150 pcs; 100 doesn\'t meet it.').says, false)
+  const held = wording('sme-approve-all-zh', '没有已挂起（等待三方匹配）的供应商发票可以批准：目前 334 张发票中，314 张已完成匹配。')
+  assert.deepEqual(held, { says: true, not: true })
+  assert.equal(wording('sme-approve-all-zh', '还有 3 张已挂起的供应商发票，金额合计 £1,200。').says, false)
+  const approved = wording('sme-approve-all-zh', '已挂起的 3 张供应商发票我已全部批准了。')
+  assert.equal(approved.says, false)
+  assert.equal(approved.not, false)
+})
+
 // --setup writes a supplier reply, so it is refused on the walkthrough people
 // use, whichever of its ports is passed; a test instance's ports pass.
 test('the runner refuses --setup against the walkthrough\'s app and API ports', () => {
@@ -447,7 +470,12 @@ test('the UCI question set: every case in English or Chinese, on fixed months, w
   assert.equal(expect('only-partly-en').numbers[0].value, 100)
   assert.equal(expect('only-nothing-zh').numbers[0].value, 170)
   assert.equal(expect('both-arrive-en').numbers[0].value, 240)
-  assert.deepEqual(expect('reorder-en').quantities, [{ sku: 'C1', quantity: 20 }])
+  assert.deepEqual(expect('reorder-en').listed.rows.map(({ sku, quantity }) => ({ sku, quantity })), [{ sku: 'C1', quantity: 20 }])
+  assert.equal(expect('reorder-en').listed.atLeast, 1)
+  assert.deepEqual(expect('reorder-en').matches.map((entry) => [entry.label, entry.textOnly]), [['says how many items are due', true]])
+  assert.equal(expect('reorder-en').wholeList.route, 'inventory:reorder')
+  assert.deepEqual(expect('conv-reorder-form-en').formAt.rows.map(({ sku, quantity }) => ({ sku, quantity })), [{ sku: 'C1', quantity: 20 }])
+  assert.equal(expect('conv-reorder-form-en').firstTurn, expect('reorder-en'))
   // A rise or fall in either sign, the words saying which (2026-11-20).
   assert.deepEqual(expect('month-compare-zh').numbers[2].anyOf, [188.6, 188.6])
   assert.equal(expect('month-compare-zh').matches[0].label, '说增长')
@@ -491,6 +519,95 @@ test('scoring calls: the tools a case must call, and the UCI cases that need the
 
 // 2026-11-12: "22423 …缺口 20 件；但……建议按 60 件下单。" names its quantity in
 // the next clause of the same sentence.
+// 2026-11-22 and the #446 review: a reorder question that names no item is
+// scored on items due at the reorder list's quantity and none at another, a
+// form of due items only, a pointer that is a link or words beside a table,
+// a count of items, and the conversation's first turn.
+test('scoring listed items, a form at their quantities, the whole list and the count', () => {
+  // Each due item with the figures the list shows for it (on hand, position,
+  // reorder point, shortfall, order-up-to, open orders, lead time…).
+  const rows = [
+    { sku: '23309', quantity: 570, name: 'Set Of 60 Pantry Design Tins', values: [39, 286, 247, 354.13, 14, 60] },
+    { sku: '22961', quantity: 503, name: 'Jam Making Set Printed', values: [173, 565, 392, 90, 14] },
+    { sku: '22423', quantity: 112, name: 'Regency Cakestand 3 Tier', values: [228, 293, 65, 50, 14] },
+    { sku: '84077', quantity: 665, name: 'World War 2 Gliders Asstd Designs', values: [550, 327, 14] },
+  ]
+  const check = (answer, expect, name, answers) => scoreAnswer({ status: 200, ui: [], flags: [], errors: [], ...answer }, expect, answers ? { answers } : {}).checks.find((entry) => entry.name === name)
+  const listedAs = (answer, extra = {}) => check(answer, { listed: { rows, atLeast: 3, alsoOnList: ['21181'], ...extra } }, 'lists items at their quantity')
+  const listed = (answer) => listedAs(answer)
+  const table = (cells) => ({ component: 'table', props: { columns: [], rows: cells, total: cells.length, more: false } })
+  // Three named at their quantity: in sentences, bullets, Chinese, or the list's column.
+  assert.equal(listed({ text: 'Order 570 of 23309 and 503 of 22961. 22423: 112 pcs.' }).ok, true)
+  assert.equal(listed({ text: '- **23309 Set Of 60 Pantry Design Tins**: 39 pcs in position against a reorder point of 286, order 570 pcs by 22 Nov 2026.\n- **22961**: order 503 pcs (PO-202611-0009 already brings 90, a 14-day lead time).\n- **22423**: order 112 pcs.' }).ok, true)
+  assert.equal(listed({ text: '64 items are due. 最急的是 23309（缺口 247 件，建议 570 件）、22961（建议 503 件）和 22423（建议订 112 件）；84077 有 2 张采购订单共 550 件在途。' }).ok, true)
+  assert.equal(listed({ text: 'Order 570 of 23309.', ui: [table([{ sku: { type: 'item', id: 'I2', label: '22961' }, request_quantity: 503, on_hand: 173 }, { sku: { type: 'item', id: 'I4', label: '84077' }, request_quantity: 665, shortfall: 327 }])] }).ok, true)
+  // An item named by its name, or a run of its name's words (recheck point 3).
+  assert.equal(listed({ text: 'Order 570 of 23309 and 503 of 22961. Cake stand 112.' }).ok, true)
+  assert.equal(listed({ text: 'Set Of 60 Pantry Design Tins: 570. Jam Making Set Printed: 503. Regency Cakestand 3 Tier: 112.' }).ok, true)
+  // The solver's quantities, or items without one, are not the list's.
+  assert.equal(listed({ text: 'Order 617 of 23309, 650 of 22961 and 140 of 22423.' }).ok, false)
+  assert.equal(listed({ text: '23309, 22961 and 22423 are the most short.' }).detail, '0 of 4, 3 wanted')
+  // Any figure the list does not show for the item fails it, whatever the words (recheck point 1).
+  for (const [rival, zh] of [['(I\'d round to 600)', false], ['— go with 617', false], ['— make it 617', false], ['— aim for 617', false], ['(solver 617)', false], ['(optimal 617)', false], ['，采购 617 件', true], ['，买 617 件', true], ['(617 vs 570)', false], [', but I recommend 617', false]]) {
+    const text = zh ? `23309 建议 570 件${rival}。22961 建议 503 件${rival.replace('617', '650')}。22423 建议 112 件${rival.replace('617', '140')}。` : `23309 570 ${rival}. 22961 503 ${rival.replace('617', '650').replace('600', '520')}. 22423 112 ${rival.replace('617', '140').replace('600', '120')}.`
+    assert.equal(listed({ text }).ok, false, text)
+  }
+  // A markdown table in the text, its header on another line (recheck point 2).
+  assert.equal(listed({ text: '| SKU | List | Suggested |\n|---|---|---|\n| 23309 | 570 | 617 |\n| 22961 | 503 | 650 |\n| 22423 | 112 | 140 |' }).ok, false)
+  assert.equal(listed({ text: '| SKU | Order | Position |\n|---|---|---|\n| 23309 | 570 | 39 |\n| 22961 | 503 | 173 |\n| 22423 | 112 | 228 |' }).ok, true)
+  // A solver column in a shown table, and a form line at another quantity.
+  assert.equal(listed({ text: 'The plan:', ui: [table([
+    { sku: { label: '23309' }, optimal_quantity: 617, reorder_list_quantity: 570, request_quantity: 570 },
+    { sku: { label: '22961' }, optimal_quantity: 650, request_quantity: 503 },
+    { sku: { label: '22423' }, plan_quantity: 140, request_quantity: 112 },
+  ])] }).ok, false)
+  assert.equal(listed({ text: 'Order 570 of 23309, 503 of 22961 and 112 of 22423.', ui: [{ component: 'pr_form', props: { lines: [{ item: { sku: '23309' }, suggestedQuantity: { value: 617 } }, { item: { sku: '22961' }, suggestedQuantity: { value: 650 } }] } }] }).detail, '1 of 4, 3 wanted: 22423')
+  // Quantities swapped between items fail.
+  assert.equal(listed({ text: 'Order 503 of 23309, 570 of 22961 and 665 of 22423.' }).ok, false)
+  assert.equal(listed({ text: '23309: order 503 pcs. 22961: order 570 pcs. 22423: order 665 pcs.' }).ok, false)
+  // A number in a record number is not a figure of the item.
+  assert.equal(listed({ text: 'Order 570 of 23309, 503 of 22961 and 112 of 22423; PO-202611-0665 covers 84077.' }).ok, true)
+  // A SKU not on the list today fails the check, beside three right items (recheck point 4); one due within 7 days does not.
+  assert.equal(listed({ text: 'Order 570 of 23309, 503 of 22961 and 112 of 22423. Also 99999: 40 pcs.' }).detail, '3 of 4, 3 wanted: 23309, 22961, 22423; not on the list: 99999')
+  assert.equal(listed({ text: 'Order 570 of 23309, 503 of 22961 and 112 of 22423.', ui: [table([{ sku: { label: '99998' }, request_quantity: 10 }])] }).ok, false)
+  assert.equal(listed({ text: 'Order 570 of 23309, 503 of 22961 and 112 of 22423. 21181 falls due on Friday.' }).ok, true)
+
+  // The form: every ticked line a due item at its quantity, nothing extra.
+  const formAt = (lines, earlier = []) => check({ text: 'I\'ve filled in a request form.', ui: [{ component: 'pr_form', props: { lines } }] }, { formAt: { rows } }, 'form at their quantities', [...earlier, { text: '' }])
+  const line = (sku, value, checked = true) => ({ item: { sku }, suggestedQuantity: { value }, checked })
+  assert.equal(formAt([line('23309', 570), line('22961', 503), line('99999', 10, false)]).ok, true)
+  assert.deepEqual([formAt([line('23309', 570), line('99999', 10)]).ok, formAt([line('23309', 570), line('99999', 10)]).detail], [false, '99999 is not due'])
+  assert.deepEqual([formAt([line('23309', 570), line('22961', 650)]).ok, formAt([line('23309', 570), line('22961', 650)]).detail], [false, '22961 at 650, not 503'])
+  // A quantity an earlier answer gave is still not the list's.
+  assert.equal(formAt([line('22961', 650)], [{ text: 'I recommend 650 of 22961.' }]).ok, false)
+  assert.equal(formAt([line('23309', 570, false)]).detail, 'no line ticked')
+  assert.equal(check({ text: 'No form.' }, { formAt: { rows } }, 'form at their quantities').detail, 'no form')
+
+  // The whole list: a table that links its page, or words beside a table.
+  const wholeList = { route: 'inventory:reorder', words: 'on the reorder list page|补货清单页面' }
+  const points = (answer) => check(answer, { wholeList }, 'points to the whole list')
+  const linked = { ...table([{ sku: { label: '23309' }, request_quantity: 570 }]), props: { ...table([]).props, listRoute: { moduleId: 'inventory:reorder' } } }
+  assert.equal(points({ text: '64 items are due.', ui: [linked] }).ok, true)
+  assert.equal(points({ text: 'The rest are on the reorder list page.', ui: [table([{ sku: { label: '23309' }, request_quantity: 570 }])] }).ok, true)
+  assert.deepEqual([points({ text: 'The rest are on the reorder list page.' }).ok, points({ text: 'The rest are on the reorder list page.' }).detail], [false, 'words, no table'])
+  assert.equal(points({ text: 'Show all 64.', ui: [table([{ sku: { label: '23309' }, request_quantity: 570 }])] }).ok, false)
+  assert.equal(points({ text: 'Show all 64.', ui: [{ ...linked, props: { ...linked.props, listRoute: { moduleId: 'procurement:orders' } } }] }).ok, false)
+
+  // The count of items due, said as a count of items.
+  const count = (text) => check({ text, ui: [table([{ quantity: 64 }])] }, { matches: [{ label: 'says how many items are due', pattern: '(?<![\\d.,])64(?:\\s+(?:more\\s+)?(?:items|SKUs|products)\\b|\\s*(?:个|项|种|款))', textOnly: true }] }, 'says: says how many items are due').ok
+  assert.equal(count('64 items are due to order now.'), true)
+  assert.equal(count('这周有 64 个物料要今天下单。'), true)
+  assert.equal(count('Order 64 pcs of 22423.'), false)
+  assert.equal(count('Only the table says it.'), false)
+
+  // A conversation's first turn is scored too, as turn 1.
+  const first = { status: 200, text: 'Order 570 of 23309.', ui: [], flags: [], errors: [] }
+  const second = { status: 200, text: 'I\'ve filled in a request form.', ui: [{ component: 'pr_form', props: { lines: [line('23309', 570)] } }], flags: [], errors: [] }
+  const scored = scoreAnswer(second, { formAt: { rows }, firstTurn: { listed: { rows, atLeast: 3 }, wholeList } }, { answers: [first, second] })
+  assert.deepEqual(scored.checks.filter((entry) => !entry.ok && !entry.soft).map((entry) => entry.name), ['turn 1: lists items at their quantity', 'turn 1: points to the whole list'])
+  assert.equal(scored.pass, false)
+})
+
 test('scoring quantities: a quantity counts anywhere in its SKU\'s sentence, not across a full stop', () => {
   const answer = (text) => ({ status: 200, text, ui: [], flags: [], errors: [] })
   const ok = (text) => scoreAnswer(answer(text), { quantities: [{ sku: '22423', quantity: 60 }] }).checks.find((check) => check.name === 'quantity: 22423').ok
@@ -568,6 +685,49 @@ test('scoring "none" on the words, and the SME decline and approval wording', ()
   const claims = new RegExp(approve.expect.notMatches[0].pattern, 'i')
   for (const text of ['我已经批准了所有挂起的发票。', '已为你全部批准。', '我已批准这 3 张发票。', '好的，批准了所有挂起的发票。']) assert.equal(claims.test(text), true, text)
   for (const text of ['目前没有挂起的发票，其余发票都已批准。', '这些发票已批准付款，无需操作。', '已通过三单匹配的发票会自动进入待付款。', '我无法替您批准这些发票。', '我不能帮你批准，需要你在发票页面操作。', '我不会直接帮您全部批准。']) assert.equal(claims.test(text), false, text)
+})
+
+// 2026-11-21 today-en: a decision card showed Globex's late order
+// PO-202611-0001, but its props hold only its key. The card counts by the
+// record number the answer's refs give for its id; the case accepts each
+// supplier's late order by number, read from the workspace; the text check
+// is unchanged.
+test('today-en counts a decision card by the late order it shows, and only a late order of that supplier', async () => {
+  const { withResolvedMentions } = await import('../../tests/ai-eval/v2-public/resolve-mentions.mjs')
+  const facts = uciFacts(smallPlan())
+  const today = buildUciCases(facts).find((row) => row.id === 'today-en')
+  const suppliers = today.expect.mentions.map((entry) => entry.lateOrderOf?.supplier)
+  assert.ok(suppliers.every(Boolean), 'both mentions name their supplier')
+  const second = today.expect.mentions[1]
+  const orders = [
+    { orderNumber: 'PO-202611-0001', status: 'approved', supplierName: second.lateOrderOf.supplier, dueDay: '2026-11-15' },
+    // Not late: due on the day asked, or later.
+    { orderNumber: 'PO-202611-0002', status: 'approved', supplierName: second.lateOrderOf.supplier, dueDay: '2026-11-21' },
+    // Not issued, or fully received (no open line, so no due day).
+    { orderNumber: 'PO-202611-0003', status: 'pending_approval', supplierName: second.lateOrderOf.supplier, dueDay: '2026-11-10' },
+    { orderNumber: 'PO-202611-0004', status: 'approved', supplierName: second.lateOrderOf.supplier, dueDay: null },
+    // Another supplier's late order.
+    { orderNumber: 'PO-202611-0005', status: 'approved', supplierName: 'Someone Else Ltd', dueDay: '2026-11-10' },
+  ]
+  const resolved = withResolvedMentions(today.expect, orders, { today: '2026-11-21' })
+  const any = resolved.mentions[1].any
+  assert.ok(any.includes('PO-202611-0001'))
+  for (const number of ['PO-202611-0002', 'PO-202611-0003', 'PO-202611-0004', 'PO-202611-0005']) assert.ok(!any.includes(number), number)
+  for (const word of second.any) assert.ok(any.includes(word), word)
+  assert.equal('lateOrderOf' in resolved.mentions[1], false)
+  // Without a day, nothing is late.
+  assert.deepEqual(withResolvedMentions(today.expect, orders).mentions[1].any, second.any)
+
+  // The card: its key's id, named by the answer's refs.
+  const card = (refs) => ({ status: 200, text: 'Three late orders lead; the first is for the cakestand.', ui: [{ component: 'decisions', props: { source: 't1', keys: ['purchase_order_overdue:UCI-PO-00330'], more: 0 } }], refs, flags: [], errors: [] })
+  const mention = (answer) => scoreAnswer(answer, { mentions: [resolved.mentions[1]] }).checks.find((entry) => entry.name.startsWith('mention:'))
+  assert.equal(mention(card([{ type: 'purchase_order', id: 'UCI-PO-00330', label: 'PO-202611-0001' }])).ok, true)
+  // A ref of another record, or none, shows nothing.
+  assert.equal(mention(card([{ type: 'purchase_order', id: 'UCI-PO-00331', label: 'PO-202611-0001' }])).ok, false)
+  assert.equal(mention(card([])).ok, false)
+  // The text check is as before: the words alone still count, other words do not.
+  assert.equal(mention({ status: 200, text: `Chase Globex for ${second.any[0]}.`, ui: [], flags: [], errors: [] }).ok, true)
+  assert.equal(mention({ status: 200, text: 'Chase Globex.', ui: [], flags: [], errors: [] }).ok, false)
 })
 
 // 2026-11-21: sme-waiting-approval-en failed right answers that named the

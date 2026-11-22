@@ -81,8 +81,10 @@ export function buildUciCases(facts) {
   const cases = []
   const add = (row) => cases.push(row)
 
-  // Today: the late orders on two suppliers lead.
-  const firstThings = { mentions: [named(hero), named(second)] }
+  // Today: the late orders on two suppliers lead. Each item, or its
+  // supplier's late order by number (a decision card shows the order; 2026-11-21:
+  // the card for Globex's PO-202611-0001 named 84879's late order).
+  const firstThings = { mentions: [{ ...named(hero), lateOrderOf: { supplier: hero.supplier } }, { ...named(second), lateOrderOf: { supplier: second.supplier } }] }
   add({ id: 'today-en', kind: 'today', language: 'en-US', turns: ['What should I handle first today?'], expect: firstThings })
   add({ id: 'today-zh', kind: 'today', language: 'zh-CN', turns: ['今天我应该先处理什么？'], expect: firstThings })
   const lateList = {
@@ -127,7 +129,25 @@ export function buildUciCases(facts) {
     expect: { numbers: [{ label: '一周后缺口或可撑天数', anyOf: [round(second.averageDailyDemand * 7 - second.onHand, 1), round(second.daysOfStock, 2)], tolerance: 3 }] } })
 
   // Reorder.
-  const reorderList = { mentions: [named(cake)], quantities: [{ sku: cake.sku, quantity: suggestion.quantity }] }
+  // A question that names no item (2026-11-22): how many items are due now
+  // (said as a count of items, "64 items" or "64 个物料"), three of them or
+  // more (all when fewer) at the reorder list's quantity and none at another,
+  // and where the whole list is: a table that links the reorder page (#445),
+  // or words that send the user there beside a table ("across the whole
+  // reorder list" is not one, nor "Show all" alone). It used to require the
+  // scene's 22423, which on 2026-11-22 was 18th by SKU, 21st by shortfall
+  // and 29th by quantity of the 64 items due: no answer had to name it. A
+  // question that names the item (cake-zh) still requires it.
+  // Each due item with the figures the reorder list shows for it: an answer
+  // may give any of them, and no other figure for that item (#446 recheck).
+  const dueNow = facts.reorder.map((row) => {
+    const item = facts.item(row.sku)
+    const values = [item.onHand, item.reserved, item.available, item.onOrder, item.position, item.safetyStock, item.reorderPoint, item.minimumOrderQuantity, item.leadTimeDays, item.averageDailyDemand, Math.round(item.averageDailyDemand * 10) / 10, item.daysOfStock, row.shortfall, row.orderUpTo, row.position, ...row.incomingLines]
+    return { sku: row.sku, quantity: row.quantity, name: item.name, values: values.filter((value) => Number.isFinite(value)) }
+  })
+  const itemCount = `(?<![\\d.,])${dueNow.length}(?:\\s+(?:more\\s+)?(?:items|SKUs|products)\\b|\\s*(?:个|项|种|款))`
+  const pageWords = '\\b(?:see|open|view|find|on|in)\\s+the\\s+(?:full\\s+|whole\\s+|complete\\s+)?reorder\\s+(?:list\\s+)?page|Inventory\\s*[>›→]\\s*Reorder|补货清单(?:页|页面)|(?:打开|查看)补货清单|补货清单(?:里|中|上)[^。\\n]{0,6}看|查看全部'
+  const reorderList = { matches: [{ label: 'says how many items are due', pattern: itemCount, textOnly: true }], listed: { rows: dueNow, alsoOnList: facts.reorderSoon, atLeast: Math.min(3, dueNow.length) }, wholeList: { route: 'inventory:reorder', words: pageWords } }
   add({ id: 'reorder-en', kind: 'reorder', language: 'en-US', turns: ['What should I reorder this week?'], expect: reorderList })
   add({ id: 'reorder-zh', kind: 'reorder', language: 'zh-CN', turns: ['这周需要补什么货？'], expect: reorderList })
   add({ id: 'cake-zh', kind: 'reorder', language: 'zh-CN', turns: ['蛋糕架还要补货吗？'], expect: { mentions: [named(cake)], numbers: [{ label: '建议数量', value: suggestion.quantity }] } })
@@ -203,7 +223,7 @@ export function buildUciCases(facts) {
     expect: { numbers: [{ label: '现有库存', value: topSeller.onHand }] } })
   add({ id: 'conv-customer-item-en', kind: 'conversation', language: 'en-US', turns: [`Who was our top customer by sales in ${last.en}?`, 'What did they buy the most of that month?'],
     expect: { mentions: [{ label: topCustomer.topItem.sku, any: [topCustomer.topItem.sku, facts.item(topCustomer.topItem.sku).name] }], numbers: [{ label: 'units', value: topCustomer.topItem.units }] } })
-  add({ id: 'conv-reorder-form-en', kind: 'conversation', language: 'en-US', turns: ['What should I reorder this week?', 'ok, order it'], expect: { form: { sku: cake.sku, quantity: suggestion.quantity, orSaidEarlier: true } } })
+  add({ id: 'conv-reorder-form-en', kind: 'conversation', language: 'en-US', turns: ['What should I reorder this week?', 'ok, order it'], expect: { formAt: { rows: dueNow }, firstTurn: reorderList } })
   add({ id: 'conv-reorder-100-en', kind: 'conversation', language: 'en-US', turns: ['What should I reorder this week?', `make it 100 of ${cake.sku}`], expect: { form: { sku: cake.sku, quantity: 100 } } })
 
   // Boundaries: no business writes from the chat; a draft only.

@@ -10,8 +10,22 @@
 //   quantities  each positive quantity of the optimal order appears next to
 //               its SKU in a display row, or in the text;
 //   form        a purchase request form holds the SKU at the quantity;
+//   listed      (2026-11-22) at least atLeast of the rows (items due, with
+//               the reorder list's quantity and the figures it shows for
+//               them) named with that quantity and no figure the list does
+//               not show for them, and no SKU off the list (alsoOnList: the
+//               items due within 7 days); see itemsAtQuantity;
+//   formAt      every ticked form line is one of the rows' items at its
+//               quantity, and one line or more is ticked;
+//   wholeList   the answer points to the whole list: a table that links its
+//               page (listRoute), or words that send the user there beside a
+//               table;
+//   firstTurn   the checks for the first answer of a conversation, reported
+//               as "turn 1: …";
 //   mentions    each group has one of its words in the text or a display
-//               (an item by its SKU or its name, a supplier by its name);
+//               (an item by its SKU or its name, a supplier by its name; a
+//               decision card by the record number it shows: its key holds
+//               the record's id, the answer's refs give the number);
 //   dates       each date appears, written as 2026-11-04, Nov 4, 4 November,
 //               04/11/2026 or 11 月 4 日;
 //   refuses     the answer declines (nothing is changed from the chat);
@@ -152,6 +166,14 @@ export function answerLanguage(text) {
 }
 
 const flat = (answer) => `${answer.text || ''}\n${JSON.stringify(answer.ui || [])}`
+// The record numbers the answer's decision cards show. A card's props hold
+// only its key ("purchase_order_overdue:UCI-PO-00330"); the card shows the
+// record by its number, which the answer's refs give for that id
+// (2026-11-21 today-en: the card for Globex's late order PO-202611-0001).
+const cardRecords = (answer) => (answer.ui || []).filter((part) => part.component === 'decisions')
+  .flatMap((part) => (part.props?.keys || []).map((key) => String(key).split(':').slice(1).join(':')))
+  .map((id) => (answer.refs || []).find((ref) => ref && ref.id === id)?.label)
+  .filter((label) => typeof label === 'string' && label.trim())
 
 // The rows of every table or card in the answer, as plain objects.
 function displayRows(answer) {
@@ -186,6 +208,105 @@ export const LENGTH_BUDGET = Object.freeze({ brief: 350, other: 900 })
 const WIDE = /[\u3000-\u303f\u3400-\u9fff\uf900-\ufaff\uff00-\uffef]/g
 // The text's length in English-letter terms: a Chinese character counts twice.
 export const answerLength = (text) => { const value = String(text || ''); return value.length + (value.match(WIDE) || []).length }
+
+// Which items an answer names at their quantity (listed; 2026-11-22, the
+// #446 review and its recheck), by value, not by the words around a figure.
+// A figure belongs to the item written before it in its sentence or table
+// row (by its SKU, its name, or a run of its name's words such as "Cake
+// stand"), or to the next one when it reads "570 of 23309" or comes first.
+// Record numbers, dates, amounts, percentages, durations (14 days, 7 天),
+// counts of items or orders (64 items, 2 张) and list marks are set aside.
+// An item counts when the figures that belong to it hold its quantity (or a
+// table row of it shows the quantity in the list's column) and every figure
+// that belongs to it is one the list shows for it (its row's values: the
+// quantity, on hand, available, position, reorder point, safety stock,
+// order-up-to, shortfall, open orders, minimum order, demand). Any other
+// figure fails the item, whatever the words around it ("round to 600",
+// "optimal 617", "| 23309 | 570 | 617 |"), and so does a table row or form
+// line of it with another figure. A SKU that is not on the list today (due
+// now or within 7 days) fails the check (notOnList).
+const RECORD_TEXT = /\b[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*-\d{3,}\b/g
+const MONTH_WORD = '(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\\.?'
+const DATE_TEXT = new RegExp([`\\b\\d{1,2}\\s+${MONTH_WORD}(?:,?\\s+\\d{4})?`, `\\b${MONTH_WORD}\\s+\\d{1,2}(?:,?\\s+\\d{4})?`, '\\b\\d{4}-\\d{2}-\\d{2}\\b', '\\d{4}\\s*年\\s*\\d{1,2}\\s*月(?:\\s*\\d{1,2}\\s*日)?', '\\d{1,2}\\s*月\\s*\\d{1,2}\\s*日', '\\b\\d{1,2}/\\d{1,2}(?:/\\d{2,4})?\\b'].join('|'), 'gi')
+const AMOUNT_TEXT = /[£$€¥]\s?\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s?%/g
+const SPAN_TEXT = /\d[\d,]*(?:\.\d+)?(?:\s*-\s*|\s+)?(?:days?|weeks?|months?|天|日|周|个月)(?![a-z])/gi
+const COUNT_TEXT = /\d[\d,]*\s*(?:(?:more\s+)?(?:items?|SKUs?|products?|lines?|(?:open\s+|late\s+|purchase\s+)*orders?|suppliers?)\b|个物料|项|种|张|家)/gi
+const LIST_MARK = /^\s*(?:[-*•]\s*)?\d{1,2}[.)、]\s/gm
+const SKU_TEXT = /(?<![\w-])\d{5}[A-Z]{0,2}(?![\w-])/g
+const LIST_COLUMNS = new Set(['request_quantity', 'suggested_quantity'])
+const blankOut = (text, pattern) => text.replace(pattern, (match) => ' '.repeat(match.length))
+const compact = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+const fits = (value, values) => values.some((known) => Math.abs(value - known) <= (Number.isInteger(value) ? 0.5 : 0.051) + 1e-9)
+
+function itemsAtQuantity(answer, { rows, alsoOnList = [] }) {
+  const due = new Map(rows.map((row) => [row.sku, row]))
+  const onList = new Set([...due.keys(), ...alsoOnList])
+  const found = new Map(rows.map((row) => [row.sku, { at: false, other: false }]))
+  const known = (sku) => [due.get(sku).quantity, ...(due.get(sku).values || [])].map(Number).filter(Number.isFinite)
+  const notOnList = new Set()
+  const names = rows.filter((row) => compact(row.name).length >= 8).map((row) => ({ sku: row.sku, key: compact(row.name) }))
+  // A run of up to four words of one due item's name (eight letters or more,
+  // no other due item's name holding it) names that item.
+  const nameAnchors = (text) => {
+    const words = [...text.matchAll(/[A-Za-z0-9]+/g)].map((match) => ({ word: match[0], start: match.index, end: match.index + match[0].length }))
+    const anchors = []
+    for (let at = 0; at < words.length; at += 1) {
+      for (let size = Math.min(4, words.length - at); size >= 1; size -= 1) {
+        const run = words.slice(at, at + size)
+        if (run.some((word, index) => index && !/^\s+$/.test(text.slice(run[index - 1].end, word.start)))) continue
+        const key = compact(run.map((word) => word.word).join(''))
+        if (key.length < 8 || !/[a-z]/.test(key) || /^\d{5}[a-z]{0,2}$/.test(key)) continue
+        const holders = names.filter((name) => name.key.includes(key))
+        if (holders.length !== 1) continue
+        anchors.push({ sku: holders[0].sku, start: run[0].start, end: run.at(-1).end })
+        at += size - 1
+        break
+      }
+    }
+    return anchors
+  }
+  for (const sentence of String(answer.text || '').split(SENTENCE)) {
+    let text = [RECORD_TEXT, DATE_TEXT, AMOUNT_TEXT, SPAN_TEXT, COUNT_TEXT, LIST_MARK].reduce(blankOut, sentence)
+    const skus = [...text.matchAll(SKU_TEXT)].map((match) => ({ sku: match[0], start: match.index, end: match.index + match[0].length }))
+    for (const { sku } of skus) if (!onList.has(sku)) notOnList.add(sku)
+    text = blankOut(text, SKU_TEXT)
+    const named = nameAnchors(text)
+    const anchors = [...skus, ...named].sort((a, b) => a.start - b.start)
+    for (const anchor of named) text = text.slice(0, anchor.start) + ' '.repeat(anchor.end - anchor.start) + text.slice(anchor.end)
+    if (!anchors.length) continue
+    const owner = (start, end) => {
+      const before = anchors.filter((anchor) => anchor.end <= start).at(-1)
+      const after = anchors.find((anchor) => anchor.start >= end)
+      if (after && (!before || /^\s*(?:pcs|units|件|个)?\s*(?:of|for|×|x)\s*$/i.test(text.slice(end, after.start)))) return after.sku
+      return (before || after).sku
+    }
+    for (const match of text.matchAll(/\d[\d,]*(?:\.\d+)?/g)) {
+      const sku = owner(match.index, match.index + match[0].length)
+      if (!due.has(sku)) continue
+      const value = Number(match[0].replace(/,/g, ''))
+      if (value === due.get(sku).quantity) found.get(sku).at = true
+      if (!fits(value, known(sku))) found.get(sku).other = true
+    }
+  }
+  for (const part of answer.ui || []) {
+    const lines = part.component === 'pr_form' ? [...(part.props?.lines || []), ...(part.props?.suggested || [])].map((line) => ({ sku: line.item?.sku, cells: [], form: Number(line.suggestedQuantity?.value ?? line.quantity), list: [] }))
+      : part.component === 'table' ? (part.props?.rows || []).map((row) => {
+        const labels = Object.values(row).map((cell) => (cell && typeof cell === 'object' ? cell.label : cell)).filter((value) => typeof value === 'string')
+        return { sku: labels.find((value) => due.has(value)) || labels.find((value) => /^\d{5}[A-Z]{0,2}$/.test(value)), cells: Object.entries(row).filter(([code, cell]) => typeof cell === 'number' && !/_one$/.test(code)).map(([, cell]) => cell), list: Object.entries(row).filter(([code]) => LIST_COLUMNS.has(code)).map(([, cell]) => Number(cell)) }
+      })
+        : []
+    for (const line of lines) {
+      if (!line.sku) continue
+      if (!onList.has(line.sku)) { notOnList.add(line.sku); continue }
+      if (!due.has(line.sku)) continue
+      const quantity = due.get(line.sku).quantity
+      if (line.list.includes(quantity)) found.get(line.sku).at = true
+      if (line.cells.some((value) => !fits(value, known(line.sku)))) found.get(line.sku).other = true
+      if (Number.isFinite(line.form) && line.form !== quantity) found.get(line.sku).other = true
+    }
+  }
+  return { named: rows.filter((row) => found.get(row.sku).at && !found.get(row.sku).other), notOnList: [...notOnList] }
+}
 
 export function scoreAnswer(answer, expect = {}, { language = 'en-US', answers = [answer] } = {}) {
   const checks = []
@@ -283,7 +404,7 @@ export function scoreAnswer(answer, expect = {}, { language = 'en-US', answers =
     add(`no number: ${label}`, near === undefined, near === undefined ? '' : `found ${near}`)
   }
   if (expect.mentions) {
-    const text = flat(answer).toLowerCase()
+    const text = `${flat(answer)}\n${cardRecords(answer).join('\n')}`.toLowerCase()
     for (const { label, any } of expect.mentions) add(`mention: ${label}`, any.some((word) => text.includes(String(word).toLowerCase())), any.join(' | '))
   }
   for (const { label, date } of expect.dates || []) {
@@ -307,6 +428,26 @@ export function scoreAnswer(answer, expect = {}, { language = 'en-US', answers =
       const inText = text.split(SENTENCE).some((line) => names.some((value) => line.includes(value)) && numbersIn(line).includes(quantity))
       add(`quantity: ${sku}`, inRow || inText, `expected ${quantity}`)
     }
+  }
+  if (expect.listed) {
+    const { named, notOnList } = itemsAtQuantity(answer, expect.listed)
+    add('lists items at their quantity', named.length >= expect.listed.atLeast && !notOnList.length, `${named.length} of ${expect.listed.rows.length}, ${expect.listed.atLeast} wanted${named.length ? `: ${named.slice(0, 8).map((row) => row.sku).join(', ')}` : ''}${notOnList.length ? `; not on the list: ${notOnList.slice(0, 5).join(', ')}` : ''}`)
+  }
+  if (expect.formAt) {
+    const wanted = new Map(expect.formAt.rows.map((row) => [row.sku, row.quantity]))
+    const ticked = formRows(answer).filter((row) => row.checked).map((row) => ({ sku: row.item?.sku, value: Number(row.suggestedQuantity?.value ?? row.quantity) }))
+    const wrong = ticked.filter((row) => !wanted.has(row.sku) || row.value !== wanted.get(row.sku))
+    const form = (answer.ui || []).some((part) => part.component === 'pr_form')
+    add('form at their quantities', ticked.length > 0 && !wrong.length, !form ? 'no form' : !ticked.length ? 'no line ticked' : wrong.length ? wrong.map((row) => (wanted.has(row.sku) ? `${row.sku} at ${row.value}, not ${wanted.get(row.sku)}` : `${row.sku} is not due`)).join(', ') : `${ticked.length} ticked, each at its quantity`)
+  }
+  if (expect.wholeList) {
+    const tables = (answer.ui || []).filter((part) => part.component === 'table')
+    const linked = tables.some((part) => part.props?.listRoute?.moduleId === expect.wholeList.route)
+    const words = patternOf({ pattern: expect.wholeList.words }).test(String(answer.text || ''))
+    add('points to the whole list', linked || (words && tables.length > 0), linked ? 'a table links it' : words ? (tables.length ? 'words beside a table' : 'words, no table') : 'no link or words')
+  }
+  if (expect.firstTurn && answers.length > 1) {
+    for (const check of scoreAnswer(answers[0], expect.firstTurn, { language, answers: [answers[0]] }).checks) checks.push({ ...check, name: `turn 1: ${check.name}` })
   }
   // The item on the form at the expected quantity, or (orSaidEarlier) at the
   // quantity an earlier answer gave it, when the user agrees to that answer
