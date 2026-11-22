@@ -715,6 +715,15 @@ test('the instructions send what to reorder to the reorder list and keep the sol
   assert.match(line, /An order under a budget, a what-if or a proposed order: optimize_order_plan, an exact solver\./)
   assert.doesNotMatch(prompt, /What to order now across items/)
   assert.doesNotMatch(prompt, /refills to the reorder point/)
+  // The solver's own description says the same (#445 review: it still
+  // offered itself for "what to order now").
+  const solver = AI_ASSISTANT_V2_TOOLS.find((entry) => entry.name === 'optimize_order_plan').description
+  assert.match(solver, /Use it for an order under a budget, what-ifs and an order someone proposes\./)
+  assert.doesNotMatch(solver, /what to order now/)
+  // The list says its own order, which the page's (by day, then SKU) is not.
+  const list = AI_READ_TOOLS.find((entry) => entry.name === 'reorder_list').description
+  assert.match(list, /by the day they must be ordered, then the largest shortfall/)
+  assert.doesNotMatch(list, /as the inventory page shows it/)
 })
 
 test('reorder_list carries the suggested reorder point beside the recorded one, with what it rests on', async () => {
