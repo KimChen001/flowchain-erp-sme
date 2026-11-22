@@ -342,10 +342,11 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
       const otherSkus = await supplierSkusOf(client, actor.tenantId, other)
       targets.push({ order: other, snapshot: supplierReplyOrderSnapshot(other, otherSkus), skus: otherSkus })
     }
+    const emailRead = targets.map((target) => upper(target.snapshot.number))
     const startedAt = Date.now()
     const readings = await Promise.all(targets.map(async (target) => {
       const read = await readWithModel({ client, context, tenantId: actor.tenantId, snapshot: target.snapshot, cleaned, receivedOn, today, signal })
-      const check = read.readingStatus === 'read' ? checkReplyReading({ order: target.snapshot, text: cleaned.text, receivedOn, reading: read.reading }) : null
+      const check = read.readingStatus === 'read' ? checkReplyReading({ order: target.snapshot, text: cleaned.text, receivedOn, reading: read.reading, emailRead }) : null
       return { ...target, read, check, ms: Date.now() - startedAt, id: idFactory() }
     }))
     const email = {

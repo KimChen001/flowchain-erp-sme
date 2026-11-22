@@ -30,7 +30,7 @@ export async function runSeveralOrdersCase(kase, callModel) {
     ? emailOrdersToRead({ named, pastedOn: kase.pastedOn || null, orders: kase.orders.map((order) => ({ number: order.number, status: order.status, supplier: order.supplierName || null })), openStates: SUPPLIER_REPLY_ORDER_STATES, limit: SUPPLIER_REPLY_EMAIL_ORDER_LIMIT })
     : { read: kase.pastedOn ? [upper(kase.pastedOn)] : [], notRead: [] }
   const byOrder = {}
-  for (const number of choice.read) byOrder[number] = await runSupplierReplyCase({ ...kase, order: orderOf(kase, number) }, callModel)
+  for (const number of choice.read) byOrder[number] = await runSupplierReplyCase({ ...kase, order: orderOf(kase, number), emailRead: choice.read }, callModel)
   return { cleaned, named, choice, byOrder }
 }
 

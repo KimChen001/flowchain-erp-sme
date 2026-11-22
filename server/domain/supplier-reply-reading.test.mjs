@@ -1029,7 +1029,7 @@ test('an email naming several orders: a value counts for this order only from it
     '',
     `${B}: the brackets ship on 10 December, the price goes up 4%.`,
     '',
-    `PO-202611-0012 and ${C} both ship their hinges on 9 December.`,
+    `PO-202611-0012 and ${C} will both ship complete on 9 December.`,
     `${C} is late, so PO-202611-0012 keeps its brackets until 11 December.`,
     `Either PO-202611-0012 or ${C} can take the samples on 15 December.`,
     '',
@@ -1062,11 +1062,18 @@ test('an email naming several orders: a value counts for this order only from it
     assert.deepEqual([shared.outcome, shared.issue, shared.readings], ['needs_you', 'no_order_part', [date]], quote)
   }
   // One sentence that lists both orders and gives one day (§9): that day is
-  // each listed order's.
-  assert.deepEqual(outcomes(check(reply, reading([line('L2', '2026-12-09', 'both ship their hinges on 9 December')]))), [['L2', 'proposed', null, '2026-12-09']])
-  assert.deepEqual(outcomes(check(reply, reading([line('L2', '2026-12-09', 'both ship their hinges on 9 December')]), { order: { ...order, number: C } })), [['L2', 'proposed', null, '2026-12-09']])
+  // each listed order's, when both are read.
+  const joint = (quote, on = order, emailRead = [order.number, B, C]) => checkReplyReading({ order: on, text: reply, receivedOn: RECEIVED, reading: reading([line('L2', '2026-12-09', quote)]), emailRead })
+  assert.deepEqual(outcomes(joint('will both ship complete on 9 December')), [['L2', 'proposed', null, '2026-12-09']])
+  assert.deepEqual(outcomes(joint('will both ship complete on 9 December', { ...order, number: C })), [['L2', 'proposed', null, '2026-12-09']])
   // Not for an order the list leaves out.
-  assert.equal(check(reply, reading([line('L2', '2026-12-09', 'both ship their hinges on 9 December')]), { order: { ...order, number: B } }).lines[0].issue, 'other_order_text')
+  assert.equal(joint('will both ship complete on 9 December', { ...order, number: B }).lines[0].issue, 'other_order_text')
+  // Not when a listed order is not read (closed, another supplier's), or
+  // when the read orders are not given: the person decides.
+  for (const emailRead of [[order.number, B], []]) {
+    const held = joint('will both ship complete on 9 December', order, emailRead).lines[0]
+    assert.deepEqual([held.outcome, held.issue, held.readings], ['needs_you', 'no_order_part', ['2026-12-09']], JSON.stringify(emailRead))
+  }
   // A hedged day of no single order is held with no day offered.
   const hedged = check(reply, reading([line('L1', '2026-12-24', 'Our factory closes from 24 December')])).lines[0]
   assert.deepEqual([hedged.outcome, hedged.issue], ['needs_you', 'no_order_part'])
@@ -1074,6 +1081,39 @@ test('an email naming several orders: a value counts for this order only from it
   // Read on the other order, its own part counts there and this one's does not.
   const onB = check(reply, reading([line('L1', '2026-12-10', 'the brackets ship on 10 December'), line('L2', '2026-12-04', 'the brackets ship on 4 December.')]), { order: { ...order, number: B } })
   assert.deepEqual(outcomes(onB), [['L2', 'dropped', 'other_order_text', null], ['L1', 'proposed', null, '2026-12-10']])
+})
+
+test('a sentence listing several orders gives no order its day when it names an item, a line, a quantity or an exception', () => {
+  const B = 'PO-202611-0013'
+  const said = (sentence) => `Hi,\n\n${sentence}\n\n${B}: the rest follows on 15 December.\nRegards`
+  const at = (sentence, quote) => checkReplyReading({ order, text: said(sentence), receivedOn: RECEIVED, reading: reading([{ line: 'L1', date: '2026-12-09', quote, dateKind: 'stated' }]), emailRead: [order.number, B, 'PO-202611-0014'] }).lines[0]
+  // The rule itself: a plain list and one day.
+  assert.equal(at(`PO-202611-0012 and PO-202611-0014 both ship on 9 December.`, 'both ship on 9 December').outcome, 'proposed')
+  assert.equal(at(`PO-202611-0012、PO-202611-0014 都在12月9日发货。`, '都在12月9日发货').outcome, 'proposed')
+  for (const [sentence, quote] of [
+    // An item: this order's code or name, or any code-like token.
+    ['PO-202611-0012 and PO-202611-0014: the brackets ship on 9 December.', 'the brackets ship on 9 December'],
+    ['PO-202611-0012 and PO-202611-0014: SKU-1040 ships on 9 December.', 'SKU-1040 ships on 9 December'],
+    ['PO-202611-0012 and PO-202611-0014: 85123A ships on 9 December.', '85123A ships on 9 December'],
+    ['PO-202611-0012 and PO-202611-0014: 84077 ships on 9 December.', '84077 ships on 9 December'],
+    // A line or a quantity.
+    ['PO-202611-0012 and PO-202611-0014: line 2 ships on 9 December.', 'line 2 ships on 9 December'],
+    ['PO-202611-0012 and PO-202611-0014: 200 pcs ship on 9 December.', '200 pcs ship on 9 December'],
+    ['PO-202611-0012和PO-202611-0014：第二行12月9日发货。', '第二行12月9日发货'],
+    ['PO-202611-0012和PO-202611-0014：各200件12月9日发货。', '各200件12月9日发货'],
+    // An exception, a limit or a contrast.
+    ['PO-202611-0012 and PO-202611-0014 ship on 9 December, except the samples.', 'ship on 9 December, except the samples'],
+    ['PO-202611-0012 and PO-202611-0014 ship on 9 December but not complete.', 'ship on 9 December but not complete'],
+    ['PO-202611-0012 and PO-202611-0014 only ship on 9 December.', 'only ship on 9 December'],
+    ['PO-202611-0012和PO-202611-0014除了样品都12月9日发货。', '除了样品都12月9日发货'],
+    ['PO-202611-0012和PO-202611-0014都12月9日发货，但数量不全。', '都12月9日发货，但数量不全'],
+    ['PO-202611-0012和PO-202611-0014只有一部分12月9日发货。', '只有一部分12月9日发货'],
+    // Two days, or none written.
+    ['PO-202611-0012 and PO-202611-0014 ship on 9 and 10 December.', 'ship on 9 and 10 December'],
+  ]) {
+    const row = at(sentence, quote)
+    assert.deepEqual([row.outcome, row.issue], ['needs_you', 'no_order_part'], sentence)
+  }
 })
 
 test('an email naming one order, or orders outside the numbering, is read exactly as before', () => {

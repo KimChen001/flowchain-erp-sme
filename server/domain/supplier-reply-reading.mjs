@@ -997,14 +997,18 @@ export function lineNamedElsewhere(order, quote, ref, { date = null, receivedOn 
 //   none    in text that belongs to no order (a greeting, a general line)
 //   other   in another order's part only
 //   across  over two parts or more
-function quotePlace(parts, number, quote, receivedOn) {
+function quotePlace(parts, { order, quote, receivedOn, read }) {
   const form = quoteForm(quote)
-  const own = String(number ?? '').trim().toUpperCase()
+  const own = String(order?.number ?? '').trim().toUpperCase()
   const places = parts.runs.filter((run) => quoteForm(run.text).includes(form))
   if (places.some((run) => run.owners.length === 1 && run.owners[0] === own)) return 'own'
   // One sentence that lists this order with others and gives one day ("PO-a
-  // and PO-b both ship 4 Dec", §9): the day is each listed order's.
-  if (places.some((run) => run.joint && run.owners.includes(own) && oneDay(run.text, receivedOn))) return 'own'
+  // and PO-b both ship 4 Dec", §9): the day is each listed order's, when
+  // every order listed is read (none closed, another supplier's or unknown)
+  // and the sentence names no item, line, quantity or exception.
+  const jointDay = (run) => run.joint && run.owners.includes(own) && run.owners.every((number) => read.includes(number))
+    && oneDay(run.text, receivedOn) && !JOINT_EXCEPTION.test(run.text) && !namesItem(run.text, order)
+  if (places.some(jointDay)) return 'own'
   if (places.some((run) => run.owners.includes(own))) return 'shared'
   if (places.some((run) => !run.owners.length)) return 'none'
   if (places.length) return 'other'
@@ -1021,8 +1025,26 @@ function quotePlace(parts, number, quote, receivedOn) {
   return 'across'
 }
 
+// Words that make a sentence about several orders about less than all of
+// them: an exception, a limit, a contrast.
+const JOINT_EXCEPTION = /\b(?:except|excluding|exclude[sd]?|but|only|apart\s+from|other\s+than|save\s+for|unlike|rest|remaining|partial(?:ly)?|some\s+of)\b|除了|除去|不包括|不含|但是?|只有|仅|其余|剩下|剩余|部分/i
+// A sentence that names an item or a part of an order: one of this order's
+// codes or names, a code-like token (85123A, HOBBIES_2_007, 84077), a line
+// ("line 2", L2, 第二行) or a quantity (200 pcs, 200 件).
+function namesItem(value, order) {
+  const form = quoteForm(value).replace(/\b[a-z][a-z0-9]{0,9}-\d{6}-\d{4,6}\b/g, ' ')
+  const named = array(order?.lines).flatMap((line) => [line.sku, line.supplierSku, line.itemName]).map((entry) => quoteForm(entry)).filter((entry) => entry.length >= 3)
+  if (named.some((entry) => form.includes(entry))) return true
+  const codeLike = [...form.matchAll(/\b(?=[a-z0-9_-]*\d)(?=[a-z0-9_-]*[a-z])[a-z0-9][a-z0-9_-]{3,}\b|\b\d{5,}\b/g)].some((match) => !/^\d+(?:st|nd|rd|th)$/.test(match[0]))
+  return codeLike || /\bline\s*\d|\bl\d{1,3}\b|第\s*[一二三四五六七八九十\d]+\s*行|\d\s*(?:pcs|pieces|units|cartons|boxes|sets|件|个|箱|套|只|台)/.test(form)
+}
+
 // The text names exactly one day: one calendar date, or one relative day.
 function oneDay(value, receivedOn) {
+  // Two day numbers joined ("9 and 10 December", "3-4 Dec", 9、10号): two days,
+  // though only the second carries the month.
+  const bare = String(value ?? '').normalize('NFKC').replace(/\b\d{4}-\d{2}-\d{2}\b|\b[A-Z][A-Z0-9]{0,9}-\d{6}-\d{4,6}\b/gi, ' ')
+  if (/\b\d{1,2}(?:st|nd|rd|th)?\s*(?:and|&|or|,|to|-|–|~|和|或|、|至|到)\s*\d{1,2}(?:st|nd|rd|th)?\b/i.test(bare)) return false
   const written = datesInQuote(value, receivedOn)
   if (written.ambiguous.length) return false
   const days = new Set([...written.exact, ...written.dayOnly.map((row) => row.date)])
@@ -1039,8 +1061,11 @@ function oneDay(value, receivedOn) {
 // each of them: a value counts for this order only from this order's part.
 // A quote from another order's part, or across parts, is dropped
 // (other_order_text); one from text of no single order goes to the person,
-// the day offered (no_order_part). With one order named, nothing changes.
-export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
+// the day offered (no_order_part). emailRead: the numbers of the orders the
+// email is read on (emailOrdersToRead); a sentence listing several orders
+// gives each its day only when all of them are read. With one order named,
+// nothing changes.
+export function checkReplyReading({ order, text: reply, receivedOn, reading, emailRead = [] }) {
   const open = SUPPLIER_REPLY_ORDER_STATES.includes(text(order?.status))
   const byRef = new Map(array(order?.lines).map((line) => [line.ref, line]))
   const openLines = array(order?.lines).filter((line) => Number(line.remaining) > 0).length
@@ -1052,7 +1077,8 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
     return at >= 0 && spans.some(([start, end]) => at < end && at + part.length > start)
   }
   const emailSplit = emailParts(reply, order?.number)
-  const placeOf = (quote) => (emailSplit ? quotePlace(emailSplit, order?.number, quote, receivedOn) : 'own')
+  const read = array(emailRead).map((number) => String(number ?? '').trim().toUpperCase())
+  const placeOf = (quote) => (emailSplit ? quotePlace(emailSplit, { order, quote, receivedOn, read }) : 'own')
   let dropped = 0
   const flags = []
   for (const flag of array(reading?.flags)) {
