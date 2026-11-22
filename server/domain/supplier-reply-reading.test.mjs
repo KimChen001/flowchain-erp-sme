@@ -881,6 +881,79 @@ test('relative days are never proposed wrong: schedules, past, windows, alternat
   }
 })
 
+test('relative days are never proposed wrong: past clauses, "next" after a weekday, 下 inside a word, 下下下, fortnights, another item\'s day of the month (#444 recheck probe)', () => {
+  const probeOrder = {
+    number: 'PO-202611-0012', supplierName: 'Acme Ltd', status: 'partially_received',
+    lines: [
+      { ref: 'L1', purchaseOrderLineId: 'pol-1', sku: 'SKU-1040', supplierSku: 'ACM-5521', itemName: 'Bracket', remaining: 60, unit: 'pcs', promisedDate: '2026-11-12' },
+      { ref: 'L2', purchaseOrderLineId: 'pol-2', sku: 'SKU-2210', supplierSku: null, itemName: 'Hinge', remaining: 20, unit: 'pcs', promisedDate: '2026-11-12' },
+    ],
+  }
+  const TUE = '2026-11-17'; const WED = '2026-11-18'; const SUN = '2026-11-22'
+  const R = (date = null) => ({ dateKind: 'relative', date })
+  const S = (date) => ({ dateKind: 'stated', date })
+  // [label, reply = quote, receivedOn, reading fields, 'held' or the one date that may be proposed]
+  const cases = [
+      // past-verb scope
+      ['past ; scope', 'Shipped the blue ones; the red ones ship on Friday.', WED, R(), '2026-11-20'],
+      ['past and scope', 'The blue ones shipped and the red ones go on Friday.', WED, R(), '2026-11-20'],
+      ['past no break', 'The blue ones were shipped yesterday the red ones go on Friday.', WED, R(), 'held'],
+      ['past zh 已发出，周五', '蓝色的已发出，红色的周五发。', WED, R(), '2026-11-20'],
+      ['past zh 周一发的货', '周一发的货。', WED, R(), 'held'],
+      // Friday next week / next week Friday / Friday next month
+      ['en Friday next week', 'We ship Friday next week.', TUE, R(), 'held'],
+      ['en on Friday next week', 'We ship on Friday next week.', TUE, R(), 'held'],
+      ['en next week Friday', 'We ship next week Friday.', TUE, R(), 'held'],
+      ['en Monday next month', 'We ship Monday next month.', TUE, R(), 'held'],
+      ['en Monday next month (model 7 Dec)', 'We ship Monday next month.', TUE, R('2026-12-07'), 'held'],
+      ['en Friday next (Sat)', 'We ship Friday next.', '2026-11-21', R(), '2026-11-27'],
+      // 下下 / 下下下 / 下 as part of a word
+      ['zh 下下下周三', '下下下周三发货。', TUE, R(), 'held'],
+      ['zh 下下下周三 (model 9 Dec)', '下下下周三发货。', TUE, R('2026-12-09'), 'held'],
+      ['zh 剩下下周三', '剩下下周三发货。', TUE, R(), '2026-11-25'],
+      ['zh 剩下下周三 (model 25)', '剩下下周三发货。', TUE, R('2026-11-25'), '2026-11-25'],
+      ['zh 余下下周五', '余下下周五全部发出。', TUE, R(), '2026-11-27'],
+      // 前
+      ['zh 12月2日之前', '12月2日之前发货。', TUE, S('2026-12-02'), 'held'],
+      ['zh 12月2日以前', '12月2日以前发货。', TUE, S('2026-12-02'), 'held'],
+      ['zh 提前到12月2日', '提前到12月2日发货。', TUE, S('2026-12-02'), '2026-12-02'],
+      ['zh 12月2日提前发货', '12月2日提前发货。', TUE, S('2026-12-02'), '2026-12-02'],
+      ['zh 下周三之前', '下周三之前发货。', TUE, R(), 'held'],
+      ['zh 下周三前', '下周三前发货。', TUE, R(), 'held'],
+      // fortnight
+      ['en a fortnight Friday', "We'll ship a fortnight Friday.", TUE, R(), 'held'],
+      ['en a fortnight on Friday', "We'll ship a fortnight on Friday.", TUE, R(), 'held'],
+      ['en Friday fortnight', "We'll ship on Friday fortnight.", TUE, R(), 'held'],
+      // day-of-month settling for another item
+      ['settle other item 27', 'The blue ones next Friday, the red ones on the 27th.', TUE, R('2026-11-27'), 'held'],
+      ['settle other item 20', 'The blue ones next Friday, the red ones on the 20th.', TUE, R('2026-11-20'), 'held'],
+      ['settle Sun other item 4th', 'The blue ones next Friday, the red ones on the 4th.', SUN, R('2026-12-04'), 'held'],
+      // Sunday this Friday
+      ['Sun this Friday null', 'We ship this Friday.', SUN, R(), 'held'],
+      ['Sun this Friday 27', 'We ship this Friday.', SUN, R('2026-11-27'), 'held'],
+      ['Sun on Friday', 'We ship on Friday.', SUN, R(), '2026-11-27'],
+      // last
+      ['en last Friday of the month', 'We ship on the last Friday of the month.', TUE, R('2026-11-27'), 'held'],
+  ]
+  for (const [label, quote, receivedOn, fields, expected] of cases) {
+    const row = checkReplyReading({ order: probeOrder, text: quote, receivedOn, reading: reading([{ line: 'L1', quote, quantity: null, ...fields }]) }).lines[0]
+    const proposed = ['proposed', 'confirmed'].includes(row.outcome) ? row.proposedDate : null
+    if (proposed) assert.equal(proposed, expected, label)
+  }
+  // The days that must still be read.
+  const read = (quote, receivedOn = TUE) => check(quote, reading([{ line: 'L1', date: null, quote, dateKind: 'relative' }]), { order: probeOrder, receivedOn }).lines[0].proposedDate
+  assert.equal(read('剩下下周三发货。'), '2026-11-25')
+  assert.equal(read('余下下周五全部发出。'), '2026-11-27')
+  assert.equal(read('下下周三发货。'), '2026-12-02')
+  assert.equal(read('货在下下周三发出。'), '2026-12-02')
+  assert.equal(read('We ship Friday next.', '2026-11-21'), '2026-11-27')
+  assert.equal(read('蓝色的已发出，红色的周五发。', WED), '2026-11-20')
+  assert.equal(read('Shipped the blue ones; the red ones ship on Friday.', WED), '2026-11-20')
+  for (const quote of ['We ship Monday next month.', 'We ship Friday next week.', '下下下周三发货。', "We'll ship on Friday fortnight.", 'We ship on the last Friday of the month.']) assert.equal(relativeDateInQuote(quote, TUE), null, quote)
+  assert.equal(relativeDateInQuote('周一发的货。', WED).date, '2026-11-16')
+  assert.equal(relativeDateInQuote('周五要发的货。', WED).date, '2026-11-20')
+})
+
 test('"next <weekday>" said on a Sunday or on that weekday, and a bare weekday said on that day, offer both days; a day of the month settles it', () => {
   const row = (quote, receivedOn, fields = { dateKind: 'relative', date: null }) => check(quote, reading([{ line: 'L1', quote, ...fields }]), { receivedOn }).lines[0]
   const pick = (value) => [value.outcome, value.issue, value.readings]

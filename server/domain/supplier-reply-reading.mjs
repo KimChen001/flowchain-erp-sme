@@ -345,14 +345,14 @@ function clauseAt(source, index) {
 }
 
 // A clause that says the goods already went: a shipping verb in the past
-// ("shipped", "were dispatched", not "will be shipped"), 已(于)…发出 or 发了;
-// not 已确认 / 已安排 / 已定 ("confirmed / arranged for" a day).
+// ("shipped", "were dispatched", not "will be shipped"), 已(于)…发出, 发了 or
+// 发的货; not 已确认 / 已安排 / 已定 ("confirmed / arranged for" a day), 要发的.
 function pastClause(clause) {
   const lowerClause = clause.toLowerCase()
   for (const m of lowerClause.matchAll(/\b(?:shipped|dispatched|delivered|sent|went\s+out)\b/g)) {
     if (!/\b(?:be|will|'ll|shall|to|can|could|would|should|must|get|gets|getting)\s+$/.test(lowerClause.slice(Math.max(0, m.index - 16), m.index))) return true
   }
-  return /已(?:经)?(?:于|在)?\s*(?:[上下这本]?\s*(?:个)?\s*(?:周|星期|礼拜)\s*[一二三四五六日天])?[^确认安排计划准备定约]{0,4}?(?:发货|发出|寄出|出货|送达|到货|送到)|(?:发货|发出|寄出|出货|发|到)了/.test(clause)
+  return /已(?:经)?(?:于|在)?\s*(?:[上下这本]?\s*(?:个)?\s*(?:周|星期|礼拜)\s*[一二三四五六日天])?[^确认安排计划准备定约]{0,4}?(?:发货|发出|寄出|出货|送达|到货|送到)|(?:发货|发出|寄出|出货|发|到)了|(?<![要会将待准备])(?:发|寄|送|交|到)的(?!话)/.test(clause)
 }
 
 function relativePlaces(quote, receivedOn) {
@@ -364,7 +364,9 @@ function relativePlaces(quote, receivedOn) {
   // A weekday that may be either of two days: both offered (ambiguousWeekdayInQuote).
   const twoDays = (phrase, first, second) => found.push({ phrase: phrase.trim().slice(0, 80), date: null, readings: [first, second] })
   let match
-  const lower = source.toLowerCase().replace(new RegExp(`\\b(${WEEKDAY})(\\s+)next\\b(?!\\s+week)`, 'g'), (all, day, space) => `next${space}${day}`)
+  // "Friday next" is "next Friday" only when next ends the phrase: "Monday
+  // next month", "Friday next week" are left unread.
+  const lower = source.toLowerCase().replace(new RegExp(`\\b(${WEEKDAY})(\\s+)next\\b(?=\\s*(?:$|[.,;:!?)\\]–—(-]|\\d|the\\s+\\d))`, 'g'), (all, day, space) => `next${space}${day}`)
   const replyWeekday = weekdayOf(receivedOn)
   // The weekday before the reply day (never the reply day itself).
   const lastOccurrence = (weekday) => addDays(receivedOn, -(((replyWeekday - weekday + 7) % 7) || 7))
@@ -396,14 +398,18 @@ function relativePlaces(quote, receivedOn) {
     return (row.index >= end && row.index - end <= 3) || (index >= rowEnd && index - rowEnd <= 3)
   })
   // A week counted apart from the weekday ("next week on Wednesday",
-  // "Wednesday week", "a week on Wednesday"): no one day computed.
-  const weekApart = new RegExp(`\\bnext\\s+week\\b|\\b(?:${WEEKDAY})\\s+week\\b|\\ba\\s+week\\s+(?:on|from)\\b`).exec(lower)
+  // "Wednesday week", "a week on Wednesday", "Friday fortnight"): no one day
+  // computed.
+  const weekApart = new RegExp(`\\bnext\\s+week\\b|\\b(?:${WEEKDAY})\\s+week\\b|\\ba\\s+week\\s+(?:on|from)\\b|\\bfortnight\\b`).exec(lower)
   for (const m of lower.matchAll(new RegExp(`\\b(next|this|coming|on|by|last)\\s+(${WEEKDAY})\\b`, 'g'))) {
     if (besideDate(m.index, m.index + m[0].length)) continue
     if (weekApart) { unsure(weekApart[0]); continue }
     const weekday = WEEKDAYS[m[2]]
     const coming = nextOccurrence(receivedOn, weekday)
-    if (m[1] === 'last') hit(m[0], lastOccurrence(weekday))
+    if (m[1] === 'last') {
+      if (/^\s+of\b/.test(lower.slice(m.index + m[0].length))) unsure(m[0])
+      else hit(m[0], lastOccurrence(weekday))
+    }
     else if (m[1] === 'next') {
       const following = addDays(mondayOf(receivedOn), 7 + weekday)
       // Said on that weekday: a week on, or two. Said on a Sunday (the first
@@ -433,7 +439,7 @@ function relativePlaces(quote, receivedOn) {
   }
   // 下周的周三, 下周 周三: next week's Wednesday, written apart.
   const taken = []
-  for (const m of source.matchAll(/下\s*(?:个)?\s*(?:周|星期|礼拜)\s*的?\s*(?:周|星期|礼拜)\s*([一二三四五六日天])/g)) {
+  for (const m of source.matchAll(/(?<!下)下\s*(?:个)?\s*(?:周|星期|礼拜)\s*的?\s*(?:周|星期|礼拜)\s*([一二三四五六日天])/g)) {
     hit(m[0], addDays(mondayOf(receivedOn), 7 + ZH_WEEKDAYS[m[1]]))
     taken.push([m.index, m.index + m[0].length])
   }
@@ -443,8 +449,18 @@ function relativePlaces(quote, receivedOn) {
     const weekday = ZH_WEEKDAYS[m[2]]
     // 周一起: "from Monday on", or 一起 "together" after 周: not one day.
     if (m[2] === '一' && source[m.index + m[0].length] === '起') { unsure(`${m[0]}起`); continue }
-    if (m[1] === '下下') hit(m[0], addDays(mondayOf(receivedOn), 14 + weekday))
-    else if (m[1] === '下') hit(m[0], addDays(mondayOf(receivedOn), 7 + weekday))
+    const before = source.slice(0, m.index)
+    let prefix = m[1]
+    if (prefix === '下下') {
+      // 下下下周: no one day.
+      if (/下\s*$/.test(before)) { unsure(`下${m[0]}`); continue }
+      // 剩下下周三, 余下下周五: the first 下 ends a word, one 下 is left. 下下周
+      // only at a clause start, after a non-Chinese character, or after a
+      // word that cannot end in 下.
+      if (/[\u4e00-\u9fff]$/.test(before) && !/(?:从|在|于|是|要|就|将|会|预计|大约|大概|约|再|到)$/.test(before)) prefix = '下'
+    }
+    if (prefix === '下下') hit(m[0], addDays(mondayOf(receivedOn), 14 + weekday))
+    else if (prefix === '下') hit(m[0].replace(/^下下/, '下'), addDays(mondayOf(receivedOn), 7 + weekday))
     else if (m[1] === '上') hit(m[0], addDays(mondayOf(receivedOn), -7 + weekday))
     else if (m[1] === '这' || m[1] === '本') {
       const date = addDays(mondayOf(receivedOn), weekday)
@@ -677,11 +693,15 @@ function resolveDate(entry, receivedOn, currentDate = null, reply = null) {
   // unless the reading gave a calendar date the quote writes.
   const weekdayPair = ambiguousWeekdayInQuote(quote, receivedOn)
   if (weekdayPair) {
-    // A date in the quote that is one of the two settles it ("next Friday
-    // the 27th"), when the reading gave that date.
-    const named = [...new Set([...written.exact, ...written.dayOnly.map((row) => row.date)])].filter((date) => weekdayPair.readings.includes(date))
-    const settled = named.length === 1 && claimed === named[0]
-    if (!settled && !(claimed && written.exact.includes(claimed))) return { issue: 'ambiguous_weekday', readings: weekdayPair.readings }
+    // A date written right beside it that is one of the two settles it ("next
+    // Friday the 27th", "next Friday, 27 November"), when the reading gave
+    // that date. A date elsewhere in the quote may be another item's.
+    const at = source.toLowerCase().indexOf(weekdayPair.phrase)
+    const end = at + weekdayPair.phrase.length
+    const named = at < 0 ? [] : [...new Set(datesWithPlaces(source, receivedOn)
+      .filter((row) => weekdayPair.readings.includes(row.date) && ((row.index >= end && row.index - end <= 6) || (at >= row.index + row.phrase.length && at - row.index - row.phrase.length <= 3)))
+      .map((row) => row.date))]
+    if (!(named.length === 1 && claimed === named[0])) return { issue: 'ambiguous_weekday', readings: weekdayPair.readings }
   }
   const sentence = reply ? sentenceAround(reply, quote) : quoteForm(quote)
   if (!claimed && entry.dateKind === 'relative') {
