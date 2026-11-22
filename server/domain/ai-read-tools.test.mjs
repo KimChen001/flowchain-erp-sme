@@ -226,6 +226,29 @@ test('at risk covers short, out of stock, below safety stock and below the reord
   })
 })
 
+// 2026-11-21 question set: "Which items are below their safety stock?" read
+// the 70 at-risk rows, 20 a page, and showed 8 of the 22.
+test('below_safety_stock gives the items counts.belowSafetyStock counts, and only those', async () => {
+  const facts = await factsFor()
+  const all = facts.inventory.rows
+  const others = all.filter((row) => row.stockStatus !== 'below_safety_stock')
+  // One below its reorder point only, one out of stock under its safety stock:
+  // each has its own status and count, and neither is listed here.
+  others[0].stockStatus = 'below_reorder_point'
+  Object.assign(others[1], { stockStatus: 'out_of_stock', available: 0, safetyStock: 10 })
+  if (!all.some((row) => row.stockStatus === 'below_safety_stock')) Object.assign(others[2], { stockStatus: 'below_safety_stock', available: 4, safetyStock: 10 })
+  const below = all.filter((row) => row.stockStatus === 'below_safety_stock')
+  const result = (await runAiReadTool('stock_position', { only: 'below_safety_stock', limit: 50 }, { facts })).result
+  assert.deepEqual(result.rows.map((row) => row.sku), below.map((row) => row.sku).sort())
+  assert.ok(result.rows.every((row) => row.belowSafetyStock === true && row.status === 'below_safety_stock'))
+  assert.equal(result.rows.some((row) => row.sku === others[0].sku || row.sku === others[1].sku), false)
+  // The list is as long as the count that describes it.
+  assert.equal(result.total, result.counts.belowSafetyStock)
+  assert.equal(result.counts.outOfStock, all.filter((row) => row.stockStatus === 'out_of_stock').length)
+  // The counts stay over every SKU.
+  assert.equal(result.counts.atRisk, (await runAiReadTool('stock_position', {}, { facts })).result.counts.atRisk)
+})
+
 test('a stock row gives each incoming order\'s promised date and days overdue, as the order list does', async () => {
   const facts = await factsFor()
   const row = (await runAiReadTool('stock_position', { sku: 'LDM-001' }, { facts })).result.rows[0]
