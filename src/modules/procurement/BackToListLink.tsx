@@ -1,6 +1,7 @@
 import { ArrowLeft } from "lucide-react";
 import { Link } from "react-router";
 import { useI18n } from "../../i18n/I18n";
+import { backLinkClass } from "../../components/ui/listLayout";
 
 // The purchasing lists a detail page returns to, with the link's wording.
 const LISTS = {
@@ -14,13 +15,17 @@ const LISTS = {
 
 export type PurchasingList = keyof typeof LISTS;
 
+// The back link's look (listLayout.tsx), also for the pages whose link is not
+// to a list: an RFQ's comparison back to the RFQ, a document back to its order.
+export { backLinkClass };
+
 // "← Back to <list>" at the top of a purchasing detail page, styled as the
 // purchase request page's link.
 export function BackToListLink({ list, className = "" }: { list: PurchasingList; className?: string }) {
   const { language } = useI18n();
   const { to, label } = LISTS[list];
   return (
-    <Link to={to} data-testid={`back-to-${list}`} className={`inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline max-sm:min-h-9 ${className}`}>
+    <Link to={to} data-testid={`back-to-${list}`} className={`${backLinkClass} ${className}`}>
       <ArrowLeft size={13} />{label[language === "en-US" ? 0 : 1]}
     </Link>
   );

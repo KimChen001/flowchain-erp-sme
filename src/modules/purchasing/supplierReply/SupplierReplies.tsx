@@ -126,7 +126,7 @@ export function SupplierReplies({ orderId, orderStatus, entry, onRecorded }: {
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-1.5 text-xs font-normal">
           <span>{t("receivedOn")}</span>
-          <input type="date" className="rounded border bg-white px-1 py-0.5" max={workspaceToday || undefined} value={receivedOn || workspaceToday} onChange={(event) => setReceivedOn(event.target.value)} data-testid="supplier-reply-received-on" />
+          <input type="date" className="rounded border bg-white px-1 py-0.5 max-sm:min-h-9" max={workspaceToday || undefined} value={receivedOn || workspaceToday} onChange={(event) => setReceivedOn(event.target.value)} data-testid="supplier-reply-received-on" />
         </label>
         <span style={{ color: length > SUPPLIER_REPLY_PASTE_LIMIT ? A.danger : A.sub }} data-testid="supplier-reply-count">{t("characters", { n: formatNumber(length), limit: formatNumber(SUPPLIER_REPLY_PASTE_LIMIT) })}</span>
         <div className="ml-auto flex gap-2">

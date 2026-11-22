@@ -31,6 +31,10 @@ export function useListCopy() {
     COPY[key][language === "en-US" ? 0 : 1].replace(/\{(\w+)\}/g, (_, name) => typeof values[name] === "number" ? formatNumber(values[name] as number) : String(values[name] ?? ""));
 }
 
+// A back link at the top of a detail page ("← Back to purchase orders"):
+// 12 px blue, 36 px tall on a phone.
+export const backLinkClass = "inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline max-sm:min-h-9";
+
 // The type a <button> renders at: theme.css sets every button to 13 px on a
 // 20 px line outside the utility layers, so a 12 px class never reaches one.
 // A link drawn as a button (Compare, Edit draft, New) takes the same type, so
