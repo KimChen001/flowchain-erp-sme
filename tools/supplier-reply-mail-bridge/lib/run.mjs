@@ -84,6 +84,21 @@ export function envelopeKey(envelope, size) {
 
 let noMoveNoted = false
 
+// UIDs per envelope FETCH.
+export const ENVELOPE_BATCH = 250
+// UIDs as an IMAP set, runs packed: [1,2,3,7,9,10] → "1:3,7,9:10".
+export function packUids(uids) {
+  const sorted = [...new Set(uids.map(Number))].filter(Number.isFinite).sort((a, b) => a - b)
+  const parts = []
+  for (let at = 0; at < sorted.length; at += 1) {
+    let end = at
+    while (end + 1 < sorted.length && sorted[end + 1] === sorted[end] + 1) end += 1
+    parts.push(end > at ? `${sorted[at]}:${sorted[end]}` : String(sorted[at]))
+    at = end
+  }
+  return parts.join(',')
+}
+
 // A mailbox round over the unread messages.
 // - First only their envelopes and sizes are read. Messages handled before
 //   (refused, or not for FlowChain, which stay unread for a person) are left
@@ -113,9 +128,15 @@ export async function runImap({ config, ImapFlow, parse, post = postReply, state
     if (canMove) await client.mailboxCreate(imap.doneFolder).catch(() => {})
     const lock = await client.getMailboxLock(imap.mailbox)
     try {
-      // The unread messages by a search: imapflow packs the UIDs into ranges,
-      // so a long backlog never makes a command too long for the server.
-      const heads = (await client.fetchAll({ seen: false }, { uid: true, envelope: true, size: true }, { uid: true })) || []
+      // The unread UIDs by a search, then their envelopes in batches: unread
+      // mail spread among read mail packs into few ranges, so each FETCH
+      // names at most ENVELOPE_BATCH UIDs and stays well inside a server's
+      // line limit however long the backlog.
+      const unread = (await client.search({ seen: false }, { uid: true })) || []
+      const heads = []
+      for (let at = 0; at < unread.length; at += ENVELOPE_BATCH) {
+        heads.push(...((await client.fetchAll(packUids(unread.slice(at, at + ENVELOPE_BATCH)), { uid: true, envelope: true, size: true }, { uid: true })) || []))
+      }
       const fresh = heads.map((row) => ({ uid: row.uid, size: Number(row.size) || 0, key: envelopeKey(row.envelope, row.size) })).filter((row) => !state.has(row.key)).slice(0, limit)
       const toRead = []
       for (const row of fresh) {
@@ -127,18 +148,22 @@ export async function runImap({ config, ImapFlow, parse, post = postReply, state
         }
         toRead.push(row)
       }
-      const keys = new Map(toRead.map((row) => [row.uid, row.key]))
-      const messages = toRead.length ? await client.fetchAll(toRead.map((row) => row.uid).join(','), { uid: true, source: true }, { uid: true }) : []
-      for (const { uid, source } of messages) {
-        const key = keys.get(uid)
-        // One message that cannot be read is skipped and remembered; the
-        // others in the round go on.
+      for (const { uid, key } of toRead) {
+        // One message at a time: a server that will not hand over one
+        // message (Gmail's "Some messages could not be FETCHed") fails that
+        // message only. It, or one that cannot be parsed, is skipped and
+        // remembered; the others in the round go on.
         let prepared
         try {
-          const mail = await parse(source)
+          const [message] = (await client.fetchAll(String(uid), { uid: true, source: true }, { uid: true })) || []
+          if (!message?.source) throw Object.assign(new Error('no source'), { name: 'NoSource' })
+          const mail = await parse(message.source)
           const check = forwardable(mail, config)
           prepared = check.forward ? { ...payloadOf(mail, config) } : { why: check.why }
         } catch (error) {
+          // A dropped connection is no fault of the message: the round fails
+          // and the next one tries it again.
+          if (client.usable === false) throw error
           prepared = { why: 'unreadable', error }
         }
         if (prepared.why) {

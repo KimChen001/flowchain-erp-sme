@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url'
 import { bridgeArgs } from '../bridge.mjs'
 import { bridgeConfig, checkoutRoots, parseBridgeEnv, readBridgeConfig, requireImap } from '../lib/config.mjs'
 import { TEXT_LIMIT, forwardable, messageIdOf, openState, outcomeOf, payloadOf, postReply, receivedDay } from '../lib/forward.mjs'
-import { BridgeStop, envelopeKey, runFolder, runImap } from '../lib/run.mjs'
+import { BridgeStop, ENVELOPE_BATCH, envelopeKey, packUids, runFolder, runImap } from '../lib/run.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const checkout = resolve(here, '..', '..', '..')
@@ -192,36 +192,48 @@ test('a folder round: sent and refused files move out, others and large ones are
   }
 })
 
-// An IMAP server in memory: unread messages by uid, with envelopes and sources.
-function stubImap(mails, { capabilities = ['IMAP4rev1', 'MOVE'], sizes = {} } = {}) {
+// An IMAP server in memory: unread messages by uid, with envelopes and
+// sources. failSource: uids whose whole message the server will not hand over
+// (as Gmail's "Some messages could not be FETCHed"); dropOn: a uid whose fetch
+// drops the connection.
+const uidsOf = (range) => String(range).split(',').flatMap((part) => {
+  const [from, to] = part.split(':').map(Number)
+  return to ? Array.from({ length: to - from + 1 }, (_, at) => from + at) : [from]
+})
+function stubImap(mails, { capabilities = ['IMAP4rev1', 'MOVE'], sizes = {}, failSource = [], dropOn = null } = {}) {
   const seen = new Set()
   const moved = []
-  const fetched = { envelopes: 0, sources: [] }
+  const fetched = { envelopes: 0, envelopeRanges: [], sources: [] }
   let listeners = 0
   class StubImap {
-    constructor(options) { this.options = options; this.capabilities = new Map(capabilities.map((name) => [name, true])) }
+    constructor(options) { this.options = options; this.usable = true; this.capabilities = new Map(capabilities.map((name) => [name, true])) }
     on(event) { if (event === 'error') listeners += 1; return this }
     async connect() {}
     async logout() {}
     async mailboxCreate() {}
     async getMailboxLock() { return { release() {} } }
+    async search(query, options) { assert.deepEqual([query, options], [{ seen: false }, { uid: true }]); return [...mails.keys()].filter((uid) => !seen.has(uid)) }
     async fetchAll(range, query, options) {
       assert.deepEqual(options, { uid: true })
+      assert.equal(typeof range, 'string')
       if (query.envelope) {
-        // The unread messages by a search, never a list of UIDs.
-        assert.deepEqual(range, { seen: false })
         fetched.envelopes += 1
-        return [...mails.keys()].filter((uid) => !seen.has(uid)).map((uid) => {
+        fetched.envelopeRanges.push(range)
+        return uidsOf(range).filter((uid) => mails.has(uid)).map((uid) => {
           const mail = mails.get(uid)
           // As imapflow gives it: a Date, or the header's string when it does not parse.
           const date = Number.isNaN(Date.parse(mail.date)) ? mail.date : new Date(mail.date)
           return { uid, size: sizes[uid] || 1000, envelope: { messageId: mail.messageId, subject: mail.subject, date, from: [{ address: mail.from.value[0].address }] } }
         })
       }
-      const uids = range.split(',').map(Number)
       assert.equal(query.source, true)
-      fetched.sources.push(...uids)
-      return uids.map((uid) => ({ uid, source: Buffer.from(JSON.stringify(mails.get(uid))) }))
+      // The whole message is fetched one at a time.
+      assert.match(range, /^\d+$/)
+      const uid = Number(range)
+      fetched.sources.push(uid)
+      if (uid === dropOn) { this.usable = false; throw new Error('Connection not available') }
+      if (failSource.includes(uid)) throw Object.assign(new Error('Some messages could not be FETCHed (Failure)'), { name: 'Error', responseStatus: 'NO' })
+      return [{ uid, source: Buffer.from(JSON.stringify(mails.get(uid))) }]
     }
     async messageFlagsAdd(range, flags) { assert.deepEqual(flags, ['\\Seen']); seen.add(Number(range)) }
     async messageMove(range, folder) { moved.push([Number(range), folder]) }
@@ -337,4 +349,41 @@ test('an id made for a message without a Message-ID uses its Date header as writ
   assert.equal(payloadOf(fine, { timeZone: 'America/New_York' }).body.receivedOn, '2026-11-22')
   // A minus sign (U+2212) between the parts of an order number counts.
   assert.equal(forwardable(mailOf({ subject: 'Hello', text: 'PO−202611−0012 ships' })).forward, true)
+})
+
+test('a message the server will not hand over is skipped and remembered; the next one still goes; a dropped connection fails the round instead', async () => {
+  const mails = new Map([[51, mailOf({ messageId: '<nofetch@x>' })], [52, mailOf({ messageId: '<ok@x>' })]])
+  const imap = stubImap(mails, { failSource: [51] })
+  const lines = []
+  const posted = []
+  const post = async (cfg, body) => { posted.push(body.messageId); return { outcome: 'sent', status: 201, replyId: 'r', orderNumber: null, retryAfter: null, code: null } }
+  const state = openState(null)
+  assert.deepEqual(await runImap({ config: imapConfig(), ImapFlow: imap.StubImap, parse: parseJson, post, state, log: (line) => lines.push(line) }), { sent: 1, refused: 0, skipped: 1, later: 0 })
+  assert.deepEqual([posted, state.has('<nofetch@x>'), lines.some((line) => /uid 51: could not be read/.test(line))], [['<ok@x>'], true, true])
+  // Next round: the one that failed is not fetched again.
+  imap.fetched.sources.length = 0
+  await runImap({ config: imapConfig(), ImapFlow: imap.StubImap, parse: parseJson, post, state })
+  assert.deepEqual(imap.fetched.sources, [])
+  // A dropped connection is not the message's fault: the round fails, and
+  // nothing is remembered for the messages it did not reach.
+  const dropping = stubImap(new Map([[61, mailOf({ messageId: '<a@x>' })], [62, mailOf({ messageId: '<b@x>' })]]), { dropOn: 61 })
+  const fresh = openState(null)
+  await assert.rejects(runImap({ config: imapConfig(), ImapFlow: dropping.StubImap, parse: parseJson, post, state: fresh }), /Connection not available/)
+  assert.deepEqual([fresh.has('<a@x>'), fresh.has('<b@x>')], [false, false])
+})
+
+test('a long backlog of unread mail is read in batches of packed UID ranges', async () => {
+  assert.equal(packUids([10, 1, 2, 3, 7, 9, 3]), '1:3,7,9:10')
+  // 600 unread messages, every other UID (so ranges pack poorly), all handled before but the last.
+  const mails = new Map()
+  for (let at = 0; at < 600; at += 1) mails.set(1 + at * 2, mailOf({ messageId: `<old-${at}@x>`, subject: 'News', text: 'No order here' }))
+  const imap = stubImap(mails)
+  const state = openState(null)
+  for (let at = 0; at < 599; at += 1) state.remember(`<old-${at}@x>`, 'skipped', 'no_order_number')
+  mails.set(1 + 599 * 2, mailOf({ messageId: '<new@x>' }))
+  const posted = []
+  const post = async (cfg, body) => { posted.push(body.messageId); return { outcome: 'sent', status: 201, replyId: 'r', orderNumber: null, retryAfter: null, code: null } }
+  await runImap({ config: imapConfig(), ImapFlow: imap.StubImap, parse: parseJson, post, state })
+  assert.deepEqual([imap.fetched.envelopes, posted], [Math.ceil(600 / ENVELOPE_BATCH), ['<new@x>']])
+  assert.equal(imap.fetched.envelopeRanges.every((range) => uidsOf(range).length <= ENVELOPE_BATCH && range.length < 8000), true)
 })
