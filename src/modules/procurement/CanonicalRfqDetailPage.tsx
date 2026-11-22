@@ -54,6 +54,18 @@ const PARTICIPATION_STATUS_LABELS: Labels = {
   closed: ["已关闭", "Closed"],
 };
 
+// A participant's two states as the list chips, in the shared tones. When the
+// response state says the same as the participation state (both "Response
+// recorded", both "Declined"), it is shown once.
+function ParticipantStates({ supplierId, participation, participationCode, response, responseCode }: { supplierId: string; participation: string; participationCode?: string | null; response: string; responseCode?: string | null }) {
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-1" data-testid={`rfq-participant-states-${supplierId}`}>
+      <StatusChip label={participation} tone={statusToneOf(participationCode)} />
+      {response !== participation && <StatusChip label={response} tone={statusToneOf(responseCode)} />}
+    </div>
+  );
+}
+
 const RESPONSE_STATE_LABELS: Labels = {
   response_recorded: ["已记录响应", "Response recorded"],
   no_response: ["暂无响应", "No response"],
@@ -345,7 +357,7 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, canTransition, no
             const disabledByStatus = !responseWorkflowOpen || ["declined", "withdrawn", "closed"].includes(supplier.status || "");
             const actionLabel = quotation ? tr("新增报价修订", "Add quote revision") : tr("录入报价", "Record quotation");
             const allowed = quotation ? canRevise : canCreate;
-            return <div key={supplier.supplierId} className="rounded-lg border p-3 text-xs" data-testid={`rfq-participant-${supplier.supplierId}`}><div className="flex items-start justify-between gap-2"><div><div className="font-medium">{supplier.supplierName || tr("未提供名称", "Name not provided")}</div><div className="mt-1" style={{ color: A.sub }}>{statusLabel(supplier.status, PARTICIPATION_STATUS_LABELS, language)}</div></div>{!disabledByStatus && allowed && <button type="button" data-testid={`rfq-response-action-${supplier.supplierId}`} className={`${rowActionClass.primary} shrink-0 gap-1`} onClick={() => openEditor(supplier)}><FilePlus2 size={13} />{actionLabel}</button>}</div><div className="mt-1 font-medium">{statusLabel(supplier.responseState, RESPONSE_STATE_LABELS, language)}</div>{quotation && <div className="mt-1 text-[11px]" style={{ color: A.sub }}>{tr("当前报价修订", "Current quote revision")}: {quotation.latestRevision?.revisionNumber || quotation.revisionNumber || "—"} · {tr("历史报价修订只读", "Earlier quote revisions are read-only")}</div>}</div>;
+            return <div key={supplier.supplierId} className="rounded-lg border p-3 text-xs" data-testid={`rfq-participant-${supplier.supplierId}`}><div className="flex items-start justify-between gap-2"><div><div className="font-medium">{supplier.supplierName || tr("未提供名称", "Name not provided")}</div><ParticipantStates supplierId={supplier.supplierId} participation={statusLabel(supplier.status, PARTICIPATION_STATUS_LABELS, language)} participationCode={supplier.status} response={statusLabel(supplier.responseState, RESPONSE_STATE_LABELS, language)} responseCode={supplier.responseState} /></div>{!disabledByStatus && allowed && <button type="button" data-testid={`rfq-response-action-${supplier.supplierId}`} className={`${rowActionClass.primary} shrink-0 gap-1`} onClick={() => openEditor(supplier)}><FilePlus2 size={13} />{actionLabel}</button>}</div>{quotation && <div className="mt-1 text-[11px]" style={{ color: A.sub }}>{tr("当前报价修订", "Current quote revision")}: {quotation.latestRevision?.revisionNumber || quotation.revisionNumber || "—"} · {tr("历史报价修订只读", "Earlier quote revisions are read-only")}</div>}</div>;
           })}
           {record.suppliers.knownParticipants.length === 0 && <div className="rounded-lg bg-slate-50 p-4 text-xs" style={{ color: A.sub }}>{tr("当前询价单没有供应商参与记录。", "This RFQ has no supplier participation records.")}</div>}
         </div>
