@@ -627,7 +627,9 @@ export function aiCalculationGrounded(input = {}, { results = [], question = '',
 
 // locale: the workspace's, for the order of a slash date (the facts' when
 // not given).
-export function checkAiModelFirstGrounding({ answer, results = [], refs = [], question = '', conversation = '', facts = null, today = null, limitClaims = false, locale = null }) {
+// strict (on by default) adds the stricter checks at the end, which can only
+// add problems; off, the check is as it was before them.
+export function checkAiModelFirstGrounding({ answer, results = [], refs = [], question = '', conversation = '', facts = null, today = null, limitClaims = false, locale = null, strict = true }) {
   const problems = []
   const checked = { record: 0, name: 0, date: 0, number: 0, derived: 0, citation: 0 }
   const fail = (kind, value) => { if (!problems.some((row) => row.kind === kind && row.value === value)) problems.push({ kind, value }) }
@@ -636,6 +638,8 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
   if (!body) fail('format', 'answer')
   const dayFirst = aiSlashDayFirst(locale || facts?.locale)
   const sources = aiGroundingSources(results, { dayFirst })
+  // The days the results hold, before today is added (the strict pass).
+  const resultDays = new Set(sources.days)
   const asked = fold(question)
   // Record numbers and names may also come from the conversation so far.
   const named = fold(`${question}\n${conversation}`)
@@ -645,6 +649,10 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
   // (a drafted message) included: "steps 1 and 2" points into them.
   const listItems = Math.max(0, ...[...figuresText(body).matchAll(LIST_ITEM)].map((match) => Number(match[1])))
   // List marks go, also inside a quoted draft ("> 3. The reason for the delay").
+  // The answer's text before anything is blanked out, and what the strict
+  // pass notes on the way; neither changes the check above it.
+  const unmaskedText = figuresText(`${title}\n${body}`).replace(/^\s*(?:>\s*)*(?:\d{1,2}[.)]|[-*•])\s+/gm, ' ')
+  const strictNotes = { dates: [] }
   let rest = figuresText(`${title}\n${body}`).replace(/^\s*(?:>\s*)*(?:\d{1,2}[.)]|[-*•])\s+/gm, ' ')
     // Payment terms are a term, not a figure: "Net 30", "2/10 net 30", 月结 30 天.
     .replace(PAYMENT_TERMS, (match) => ' '.repeat(match.length))
@@ -711,6 +719,7 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
   }
   for (const { pattern, read } of DATE_PATTERNS) {
     rest = rest.replace(pattern, (...match) => {
+      strictNotes.dates.push({ at: offsetOf(match), text: match[0], date: read(match, dayFirst) })
       const date = read(match, dayFirst)
       if (!date.month || date.month > 12 || (date.day !== null && (date.day < 1 || date.day > 31))) return match[0]
       if (date.endDay !== undefined && (date.endDay <= date.day || date.endDay > 31)) return match[0]
@@ -824,6 +833,25 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
   const states = recordStates(results)
   for (const value of [title, body]) {
     for (const found of aiAnswerActionClaims(value, states)) fail('action_claim', found)
+  }
+  // Stricter checks (2026-11-22 probe reviews). Everything above is the
+  // check as it was; these only add problems, never remove one.
+  if (strict) {
+    const pad = (value) => String(value).padStart(2, '0')
+    const recordDay = ({ year, month, day }) => [...resultDays, ...given.days].some((value) => (year && !value.startsWith('????') ? value === `${year}-${pad(month)}-${pad(day)}` : value.endsWith(`-${pad(month)}-${pad(day)}`)))
+    const figureHeld = (value) => sources.numbers.some((source) => Math.abs(source.value - value) < 1e-9) || givenNumbers.includes(value)
+    // (b) A date written across a blanked record or name ("October PO-… 30")
+    // is a date only when the results hold that date, or hold its day as a
+    // figure; today alone does not make it one. A date the check above
+    // flagged stays flagged as it was.
+    for (const { at, text: written, date } of strictNotes.dates) {
+      if (!date?.month || date.month > 12 || !date.day || date.day < 1 || date.day > 31) continue
+      if (![...written].some((char, index) => char === ' ' && unmaskedText[at + index] !== undefined && !/\s/.test(unmaskedText[at + index]))) continue
+      if (problems.some((row) => row.kind === 'date' && row.value === written)) continue
+      const days = [date.day, ...(date.endDay ? [date.endDay] : [])]
+      if (days.every((day) => recordDay({ ...date, day }) || figureHeld(day))) continue
+      fail('date', unmaskedText.slice(at, at + written.length).replace(/\s+/g, ' ').trim())
+    }
   }
   const counts = {}
   for (const row of problems) counts[row.kind] = (counts[row.kind] || 0) + 1
