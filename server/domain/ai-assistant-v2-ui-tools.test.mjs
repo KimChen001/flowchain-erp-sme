@@ -208,6 +208,18 @@ test('show_table sorts and limits as asked and counts what it left out', async (
   assert.deepEqual([props.total, props.more], [output.rows.length, true])
 })
 
+// 2026-11-22 question set: a reorder answer showed 20 of 64 items due and no
+// way to the rest. A table of the reorder list links its page.
+test('show_table of the reorder list links the reorder page; other tables link none', async () => {
+  const { call, build } = await workspace()
+  const output = await call('toolu_reorder', 'reorder_list')
+  const props = assertPart(build('show_table', { source: 'toolu_reorder', columns: ['sku', 'requestQuantity'], limit: 1 }), 'table')
+  assert.deepEqual(props.listRoute, { moduleId: 'inventory:reorder' })
+  assert.deepEqual([props.total, props.more], [output.total, output.total > 1])
+  await call('toolu_po', 'list_purchase_orders')
+  assert.equal('listRoute' in assertPart(build('show_table', { source: 'toolu_po', columns: ['orderNumber'], limit: 1 }), 'table'), false)
+})
+
 test('show_table picks the list of a result that holds the columns, or the one named', async () => {
   const { call, build } = await workspace()
   const spend = await call('toolu_spend', 'spend_analysis', { view: 'trend' })
