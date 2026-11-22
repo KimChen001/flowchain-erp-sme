@@ -1031,6 +1031,9 @@ test('reorder_list gives no ranked summary beside its page', async () => {
   const list = (await runAiReadTool('reorder_list', { limit: 2 }, { facts: await readAiSkillFacts(context), context })).result
   assert.equal(list.mostUrgentNow, undefined)
   assert.equal(list.largestShortfallsNow, undefined)
-  // The page is as on the inventory page: by order-by day, then SKU.
-  assert.deepEqual(list.rows.map((row) => row.sku), ['20000', '20001'])
+  // A page of the list's rows, by order-by day. The order within a day is the
+  // list's own (#445 puts the largest shortfall first), so it is not pinned.
+  assert.equal(list.rows.length, 2)
+  assert.ok(list.rows.every((row) => rows.some((entry) => entry.sku === row.sku)))
+  assert.ok(list.rows.every((row, index) => index === 0 || String(list.rows[index - 1].orderByDate) <= String(row.orderByDate)))
 })
