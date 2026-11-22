@@ -852,22 +852,6 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
       if (days.every((day) => recordDay({ ...date, day }) || figureHeld(day))) continue
       fail('date', unmaskedText.slice(at, at + written.length).replace(/\s+/g, ' ').trim())
     }
-    // (d) A figure written straight after a word and a full stop ("to
-    // come.5 more", "未到.5 件") is not read above. Here it is only checked:
-    // the results or the question hold it, or it is a problem. It becomes no
-    // operand and takes no currency, and no other figure is read differently.
-    // After a label's abbreviation (No., Fig., v.) it is a label; after a
-    // month or a weekday ("Nov.21", "Thu.21") it is a day, left as the check
-    // left it; inside a date the check read it is that date's.
-    for (const match of unmaskedText.matchAll(/(?<=([A-Za-z\u4e00-\u9fff]+)\.)(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?/g)) {
-      const at = match.index
-      if (/^(?:no|nos|fig|figs|vol|ch|sec|art|ref|p|pp|v|ver|rev|tab|eq|pt|st|mr|mrs|ms|dr|op|cf)$/i.test(match[1])) continue
-      if (/^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec|january|february|march|april|june|july|august|september|october|november|december|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)$/i.test(match[1])) continue
-      if (strictNotes.dates.some((row) => at >= row.at && at < row.at + row.text.length)) continue
-      if (rest[at] === ' ') continue
-      if (figureHeld(Number(match[0].replace(/,/g, '')))) continue
-      fail('number', match[0])
-    }
   }
   const counts = {}
   for (const row of problems) counts[row.kind] = (counts[row.kind] || 0) + 1

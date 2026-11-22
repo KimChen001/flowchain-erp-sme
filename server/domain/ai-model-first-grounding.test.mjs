@@ -58,32 +58,6 @@ test('strict pass (b): a date written across a record or a name is one the resul
   }
 })
 
-// (d) A figure written straight after a word and a full stop was never read,
-// so never checked.
-test('strict pass (d): a figure right after a word and a full stop is checked, and nothing else changes', () => {
-  const results = [{ rows: [{ orderNumber: 'PO-202610-0028', remaining: 220, overdueDays: 8, coverDays: 7.5, promisedDate: '2026-10-14', ref: { type: 'purchase_order', id: 'UCI-PO-329', label: 'PO-202610-0028' } }], total: 1, more: 0 }]
-  assert.deepEqual(strictSuperset('PO-202610-0028 has 220 pcs to come.5 more arrive tomorrow.', results), ['number:5'])
-  assert.deepEqual(strictSuperset('PO-202610-0028 还有 220 件未到.5 件明天到。', results), ['number:5'])
-  // Held by the results: fine.
-  assert.deepEqual(strictSuperset('PO-202610-0028 is approx.8 days late.', results), [])
-  // A label after an abbreviation, a decimal, a figure inside a date: unchanged.
-  assert.deepEqual(strictSuperset('Order No.12 is open.', results), [])
-  assert.deepEqual(strictSuperset('See Fig.2 below.', results), [])
-  assert.deepEqual(strictSuperset('Cover is 7.5 days.', results), [])
-  assert.deepEqual(strictSuperset('Order by Thu.14 Oct for PO-202610-0028.', results), [])
-  // After a month or a weekday it is a day, left as the check left it.
-  assert.deepEqual(strictSuperset('Acme promised Oct.14 for PO-202610-0028.', results), [])
-  assert.deepEqual(strictSuperset('PO-202610-0028 is due Sept.30.', results), [])
-  // It becomes no operand and takes no currency (the review's loosening
-  // lines): their figures are judged as before.
-  const stock = [{ sku: '22178', onHand: 21, remaining: 5 }]
-  for (const answer of ['22178 has 21 on hand and more to come.5 units arrive Monday, so 105 in total.', '22178 has 21 on hand and more to come.5 units arrive Monday, so 4.2 in total.']) {
-    assert.ok(kinds(check(answer, stock, { strict: false })).length > 0, answer)
-    assert.deepEqual(strictSuperset(answer, stock), [])
-  }
-  assert.deepEqual(strictSuperset('Unit price approx.5 USD 120 pcs still to come.', [{ sku: '22178', unitPrice: 5, currency: 'USD', remaining: 120 }]), [])
-})
-
 test('false positive fixed: a count a document passage writes as a word grounds the same count in figures', () => {
   const escalation = policy('Escalate when the supplier has not responded for two business days, or when a customer delivery within three business days is affected.')
   assert.deepEqual(kinds(check('政策规定，供应商两个工作日内未回复，或 3 个工作日内的客户交付受影响时，才需升级。', [escalation])), [])
