@@ -644,6 +644,49 @@ test('scoring "none" on the words, and the SME decline and approval wording', ()
   for (const text of ['目前没有挂起的发票，其余发票都已批准。', '这些发票已批准付款，无需操作。', '已通过三单匹配的发票会自动进入待付款。', '我无法替您批准这些发票。', '我不能帮你批准，需要你在发票页面操作。', '我不会直接帮您全部批准。']) assert.equal(claims.test(text), false, text)
 })
 
+// 2026-11-21 today-en: a decision card showed Globex's late order
+// PO-202611-0001, but its props hold only its key. The card counts by the
+// record number the answer's refs give for its id; the case accepts each
+// supplier's late order by number, read from the workspace; the text check
+// is unchanged.
+test('today-en counts a decision card by the late order it shows, and only a late order of that supplier', async () => {
+  const { withResolvedMentions } = await import('../../tests/ai-eval/v2-public/resolve-mentions.mjs')
+  const facts = uciFacts(smallPlan())
+  const today = buildUciCases(facts).find((row) => row.id === 'today-en')
+  const suppliers = today.expect.mentions.map((entry) => entry.lateOrderOf?.supplier)
+  assert.ok(suppliers.every(Boolean), 'both mentions name their supplier')
+  const second = today.expect.mentions[1]
+  const orders = [
+    { orderNumber: 'PO-202611-0001', status: 'approved', supplierName: second.lateOrderOf.supplier, dueDay: '2026-11-15' },
+    // Not late: due on the day asked, or later.
+    { orderNumber: 'PO-202611-0002', status: 'approved', supplierName: second.lateOrderOf.supplier, dueDay: '2026-11-21' },
+    // Not issued, or fully received (no open line, so no due day).
+    { orderNumber: 'PO-202611-0003', status: 'pending_approval', supplierName: second.lateOrderOf.supplier, dueDay: '2026-11-10' },
+    { orderNumber: 'PO-202611-0004', status: 'approved', supplierName: second.lateOrderOf.supplier, dueDay: null },
+    // Another supplier's late order.
+    { orderNumber: 'PO-202611-0005', status: 'approved', supplierName: 'Someone Else Ltd', dueDay: '2026-11-10' },
+  ]
+  const resolved = withResolvedMentions(today.expect, orders, { today: '2026-11-21' })
+  const any = resolved.mentions[1].any
+  assert.ok(any.includes('PO-202611-0001'))
+  for (const number of ['PO-202611-0002', 'PO-202611-0003', 'PO-202611-0004', 'PO-202611-0005']) assert.ok(!any.includes(number), number)
+  for (const word of second.any) assert.ok(any.includes(word), word)
+  assert.equal('lateOrderOf' in resolved.mentions[1], false)
+  // Without a day, nothing is late.
+  assert.deepEqual(withResolvedMentions(today.expect, orders).mentions[1].any, second.any)
+
+  // The card: its key's id, named by the answer's refs.
+  const card = (refs) => ({ status: 200, text: 'Three late orders lead; the first is for the cakestand.', ui: [{ component: 'decisions', props: { source: 't1', keys: ['purchase_order_overdue:UCI-PO-00330'], more: 0 } }], refs, flags: [], errors: [] })
+  const mention = (answer) => scoreAnswer(answer, { mentions: [resolved.mentions[1]] }).checks.find((entry) => entry.name.startsWith('mention:'))
+  assert.equal(mention(card([{ type: 'purchase_order', id: 'UCI-PO-00330', label: 'PO-202611-0001' }])).ok, true)
+  // A ref of another record, or none, shows nothing.
+  assert.equal(mention(card([{ type: 'purchase_order', id: 'UCI-PO-00331', label: 'PO-202611-0001' }])).ok, false)
+  assert.equal(mention(card([])).ok, false)
+  // The text check is as before: the words alone still count, other words do not.
+  assert.equal(mention({ status: 200, text: `Chase Globex for ${second.any[0]}.`, ui: [], flags: [], errors: [] }).ok, true)
+  assert.equal(mention({ status: 200, text: 'Chase Globex.', ui: [], flags: [], errors: [] }).ok, false)
+})
+
 // 2026-11-21: sme-waiting-approval-en failed right answers that named the
 // order waiting for approval (PO-202611-0023) rather than its item (85152).
 // The order is accepted only as the seed's pending order of that supplier,

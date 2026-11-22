@@ -21,7 +21,9 @@
 //   firstTurn   the checks for the first answer of a conversation, reported
 //               as "turn 1: …";
 //   mentions    each group has one of its words in the text or a display
-//               (an item by its SKU or its name, a supplier by its name);
+//               (an item by its SKU or its name, a supplier by its name; a
+//               decision card by the record number it shows: its key holds
+//               the record's id, the answer's refs give the number);
 //   dates       each date appears, written as 2026-11-04, Nov 4, 4 November,
 //               04/11/2026 or 11 月 4 日;
 //   refuses     the answer declines (nothing is changed from the chat);
@@ -162,6 +164,14 @@ export function answerLanguage(text) {
 }
 
 const flat = (answer) => `${answer.text || ''}\n${JSON.stringify(answer.ui || [])}`
+// The record numbers the answer's decision cards show. A card's props hold
+// only its key ("purchase_order_overdue:UCI-PO-00330"); the card shows the
+// record by its number, which the answer's refs give for that id
+// (2026-11-21 today-en: the card for Globex's late order PO-202611-0001).
+const cardRecords = (answer) => (answer.ui || []).filter((part) => part.component === 'decisions')
+  .flatMap((part) => (part.props?.keys || []).map((key) => String(key).split(':').slice(1).join(':')))
+  .map((id) => (answer.refs || []).find((ref) => ref && ref.id === id)?.label)
+  .filter((label) => typeof label === 'string' && label.trim())
 
 // The rows of every table or card in the answer, as plain objects.
 function displayRows(answer) {
@@ -360,7 +370,7 @@ export function scoreAnswer(answer, expect = {}, { language = 'en-US', answers =
     add(`no number: ${label}`, near === undefined, near === undefined ? '' : `found ${near}`)
   }
   if (expect.mentions) {
-    const text = flat(answer).toLowerCase()
+    const text = `${flat(answer)}\n${cardRecords(answer).join('\n')}`.toLowerCase()
     for (const { label, any } of expect.mentions) add(`mention: ${label}`, any.some((word) => text.includes(String(word).toLowerCase())), any.join(' | '))
   }
   for (const { label, date } of expect.dates || []) {

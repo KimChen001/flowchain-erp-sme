@@ -81,8 +81,10 @@ export function buildUciCases(facts) {
   const cases = []
   const add = (row) => cases.push(row)
 
-  // Today: the late orders on two suppliers lead.
-  const firstThings = { mentions: [named(hero), named(second)] }
+  // Today: the late orders on two suppliers lead. Each item, or its
+  // supplier's late order by number (a decision card shows the order; 2026-11-21:
+  // the card for Globex's PO-202611-0001 named 84879's late order).
+  const firstThings = { mentions: [{ ...named(hero), lateOrderOf: { supplier: hero.supplier } }, { ...named(second), lateOrderOf: { supplier: second.supplier } }] }
   add({ id: 'today-en', kind: 'today', language: 'en-US', turns: ['What should I handle first today?'], expect: firstThings })
   add({ id: 'today-zh', kind: 'today', language: 'zh-CN', turns: ['今天我应该先处理什么？'], expect: firstThings })
   const lateList = {
