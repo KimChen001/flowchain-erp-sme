@@ -32,3 +32,8 @@ prod-server.*.log
 .DS_Store
 Thumbs.db
 
+
+# The supplier-reply mail bridge keeps its settings (a mailbox password, a
+# token) and its state outside the checkout; never commit either.
+*bridge*.env
+flowchain-mail-bridge-state.json

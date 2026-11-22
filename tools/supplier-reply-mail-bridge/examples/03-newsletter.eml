@@ -1,0 +1,11 @@
+From: Trade Fair News <news@tradefair.example>
+To: Purchasing <purchasing@flowchain-demo.example>
+Subject: This week's trade fair highlights
+Date: Sun, 22 Nov 2026 07:00:00 +0000
+Message-ID: <demo-0003-news@tradefair.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+This week's highlights from the trade fair. No order is named here, so
+the bridge leaves this message alone.
