@@ -996,6 +996,12 @@ test('a relative day before the reply goes to the person; last, 上周, 下下�
   assert.equal(pick('Ships next Thurs.', '2026-11-21'), '2026-11-26')
   // Schedules, ranges, alternatives and weeks counted apart name no one day.
   for (const quote of ['We ship every Friday.', '我们每周五发货。', '2-3天后发货。', '下周三或四发货。', 'On Wed/Thu.', 'Next week on Wednesday.', 'On Wednesday week.']) assert.equal(pick(quote), null, quote)
+  // Any two relative days offered as alternatives (#449 review probe J11).
+  for (const quote of ['We ship tomorrow or Friday.', 'Today or tomorrow.', 'It goes out tomorrow / the day after tomorrow.', '明天或后天发货。', '明天或者周五发货。', '今天还是明天发？']) assert.equal(pick(quote), null, quote)
+  const either = check('We ship tomorrow or Friday.', reading([{ line: 'L1', date: null, quote: 'We ship tomorrow or Friday.', dateKind: 'relative' }])).lines[0]
+  assert.equal(either.outcome, 'needs_you')
+  // One relative day beside a plain "or" is still read.
+  assert.equal(pick('Tomorrow, or sooner if the truck is free.'), '2026-11-18')
   // End to end: a relative day that falls before the reply is never proposed.
   for (const [quote, receivedOn] of [['货已于上周三发货。', RECEIVED], ['We shipped last Wednesday.', RECEIVED], ['We shipped the 60 pcs on Wednesday.', '2026-11-19']]) {
     const row = check(quote, reading([{ line: 'L1', date: null, quote, dateKind: 'relative' }]), { receivedOn }).lines[0]
