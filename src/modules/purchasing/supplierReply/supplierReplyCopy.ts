@@ -114,7 +114,7 @@ export const SUPPLIER_REPLY_COPY = {
   flag_other_order: ["Another order", "其他订单"],
 
   // An email that names several orders: this card reads only its own part.
-  emailOrders: ["This email names {n} orders. This card reads only the part about {number}.", "这封邮件提到了 {n} 张订单。本卡片只读取关于 {number} 的部分。"],
+  emailOrders: ["This email names {n} orders. FlowChain reads up to {limit} of them, each on its own order with one reading. This card reads only the part about {number}.", "这封邮件提到了 {n} 张订单。FlowChain 最多读取其中 {limit} 张，每张在各自订单上读取一次。本卡片只读取关于 {number} 的部分。"],
   emailOrder_read: ["{number}: read on its own order", "{number}：已在该订单上读取"],
   emailOrder_closed: ["{number}: closed, not read", "{number}：已关闭，未读取"],
   emailOrder_other_supplier: ["{number}: another supplier's order, not read", "{number}：其他供应商的订单，未读取"],

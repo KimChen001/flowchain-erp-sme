@@ -9,7 +9,7 @@ const B = 'PO-202611-0013'
 const C = 'PO-202611-0014'
 // Each run's owners, with its text folded to one line. Text as read:
 // full-width forms folded (NFKC), so ： is : and ； is ;.
-const runsOf = (text, number = A) => emailParts(text, number)?.runs.map((run) => [run.owners.join('+') || '-', run.text.replace(/\s+/g, ' ').trim()]).filter(([, value]) => value)
+const runsOf = (text, number = A, known = []) => emailParts(text, number, known)?.runs.map((run) => [run.owners.join('+') || '-', run.text.replace(/\s+/g, ' ').trim()]).filter(([, value]) => value)
 const folded = (rows) => rows.map(([owners, value]) => [owners, value.normalize('NFKC')])
 
 test('only numbers in the order\'s own numbering count, each once, first mention first', () => {
@@ -90,13 +90,50 @@ test('which named orders are read: the pasted order first, then open orders of i
   assert.deepEqual(emailOrdersToRead({ named: [A, B], pastedOn: A, orders: [{ number: A, status: 'issued', supplier: null }, orders[1]], openStates: open }).notRead, [{ number: B, why: 'other_supplier' }])
 })
 
-test('a sentence whose numbers form one list is joint; two orders named apart or as alternatives are not', () => {
-  const joint = (sentence) => emailParts(`${sentence}\n${C}: the rest ships later.`, A).runs.find((run) => run.owners.length > 1)?.joint
-  assert.equal(joint(`${A} and ${B} both ship on 4 December.`), true)
-  assert.equal(joint(`${A}, ${B} & PO-202611-0015 ship on 4 December.`), true)
-  assert.equal(joint(`${A}、${B}都在12月4日发货。`), true)
-  assert.equal(joint(`${A}和${B}一起12月4日发货。`), true)
-  assert.equal(joint(`${B} is late, so ${A} ships on 4 December.`), false)
-  assert.equal(joint(`Either ${A} or ${B} ships on 4 December.`), false)
-  assert.equal(joint(`${A} and ${B} ship on 4 December, unlike PO-202611-0015.`), false)
+test('an order number written another way counts when it matches one known order; one that matches none ends the part', () => {
+  const known = [A, B, C]
+  // PO 202611-0013, PO-202611-13, PO 13, order no. 13, 订单号 0013, 0013 and full width.
+  for (const written of ['PO 202611-0013', 'PO-202611-13', 'PO 13', 'order no. 13', '订单号 0013', '0013', 'ＰＯ２０２６１１－００１３']) {
+    assert.deepEqual(orderNumbersNamed(`${A}: brackets ship on 4 December.\n${written}: hinges ship on 9 December.`, A, known), [A, B], written)
+    assert.deepEqual(runsOf(`${A}: brackets ship on 4 December.\n${written}: hinges ship on 9 December.`, A, known).map(([owners]) => owners), [A, B], written)
+  }
+  // Not known (or known twice): the line belongs to no order, and the part ends.
+  assert.deepEqual(runsOf(`${A}: brackets ship on 4 December.\nFor 0013 the hinges ship on 9 December.\nThe springs follow on 11 December.\n\n${C}: unchanged.`, A, [A, C]), [
+    [A, `${A}: brackets ship on 4 December.`],
+    ['-', 'For 0013 the hinges ship on 9 December. The springs follow on 11 December.'],
+    [C, `${C}: unchanged.`],
+  ])
+  assert.deepEqual(orderNumbersNamed(`${A} and PO 13`, A, [A, B, 'PO-202610-0013']), [A])
+  // Without known orders, a variant counts for nothing, and a reply naming
+  // one full number stays a one-order reply.
+  assert.equal(emailParts(`${A}: brackets ship on 4 December.\n0013: hinges ship on 9 December.`, A), null)
+})
+
+test('a number named further into a sentence claims that sentence only; an order pointed to by its place belongs to none', () => {
+  assert.deepEqual(runsOf(`${B}: brackets ship on 9 December.\nThanks, Pat (re ${A})\nAll ship on 9 December.`), [
+    [B, `${B}: brackets ship on 9 December.`], [A, `Thanks, Pat (re ${A})`], ['-', 'All ship on 9 December.'],
+  ])
+  assert.deepEqual(runsOf(`${A}: hinges ship on 4 December.\nYour other order for the same items, ${B}, follows on 9 December.\nRegards`), [
+    [A, `${A}: hinges ship on 4 December.`], [B, `Your other order for the same items, ${B}, follows on 9 December.`], ['-', 'Regards'],
+  ])
+  // A sentence that starts with the number continues: "It" is that order's.
+  assert.deepEqual(runsOf(`${A} ships on 1 December. ${B} is delayed. It will ship on 9 December.`), [[A, `${A} ships on 1 December.`], [B, `${B} is delayed. It will ship on 9 December.`]])
+  for (const pointer of ['The brackets on the first order will slip to 5 December.', 'The other order ships on 5 December.', '第一张单的支架推迟到12月5日。', '另一张订单12月5日发货。', 'The latter ships on 5 December.']) {
+    assert.deepEqual(runsOf(`${A}: brackets ship on 4 December.\n${B}: hinges ship on 9 December.\n${pointer}`).at(-1), ['-', pointer.normalize('NFKC')], pointer)
+  }
+})
+
+test('a header is the number with at most one label word and a colon; a short status line is not one', () => {
+  assert.deepEqual(runsOf(`${A}: on hold.\n\nThe hinges ship on 9 December.\n\n${B}: brackets ship on 4 December.`), [
+    [A, `${A}: on hold.`], ['-', 'The hinges ship on 9 December.'], [B, `${B}: brackets ship on 4 December.`],
+  ])
+  assert.deepEqual(runsOf(`${A}：已取消。\n\n铰链12月9日发货。\n\n${B}：支架12月4日发货。`), folded([
+    [A, `${A}：已取消。`], ['-', '铰链12月9日发货。'], [B, `${B}：支架12月4日发货。`],
+  ]))
+  // More than one label word is no header either.
+  assert.deepEqual(runsOf(`Regarding purchase order ${A}:\n\nBrackets ship on 4 December.\n\n${B}: hinges ship on 9 December.`).map(([owners]) => owners), [A, '-', B])
+  // One label word, or none, with a colon and nothing after it: a header.
+  for (const header of [`${A}:`, `Order ${A}:`, `Re: ${A}:`, `订单 ${A}：`]) {
+    assert.deepEqual(runsOf(`${header}\n\nBrackets ship on 4 December.\n\n${B}: hinges ship on 9 December.`).map(([owners]) => owners), [A, B], header)
+  }
 })

@@ -157,7 +157,7 @@ export function SupplierReplyCard({ card, onChanged, onRefused, notice = null, m
       {/* An email about several orders: this card reads only its own part. */}
       {card.emailOrders?.length ? (
         <div className="mt-2 rounded-md bg-slate-50 px-2 py-1" role="note" data-testid="supplier-reply-email-orders">
-          <div>{t("emailOrders", { n: card.emailOrders.length, number: card.purchaseOrderNumber })}</div>
+          <div>{t("emailOrders", { n: card.emailOrders.length, number: card.purchaseOrderNumber, limit: SUPPLIER_REPLY_EMAIL_ORDER_LIMIT })}</div>
           <ul className="ml-4 list-disc" style={{ color: A.sub }}>
             {card.emailOrders.filter((item) => item.status !== "this").map((item) => <li key={item.number} data-status={item.status}>{t(`emailOrder_${item.status}` as SupplierReplyCopyKey, { number: item.number, limit: SUPPLIER_REPLY_EMAIL_ORDER_LIMIT })}</li>)}
           </ul>

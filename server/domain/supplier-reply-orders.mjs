@@ -2,23 +2,36 @@
 // assessment §9, step 3): the order numbers it names, the part of its text
 // that belongs to each order, and which of the named orders are read.
 //
-// Only numbers in the order's own numbering count (PREFIX-YYYYMM-NNNN, with
-// the prefix of the order the reply is read on). An email that names fewer
-// than two such numbers is read as before: one order, other orders flagged.
+// Order numbers count in the order's own numbering (PREFIX-YYYYMM-NNNN, with
+// the prefix of the order the reply is read on). The number may be written
+// another way (PO 202611-0013, PO-202611-13, PO 13, order no. 13, 订单号 0013,
+// 0013, full-width): such a variant counts as an order when it matches
+// exactly one of the known orders (the orders the email is read on, or the
+// supplier's orders when the paste decides which to read). One that matches
+// none, or more than one, is unresolved.
+//
+// An email that names fewer than two orders is read as before: one order,
+// other orders flagged.
 //
 // The parts, sentence by sentence (a line break, 。！？；; or . ! ? before a
 // space ends a sentence):
-//   - a sentence that names one order starts that order's part;
-//   - a sentence that names no order continues the part it is in;
+//   - a sentence that starts with one order's number (after at most two
+//     words: "For PO-…", "关于订单 PO-…", "PO-…:") starts that order's part,
+//     and the sentences after it continue the part;
+//   - a sentence that names one order further in ("… (re PO-…)", "your other
+//     order, PO-…, follows on 4 Dec") is that order's, but the part ends
+//     with it;
 //   - a sentence that names two or more orders belongs to all of them
-//     together (shared), and the text after it to no order; when its numbers
-//     form one list ("PO-a and PO-b both ship 4 Dec") it is marked joint, and
-//     the check lets its one day count for each order listed;
-//   - a blank line ends a part, unless the part so far is only a line naming
-//     the order ("PO-202611-0012:", "关于订单 PO-202611-0012：");
+//     together (shared), and the part ends with it;
+//   - a sentence with an unresolved order number, or one that points to an
+//     order by its place ("the first order", 第二张单, the other order), belongs
+//     to no order, and the part ends with it;
+//   - a blank line ends a part, unless the part so far is only a header: the
+//     number with at most one label word and a colon, and nothing after the
+//     colon on that line ("PO-202611-0012:", "关于订单 PO-202611-0012：");
 //   - text before the first order number belongs to no order.
 
-const NUMBERED = /^([A-Z][A-Z0-9]{0,9})-\d{6}-\d{4,6}$/i
+const NUMBERED = /^([A-Z][A-Z0-9]{0,9})-(\d{6})-(\d{4,6})$/i
 
 // The prefix of a number in the numbering format (PO-202611-0012 → PO),
 // null for any other number.
@@ -26,15 +39,55 @@ export function orderNumberPrefix(number) {
   const match = NUMBERED.exec(String(number ?? '').trim())
   return match ? match[1].toUpperCase() : null
 }
+const parsed = (number) => {
+  const match = NUMBERED.exec(String(number ?? '').trim())
+  return match ? { number: match[0].toUpperCase(), prefix: match[1].toUpperCase(), month: match[2], seq: Number(match[3]) } : null
+}
 
-const numberPattern = (prefix) => new RegExp(`\\b${prefix}-\\d{6}-\\d{4,6}\\b`, 'gi')
-const numbersIn = (value, prefix) => [...new Set([...String(value ?? '').matchAll(numberPattern(prefix))].map((match) => match[0].toUpperCase()))]
+// The order-number-like tokens in a text, in the numbering of `prefix`, each
+// with the known order it means (number) or null when it means none or more
+// than one.
+function tokensIn(source, prefix, known) {
+  const orders = known.map(parsed).filter((row) => row && row.prefix === prefix)
+  const out = []
+  const add = (match, month, seq, exact = null) => {
+    const start = match.index
+    const end = start + match[0].length
+    if (out.some((row) => start < row.end && end > row.index)) return
+    const candidates = exact ? [] : orders.filter((row) => row.seq === Number(seq) && (!month || row.month === month))
+    out.push({ index: start, end, text: match[0], number: exact || (candidates.length === 1 ? candidates[0].number : null) })
+  }
+  for (const match of source.matchAll(new RegExp(`\\b${prefix}-(\\d{6})-(\\d{4,6})\\b`, 'gi'))) add(match, match[1], match[2], match[0].toUpperCase())
+  // Written another way: spaces or other dashes, a short sequence.
+  for (const match of source.matchAll(new RegExp(`\\b${prefix}\\s*[-–—_]?\\s*(\\d{6})\\s*[-–—_ ]\\s*(\\d{1,6})\\b`, 'gi'))) add(match, match[1], match[2])
+  // A short form: PO 13, PO-0013, PO#13.
+  for (const match of source.matchAll(new RegExp(`\\b${prefix}\\s*[-#.:]?\\s*(\\d{1,6})\\b`, 'gi'))) add(match, null, match[1])
+  // A label and a number: order no. 13, order #13, 订单号 0013, 订单 0013.
+  // Not a date written after it (订单12月5日发货).
+  for (const match of source.matchAll(/(?:\border\s*(?:no\.?|number|#)|采购单号?|订单号?|单号)\s*[:#]?\s*(\d{1,6})(?![\d月日号年/.-])/gi)) add(match, null, match[1])
+  // A bare sequence with leading zeros: 0013.
+  for (const match of source.matchAll(/(?<![\w-])0\d{3,5}(?![\w-])/g)) add(match, null, match[0])
+  return out.sort((a, b) => a.index - b.index)
+}
 
-// The order numbers an email names in the numbering of `number`, first
-// mention first, upper case, each once.
-export function orderNumbersNamed(text, number) {
+// The orders an email names in the numbering of `number`, first mention
+// first, upper case, each once: its full numbers, and the variants that
+// match exactly one of `known`.
+export function orderNumbersNamed(text, number, known = []) {
   const prefix = orderNumberPrefix(number)
-  return prefix ? numbersIn(String(text ?? '').normalize('NFKC'), prefix) : []
+  if (!prefix) return []
+  const tokens = tokensIn(String(text ?? '').normalize('NFKC'), prefix, [number, ...known])
+  return [...new Set(tokens.map((row) => row.number).filter(Boolean))]
+}
+
+// Whether the email writes an order number another way, or one that is not
+// a known order (the paste then looks up the supplier's orders to tell).
+export function orderNumberVariants(text, number) {
+  const prefix = orderNumberPrefix(number)
+  if (!prefix) return false
+  const source = String(text ?? '').normalize('NFKC')
+  const exact = new RegExp(`^${prefix}-\\d{6}-\\d{4,6}$`, 'i')
+  return tokensIn(source, prefix, [number]).some((row) => !exact.test(row.text))
 }
 
 function sentencesOf(source) {
@@ -43,6 +96,8 @@ function sentencesOf(source) {
   let start = 0
   let match
   while ((match = ends.exec(source))) {
+    // An abbreviation's full stop ("order no. 13", "approx. 4 Dec") ends nothing.
+    if (match[0] === '.' && /\b(?:no|nr|nos|approx|ca|ref|vs|e\.g|i\.e|etc|mr|ms|dr)$/i.test(source.slice(start, match.index))) continue
     out.push(source.slice(start, match.index + match[0].length))
     start = match.index + match[0].length
   }
@@ -50,57 +105,63 @@ function sentencesOf(source) {
   return out
 }
 
-// A line that only names the order: once its number is taken out, no digit
-// and at most a few words ("For", "订单", "Re:").
-function namesOnly(sentence, prefix) {
-  const rest = sentence.replace(numberPattern(prefix), ' ').replace(/[\s\p{P}\p{S}]/gu, '')
-  return !/\d/.test(rest) && rest.length <= 12
-}
+// What may stand before a number that starts a part: a list mark, and at
+// most two words ("For", "Re:", "关于订单", "Hi Daniel,").
+const LEADING = /^\s*(?:[-*•·>]+\s*)?(?:\d{1,2}[.)]\s+)?(?:[\p{L}]+[\s:,.、，]*){0,2}$/u
+// A header: the number with at most one label word and a colon, nothing after.
+const HEADER = /^\s*(?:[-*•·>]+\s*)?(?:[\p{L}]+[:.]?\s*)?#?\s*\u0000\s*:\s*$/u
+// An order pointed to by its place, not its number.
+const BY_PLACE = /\b(?:the\s+)?(?:first|second|third|fourth|fifth|other|former|latter|last|previous|earlier|next)\s+(?:order|po|purchase\s+order|one)s?\b|\b(?:the\s+)?(?:former|latter)\b|第\s*[一二三四五六七八九十\d]+\s*(?:个|张|份)?\s*(?:订单|采购单|单)|(?:另一|另外一|前一|后一|上一|下一)\s*(?:个|张|份)?\s*(?:订单|采购单|单)|前者|后者/i
 
 // The email's text in runs, each with the orders it belongs to (owners: one
 // number, several for a shared sentence, none for text of no order). Null
-// when the email names fewer than two orders in the numbering of `number`.
-export function emailParts(text, number) {
+// when the email names fewer than two orders. known: the full numbers the
+// email's variants may mean (see the head of this file).
+export function emailParts(text, number, known = []) {
   const prefix = orderNumberPrefix(number)
   if (!prefix) return null
   const source = String(text ?? '').normalize('NFKC')
-  const named = numbersIn(source, prefix)
+  const all = [number, ...known]
+  const named = orderNumbersNamed(source, number, known)
   if (named.length < 2) return null
   const runs = []
-  const add = (sentence, owners, joint = false) => {
+  const add = (sentence, owners) => {
     const last = runs[runs.length - 1]
-    if (last && !joint && !last.joint && last.owners.join(' ') === owners.join(' ')) last.text += sentence
-    else runs.push({ text: sentence, owners, joint })
+    if (last && last.owners.join(' ') === owners.join(' ')) last.text += sentence
+    else runs.push({ text: sentence, owners })
   }
-  // A sentence whose numbers form one list ("PO-a and PO-b", "PO-a, PO-b 和
-  // PO-c", "PO-a、PO-b"; never "or"): it may speak for each order listed.
-  const shape = `${prefix}-\\d{6}-\\d{4,6}`
-  const list = new RegExp(`\\b${shape}\\b(?:\\s*(?:,|、|&|\\band\\b|和|及|与|以及)\\s*\\b${shape}\\b)+`, 'gi')
-  const listsAll = (sentence, numbers) => [...sentence.matchAll(list)].some((match) => numbersIn(match[0], prefix).length === numbers.length)
   let current = null
   let headerOnly = false
   let lineStart = true
   for (const sentence of sentencesOf(source)) {
-    const blank = !sentence.trim()
-    if (blank) {
+    if (!sentence.trim()) {
       // An empty line ends the part (not the line break that ends a
-      // sentence's own line, and not after a line that only names the order).
+      // sentence's own line, and not after a header).
       if (lineStart && sentence.endsWith('\n') && !headerOnly) current = null
       add(sentence, current ? [current] : [])
+      lineStart = sentence.endsWith('\n')
+      continue
+    }
+    const tokens = tokensIn(sentence, prefix, all)
+    const numbers = [...new Set(tokens.map((row) => row.number).filter(Boolean))]
+    if (tokens.some((row) => !row.number) || (!tokens.length && BY_PLACE.test(sentence))) {
+      // An order this email cannot tell, or one pointed to by its place.
+      current = null
+      headerOnly = false
+      add(sentence, [])
+    } else if (numbers.length === 1) {
+      const first = tokens[0]
+      const leads = LEADING.test(sentence.slice(0, first.index))
+      add(sentence, numbers)
+      current = leads ? numbers[0] : null
+      headerOnly = leads && tokens.length === 1 && HEADER.test(sentence.slice(0, first.index) + '\u0000' + sentence.slice(first.end))
+    } else if (numbers.length > 1) {
+      current = null
+      headerOnly = false
+      add(sentence, [...numbers].sort())
     } else {
-      const numbers = numbersIn(sentence, prefix)
-      if (numbers.length === 1) {
-        current = numbers[0]
-        headerOnly = namesOnly(sentence, prefix)
-        add(sentence, [current])
-      } else if (numbers.length > 1) {
-        current = null
-        headerOnly = false
-        add(sentence, [...numbers].sort(), listsAll(sentence, numbers))
-      } else {
-        if (current && headerOnly && sentence.trim()) headerOnly = false
-        add(sentence, current ? [current] : [])
-      }
+      headerOnly = false
+      add(sentence, current ? [current] : [])
     }
     lineStart = sentence.endsWith('\n')
   }

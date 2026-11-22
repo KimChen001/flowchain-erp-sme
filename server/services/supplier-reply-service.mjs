@@ -29,7 +29,7 @@ import { localDevelopmentEnabled } from '../domain/local-development-contract.mj
 import { ITEM_SUPPLIER_NAMESPACE, mapItemSupplierRecord } from '../domain/master-data-commands.mjs'
 import { resolveProvisionedActor } from '../domain/pilot-identity.mjs'
 import { procurementReadAccessFor } from '../domain/procurement-read-access.mjs'
-import { emailOrdersToRead, orderNumbersNamed } from '../domain/supplier-reply-orders.mjs'
+import { emailOrdersToRead, orderNumberVariants, orderNumbersNamed } from '../domain/supplier-reply-orders.mjs'
 import { SUPPLIER_REPLY_ORDER_STATES, checkReplyReading, cleanSupplierReply, daysBetween, readSupplierReply, supplierReplyInstructionsIgnored, supplierReplyPromptTokens } from '../domain/supplier-reply-reading.mjs'
 import { tenantCalendarDay } from '../domain/tenant-calendar-day.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
@@ -267,8 +267,13 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
     const skus = await supplierSkusOf(client, actor.tenantId, order)
     const snapshot = supplierReplyOrderSnapshot(order, skus)
     // An email about several orders is read on each (pasteSeveral); with one
-    // order named, the paste is read as before.
-    const named = orderNumbersNamed(cleaned.text, snapshot.number)
+    // order named, the paste is read as before. An order number written
+    // another way (PO 202611-0013, 0013) counts when it matches exactly one
+    // of the supplier's orders.
+    const known = orderNumberVariants(cleaned.text, snapshot.number) && text(order.supplierId)
+      ? (await client.purchaseOrder.findMany({ where: { tenantId: actor.tenantId, supplierId: text(order.supplierId) }, select: { number: true }, take: 500 })).map((row) => text(row.number)).filter(Boolean)
+      : []
+    const named = orderNumbersNamed(cleaned.text, snapshot.number, known)
     if (named.length >= 2) return pasteSeveral({ client, actor, access, context, order, snapshot, skus, cleaned, input, receivedOn, today, named, signal })
     const startedAt = Date.now()
     const read = await readWithModel({ client, context, tenantId: actor.tenantId, snapshot, cleaned, receivedOn, today, signal })

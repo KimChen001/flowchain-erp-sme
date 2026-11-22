@@ -998,66 +998,37 @@ export function lineNamedElsewhere(order, quote, ref, { date = null, receivedOn 
 }
 
 // Where a quote stands in an email that names several orders (emailParts),
-// for the order `number`:
-//   own     in this order's part
-//   shared  in a sentence that names this order and another
-//   none    in text that belongs to no order (a greeting, a general line)
-//   other   in another order's part only
-//   across  over two parts or more
-function quotePlace(parts, { order, quote, receivedOn, read }) {
+// for this order:
+//   own       in this order's part, and nowhere else in the email
+//   repeated  its words stand more than once in the email, one of them in
+//             this order's part, shared or of no order: which one the reading
+//             meant cannot be told
+//   shared    in a sentence that names this order and another
+//   none      in text that belongs to no order (a greeting, a general line,
+//             an order pointed to by its place or by a number not known), or
+//             across this order's part and such text
+//   other     in another order's part only
+//   across    over two parts or more, into another order's part
+function quotePlace(parts, { order, quote, whole }) {
   const form = quoteForm(quote)
   const own = String(order?.number ?? '').trim().toUpperCase()
+  let copies = 0
+  for (let at = whole.indexOf(form); form && at >= 0; at = whole.indexOf(form, at + 1)) copies += 1
   const places = parts.runs.filter((run) => quoteForm(run.text).includes(form))
+  const mine = (run) => run.owners.includes(own) || !run.owners.length
+  if (copies > 1 && places.some(mine)) return 'repeated'
   if (places.some((run) => run.owners.length === 1 && run.owners[0] === own)) return 'own'
-  // One sentence that lists this order with others and gives one day ("PO-a
-  // and PO-b both ship 4 Dec", §9): the day is each listed order's, when
-  // every order listed is read (none closed, another supplier's or unknown)
-  // and the sentence names no item, line, quantity or exception.
-  const jointDay = (run) => run.joint && run.owners.includes(own) && run.owners.every((number) => read.includes(number))
-    && oneDay(run.text, receivedOn) && !JOINT_EXCEPTION.test(run.text) && !namesItem(run.text, order)
-  if (places.some(jointDay)) return 'own'
   if (places.some((run) => run.owners.includes(own))) return 'shared'
   if (places.some((run) => !run.owners.length)) return 'none'
   if (places.length) return 'other'
-  // Over two parts or more: none of them another order's alone (this order's,
-  // shared, of no order) is for the person; into another order's, dropped.
-  const allowed = (run) => !run.owners.length || run.owners.includes(own)
   for (let start = 0; start < parts.runs.length; start += 1) {
     let joined = ''
-    for (let end = start; end < parts.runs.length && allowed(parts.runs[end]); end += 1) {
+    for (let end = start; end < parts.runs.length && mine(parts.runs[end]); end += 1) {
       joined += parts.runs[end].text
       if (quoteForm(joined).includes(form)) return 'none'
     }
   }
   return 'across'
-}
-
-// Words that make a sentence about several orders about less than all of
-// them: an exception, a limit, a contrast.
-const JOINT_EXCEPTION = /\b(?:except|excluding|exclude[sd]?|but|only|apart\s+from|other\s+than|save\s+for|unlike|rest|remaining|partial(?:ly)?|some\s+of)\b|除了|除去|不包括|不含|但是?|只有|仅|其余|剩下|剩余|部分/i
-// A sentence that names an item or a part of an order: one of this order's
-// codes or names, a code-like token (85123A, HOBBIES_2_007, 84077), a line
-// ("line 2", L2, 第二行) or a quantity (200 pcs, 200 件).
-function namesItem(value, order) {
-  const form = quoteForm(value).replace(/\b[a-z][a-z0-9]{0,9}-\d{6}-\d{4,6}\b/g, ' ')
-  const named = array(order?.lines).flatMap((line) => [line.sku, line.supplierSku, line.itemName]).map((entry) => quoteForm(entry)).filter((entry) => entry.length >= 3)
-  if (named.some((entry) => form.includes(entry))) return true
-  const codeLike = [...form.matchAll(/\b(?=[a-z0-9_-]*\d)(?=[a-z0-9_-]*[a-z])[a-z0-9][a-z0-9_-]{3,}\b|\b\d{5,}\b/g)].some((match) => !/^\d+(?:st|nd|rd|th)$/.test(match[0]))
-  return codeLike || /\bline\s*\d|\bl\d{1,3}\b|第\s*[一二三四五六七八九十\d]+\s*行|\d\s*(?:pcs|pieces|units|cartons|boxes|sets|件|个|箱|套|只|台)/.test(form)
-}
-
-// The text names exactly one day: one calendar date, or one relative day.
-function oneDay(value, receivedOn) {
-  // Two day numbers joined ("9 and 10 December", "3-4 Dec", 9、10号): two days,
-  // though only the second carries the month.
-  const bare = String(value ?? '').normalize('NFKC').replace(/\b\d{4}-\d{2}-\d{2}\b|\b[A-Z][A-Z0-9]{0,9}-\d{6}-\d{4,6}\b/gi, ' ')
-  if (/\b\d{1,2}(?:st|nd|rd|th)?\s*(?:and|&|or|,|to|-|–|~|和|或|、|至|到)\s*\d{1,2}(?:st|nd|rd|th)?\b/i.test(bare)) return false
-  const written = datesInQuote(value, receivedOn)
-  if (written.ambiguous.length) return false
-  const days = new Set([...written.exact, ...written.dayOnly.map((row) => row.date)])
-  const relative = relativeDateInQuote(value, receivedOn)
-  if (relative?.date) days.add(relative.date)
-  return days.size === 1
 }
 
 // The reading checked against the reply and the order (supplierReplyOrderSchema):
@@ -1066,12 +1037,13 @@ function oneDay(value, receivedOn) {
 //
 // An email that names several orders (supplier-reply-orders.mjs) is read on
 // each of them: a value counts for this order only from this order's part.
-// A quote from another order's part, or across parts, is dropped
-// (other_order_text); one from text of no single order goes to the person,
-// the day offered (no_order_part). emailRead: the numbers of the orders the
-// email is read on (emailOrdersToRead); a sentence listing several orders
-// gives each its day only when all of them are read. With one order named,
-// nothing changes.
+// A quote from another order's part, or across into one, is dropped
+// (other_order_text). One from text of no single order (shared, of no order,
+// or words that stand more than once in the email) goes to the person
+// (no_order_part), the day offered when the quote stands once and reads
+// cleanly. emailRead: the numbers of the orders the email is read on
+// (emailOrdersToRead); an order number written another way counts when it
+// matches one of them. With one order named, nothing changes.
 export function checkReplyReading({ order, text: reply, receivedOn, reading, emailRead = [] }) {
   const open = SUPPLIER_REPLY_ORDER_STATES.includes(text(order?.status))
   const byRef = new Map(array(order?.lines).map((line) => [line.ref, line]))
@@ -1083,9 +1055,8 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading, ema
     const at = part ? whole.indexOf(part) : -1
     return at >= 0 && spans.some(([start, end]) => at < end && at + part.length > start)
   }
-  const emailSplit = emailParts(reply, order?.number)
-  const read = array(emailRead).map((number) => String(number ?? '').trim().toUpperCase())
-  const placeOf = (quote) => (emailSplit ? quotePlace(emailSplit, { order, quote, receivedOn, read }) : 'own')
+  const emailSplit = emailParts(reply, order?.number, array(emailRead).map((number) => String(number ?? '').trim().toUpperCase()))
+  const placeOf = (quote) => (emailSplit ? quotePlace(emailSplit, { order, quote, whole }) : 'own')
   let dropped = 0
   const flags = []
   for (const flag of array(reading?.flags)) {
@@ -1125,10 +1096,12 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading, ema
     if (!open || !(Number(line.remaining) > 0)) { out.push(lineRow({ ...base, issue: 'not_open' })); continue }
     // Text of no single order in an email about several: the person decides
     // which order it is for, the day offered when it reads cleanly.
-    const outside = emailSplit ? entries.find((entry) => placeOf(entry.quote) !== 'own') : null
+    const outside = emailSplit ? entries.map((entry) => ({ entry, place: placeOf(entry.quote) })).find((row) => row.place !== 'own') : null
     if (outside) {
-      const day = resolveDate(outside, receivedOn, line.promisedDate || null, reply)
-      out.push(lineRow({ ...base, outcome: 'needs_you', issue: 'no_order_part', quote: outside.quote, dateKind: outside.dateKind, readings: day.issue ? (day.readings || null) : [day.date] }))
+      // A quote whose words stand more than once is offered no day: its
+      // sentence cannot be told.
+      const day = outside.place === 'repeated' ? null : resolveDate(outside.entry, receivedOn, line.promisedDate || null, reply)
+      out.push(lineRow({ ...base, outcome: 'needs_you', issue: 'no_order_part', quote: outside.entry.quote, dateKind: outside.entry.dateKind, readings: !day ? null : day.issue ? (day.readings || null) : [day.date] }))
       continue
     }
     // The reply names this date by another line's code or name: the person

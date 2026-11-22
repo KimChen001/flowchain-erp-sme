@@ -181,7 +181,7 @@ test('every code the card shows has English and Chinese words', () => {
   for (const reason of SUPPLIER_REPLY_DISMISS_REASONS) assert.ok(`dismiss_${reason}` in SUPPLIER_REPLY_COPY, reason)
   for (const status of SUPPLIER_REPLY_READING_STATUSES.filter((value) => value !== 'read')) assert.ok(`outage_${status}` in SUPPLIER_REPLY_COPY, status)
   for (const status of SUPPLIER_REPLY_EMAIL_ORDER_STATES.filter((value) => value !== 'this')) assert.ok(`emailOrder_${status}` in SUPPLIER_REPLY_COPY, status)
-  assert.equal(supplierReplyText('en-US', 'emailOrders', { n: 3, number: 'PO-202611-0012' }), 'This email names 3 orders. This card reads only the part about PO-202611-0012.')
+  assert.equal(supplierReplyText('en-US', 'emailOrders', { n: 3, number: 'PO-202611-0012', limit: 5 }), 'This email names 3 orders. FlowChain reads up to 5 of them, each on its own order with one reading. This card reads only the part about PO-202611-0012.')
   assert.equal(supplierReplyText('zh-CN', 'emailOrder_over_limit', { number: 'PO-202611-0019', limit: 5 }), 'PO-202611-0019：一封邮件超过 5 张订单，未读取')
   assert.equal(supplierReplyText('en-US', 'readAs', { phrase: 'next Friday', date: 'Nov 27, 2026', from: 'Nov 17, 2026' }), '"next Friday" read as Nov 27, 2026, from the reply date Nov 17, 2026')
   assert.equal(supplierReplyText('zh-CN', 'left', { qty: '60 件' }), '剩余 60 件')
