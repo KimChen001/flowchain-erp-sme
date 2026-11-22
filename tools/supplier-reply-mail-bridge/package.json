@@ -1,0 +1,18 @@
+{
+  "name": "flowchain-supplier-reply-mail-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Forwards supplier replies from a mailbox or a folder of .eml files to FlowChain's supplier-reply endpoint.",
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "start": "node bridge.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "imapflow": "^2.12.2",
+    "mailparser": "^3.15.0"
+  }
+}
