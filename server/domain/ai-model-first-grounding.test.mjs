@@ -24,6 +24,40 @@ const orders = {
   more: 3,
 }
 
+// 2026-11-22 probe reviews: the strict pass runs after the check as it was
+// and can only add problems. With strict off the check is exactly as before,
+// so the problems with it on hold every problem with it off.
+const strictSuperset = (answer, results, extra = {}) => {
+  const loose = kinds(check(answer, results, { ...extra, strict: false }))
+  const strict = kinds(check(answer, results, extra))
+  assert.deepEqual(loose.filter((row) => !strict.includes(row)), [], `strict dropped a problem: ${answer}`)
+  return strict.filter((row) => !loose.includes(row))
+}
+
+// (b) The masks that blank a record or a name leave spaces, so a month and
+// a number either side read as one date; today alone grounded it.
+test('strict pass (b): a date written across a record or a name is one the results hold, or a day they hold as a figure', () => {
+  const facts = { suppliers: [{ name: 'Acme Home Goods' }] }
+  const results = [{ rows: [{ orderNumber: 'PO-202610-0028', supplier: 'Acme Home Goods', promisedDate: '2026-10-14', remaining: 21, ref: { type: 'purchase_order', id: 'UCI-PO-329', label: 'PO-202610-0028' } }], total: 1, more: 0 }]
+  // Today (30 Oct) alone made these dates: the strict pass flags them.
+  assert.deepEqual(strictSuperset('Sales in October PO-202610-0028 30 units.', results, { facts }), ['date:October PO-202610-0028 30'])
+  assert.deepEqual(strictSuperset('10 月 PO-202610-0028 30 日到货。', results, { facts }), ['date:10 月 PO-202610-0028 30 日'])
+  // Kept: a date the results hold, written across a name; a day the results
+  // hold as a figure; dates written in one piece.
+  assert.deepEqual(strictSuperset('10 月 Acme Home Goods 14 日交货（PO-202610-0028）。', results, { facts }), [])
+  assert.deepEqual(strictSuperset('October PO-202610-0028 21 units remain.', results, { facts }), [])
+  assert.deepEqual(strictSuperset('PO-202610-0028 was promised for 14 Oct 2026.', results, { facts }), [])
+  assert.deepEqual(strictSuperset('PO-202610-0028 承诺交期 10 月 14 日。', results, { facts }), [])
+  // A date the check flags stays flagged as it was, never re-read as figures
+  // (the review's loosening lines: 21 and 11 are quantities, not days).
+  const held = [{ rows: [{ orderNumber: 'PO-202611-0009', supplier: 'Acme Home Goods', remaining: 21, ordered: 11, leadTimeDays: 21, promisedDate: '2026-11-30', ref: { type: 'purchase_order', id: 'UCI-PO-338', label: 'PO-202611-0009' } }] }]
+  for (const answer of ['11 月 Acme Home Goods 21 日交货。', 'Acme Home Goods delivers November PO-202611-0009 21.', 'Nov PO-202611-0009 21 units remain.', 'November Acme Home Goods 11–21', 'October 2026-11-30 21']) {
+    const loose = kinds(check(answer, held, { facts, strict: false, today: null }))
+    assert.ok(loose.some((row) => row.startsWith('date:')), answer)
+    strictSuperset(answer, held, { facts, today: null })
+  }
+})
+
 test('false positive fixed: a count a document passage writes as a word grounds the same count in figures', () => {
   const escalation = policy('Escalate when the supplier has not responded for two business days, or when a customer delivery within three business days is affected.')
   assert.deepEqual(kinds(check('政策规定，供应商两个工作日内未回复，或 3 个工作日内的客户交付受影响时，才需升级。', [escalation])), [])
