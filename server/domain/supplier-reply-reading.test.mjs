@@ -766,24 +766,180 @@ test('"next <weekday>" that can mean this week or next is offered both ways; 下
   assert.equal(check('下个星期五发货。', reading([{ line: 'L1', date: null, quote: '下个星期五发货。', dateKind: 'relative' }])).lines[0].proposedDate, '2026-11-27')
 })
 
-test('a relative day the reading called vague is read by code when it is the only day, unhedged, in a clause about delivery', () => {
-  const line = (quote, receivedOn = RECEIVED) => check(quote, reading([{ line: 'L1', date: null, quote, dateKind: 'vague' }]), { receivedOn }).lines[0]
+test('a relative day the reading called vague stays with the person, offered as one click', () => {
+  const line = (quote) => check(quote, reading([{ line: 'L1', date: null, quote, dateKind: 'vague' }])).lines[0]
   const shipped = line('The 60 pcs ship in 10 days.')
-  assert.deepEqual([shipped.outcome, shipped.proposedDate, shipped.inferred, shipped.readAs?.phrase], ['proposed', '2026-11-27', true, 'in 10 days'])
+  assert.deepEqual([shipped.outcome, shipped.issue, shipped.readings], ['needs_you', 'vague', ['2026-11-27']])
   const zh = line('余下的货下周三发货。')
-  assert.deepEqual([zh.outcome, zh.proposedDate, zh.inferred], ['proposed', '2026-11-25', true])
-  // Not about delivery, ambiguous, hedged, or beside another day: the person decides.
-  assert.deepEqual([line('Our office is closed on Friday; we will update you.').outcome, line('Our office is closed on Friday; we will update you.').readings], ['needs_you', ['2026-11-20']])
-  assert.equal(line('We will update you on Friday, shipping is delayed.').outcome, 'needs_you')
+  assert.deepEqual([zh.outcome, zh.issue, zh.readings], ['needs_you', 'vague', ['2026-11-25']])
   assert.equal(line('We will ship next Friday.').issue, 'ambiguous_weekday')
-  assert.equal(line('Probably shipping in 10 days.').outcome, 'needs_you')
-  assert.equal(line('下周三发邮件确认交期。').outcome, 'needs_you')
-  assert.equal(line('Shipping in 10 days, or 1 December at the latest.').outcome, 'needs_you')
 })
 
+test('relative days are never proposed wrong: schedules, past, windows, alternatives, conditions, refusals, weeks apart, 一起, sending (#444 review probe)', () => {
+  const probeOrder = {
+    number: 'PO-202611-0012', supplierName: 'Acme Ltd', status: 'partially_received',
+    lines: [
+      { ref: 'L1', purchaseOrderLineId: 'pol-1', sku: 'SKU-1040', supplierSku: 'ACM-5521', itemName: 'Bracket', remaining: 60, unit: 'pcs', promisedDate: '2026-11-12' },
+      { ref: 'L2', purchaseOrderLineId: 'pol-2', sku: 'SKU-2210', supplierSku: null, itemName: 'Hinge', remaining: 20, unit: 'pcs', promisedDate: '2026-11-12' },
+    ],
+  }
+  // Mon 16, Tue 17, Wed 18, Thu 19, Fri 20, Sat 21, Sun 22 Nov 2026.
+  const TUE = '2026-11-17'; const MON = '2026-11-16'; const WED = '2026-11-18'; const THU = '2026-11-19'; const FRI = '2026-11-20'; const SAT = '2026-11-21'; const SUN = '2026-11-22'
+  const V = { dateKind: 'vague', date: null }
+  const R = { dateKind: 'relative', date: null }
+  // [label, reply (= quote, or [reply, quote]), receivedOn, reading fields, 'held' or the one date that may be proposed]
+  const cases = [
+      // recurring
+      ['rec en every Friday', 'We ship every Friday.', TUE, V, 'held'],
+      ['rec zh 每周五', '我们每周五发货。', TUE, V, 'held'],
+      ['rec en truck leaves on Friday each week', 'Our truck leaves on Friday each week.', TUE, V, 'held'],
+      // past tense
+      ['past en shipped on Wednesday (Thu)', 'We shipped the 60 pcs on Wednesday.', THU, V, 'held'],
+      ['past en dispatched on Monday (Wed)', 'We dispatched them on Monday.', WED, V, 'held'],
+      ['past en were dispatched on Monday', 'The goods were dispatched on Monday.', WED, V, 'held'],
+      ['past en shipped last Wednesday', 'Shipped last Wednesday.', THU, V, 'held'],
+      ['past zh 已于上周三发货', '货已于上周三发货。', TUE, V, 'held'],
+      ['past zh 上周三 (relative)', '货已于上周三发货。', TUE, R, 'held'],
+      ['past zh 上个星期五已经发出', '上个星期五已经发出了。', TUE, V, 'held'],
+      ['past zh 已于周一发出 (Wed)', '货物已于周一发出。', WED, V, 'held'],
+      // start / window / bound
+      ['win en from next Wednesday (Sat)', 'Can ship from next Wednesday.', SAT, V, 'held'],
+      ['win zh 下周三起陆续发货', '下周三起陆续发货。', TUE, V, 'held'],
+      ['win en by next Wednesday (Sat)', 'We will ship by next Wednesday.', SAT, V, 'held'],
+      ['win zh 最晚下周三', '最晚下周三发货。', TUE, V, 'held'],
+      ['win zh 下周三前发货', '下周三前发货。', TUE, V, 'held'],
+      ['win zh 12月2日前发货 (calendar, base)', '12月2日前发货。', TUE, V, 'held'],
+      ['win en no later than Friday', 'We ship no later than Friday.', TUE, V, 'held'],
+      ['win zh 2-3天后发货', '2-3天后发货。', TUE, V, 'held'],
+      ['win zh 10-15天后到货', '10-15天后到货。', TUE, V, 'held'],
+      ['win zh 2到3周后发货', '2到3周后发货。', TUE, V, 'held'],
+      // two days
+      ['two zh 下周三或周四', '下周三或周四发货。', TUE, V, 'held'],
+      ['two zh 下周三或四', '下周三或四发货。', TUE, V, 'held'],
+      ['two en on Wednesday or Thursday', 'Will ship on Wednesday or Thursday.', TUE, V, 'held'],
+      ['two en on Wed/Thu', 'Ships on Wed/Thu.', TUE, V, 'held'],
+      ['two en next Wednesday or Thursday (Sat)', 'Will ship next Wednesday or Thursday.', SAT, V, 'held'],
+      // conditional
+      ['cond en if payment clears (Sat)', 'If payment clears, ships next Wednesday.', SAT, V, 'held'],
+      ['cond zh 如果审批通过', '如果审批通过，下周三发货。', TUE, V, 'held'],
+      ['cond zh 审批通过后下周三发货', '审批通过后下周三发货。', TUE, V, 'held'],
+      ['cond en prior sentence (Sat)', ['Payment must clear first. Then we ship next Wednesday.', 'Then we ship next Wednesday.'], SAT, V, 'held'],
+      // negation
+      ["neg en won't ship (Sat)", "We won't ship next Wednesday.", SAT, V, 'held'],
+      ['neg zh 下周三发不了', '下周三发不了。', TUE, V, 'held'],
+      ['neg zh 下周三没办法发货', '下周三没办法发货。', TUE, V, 'held'],
+      ['neg zh 下周三不发货', '下周三不发货。', TUE, V, 'held'],
+      ['neg zh 下周三发不出来', '下周三暂时发不出来货。', TUE, V, 'held'],
+      // week offsets
+      ['wk en next week on Wednesday (Mon)', 'Next week on Wednesday we ship.', MON, V, '2026-11-25'],
+      ['wk en next week, on Wednesday (Tue)', 'Ships next week, on Wednesday.', TUE, V, '2026-11-25'],
+      ['wk zh 下周的周三 (Tue)', '下周的周三发货。', TUE, V, '2026-11-25'],
+      ['wk zh 下周 周三 (Tue)', '下周 周三发货。', TUE, V, '2026-11-25'],
+      ['wk en on Wednesday week (Tue)', "We'll ship on Wednesday week.", TUE, V, '2026-11-25'],
+      ['wk en a week on Wednesday (Tue)', "We'll ship a week on Wednesday.", TUE, V, '2026-11-25'],
+      ['wk zh 下下周三 (Tue)', '下下周三发货。', TUE, V, '2026-12-02'],
+      ['wk zh 周三 alone (Tue)', '周三发货。', TUE, V, '2026-11-18'],
+      // 一起
+      ['yiqi zh 下周一起发货 vague', '下周一起发货。', TUE, V, 'held'],
+      ['yiqi zh 下周一起发货 relative', '下周一起发货。', TUE, R, 'held'],
+      ['yiqi zh 从下周一起发货 relative', '从下周一起发货。', TUE, R, 'held'],
+      ['yiqi zh 下周一起陆续发货 relative', '下周一起陆续发货。', TUE, R, 'held'],
+      ['yiqi zh 剩下的下周一起发 relative', '剩下的下周一起发。', TUE, R, 'held'],
+      ['yiqi zh 12月7日周一起发货 stated', '12月7日周一起发货。', TUE, { dateKind: 'stated', date: '2026-12-07' }, 'held'],
+      ['yiqi zh 星期一起发货 relative', '星期一起开始发货。', TUE, R, 'held'],
+      ['yiqi zh 12月7日星期一起发货 stated', '12月7日星期一起发货。', TUE, { dateKind: 'stated', date: '2026-12-07' }, 'held'],
+      ['yiqi zh 12月7日周一起陆续发货 stated', '12月7日周一起陆续发货。', TUE, { dateKind: 'stated', date: '2026-12-07' }, 'held'],
+      ['yiqi zh 12月7日周一起 vague', '12月7日周一起发货。', TUE, V, 'held'],
+      ['yiqi zh 12月7日(周一)起 stated', '12月7日（周一）起发货。', TUE, { dateKind: 'stated', date: '2026-12-07' }, 'held'],
+      ['yiqi zh 下周三一起发货 (intended)', '其余五款下周三一起发货。', TUE, R, '2026-11-25'],
+      // delivery word false positives
+      ['send en tracking number tomorrow', 'We will send you the tracking number tomorrow.', TUE, V, 'held'],
+      ['send en updated schedule on Friday', "I'll send the updated schedule on Friday.", TUE, V, 'held'],
+      ['send zh 明天发出报价单', '我们明天发出报价单。', TUE, V, 'held'],
+      // received-day edge cases
+      ['day en next Friday on Fri', 'We ship next Friday.', FRI, V, '2026-11-27'],
+      ['day en next Friday on Sat', 'We ship next Friday.', SAT, V, '2026-11-27'],
+      ['day en next Friday on Sun', 'We ship next Friday.', SUN, V, 'held'],
+      ['day en next Monday on Sun', 'We ship next Monday.', SUN, V, 'held'],
+      ['day zh 周五发货 on Fri', '周五发货。', FRI, V, 'held'],
+      // (a) ambiguous weekday
+      ['a en this Friday (Tue)', 'We ship this Friday.', TUE, V, '2026-11-20'],
+      ['a en coming Friday (Tue)', 'We ship the coming Friday.', TUE, V, '2026-11-20'],
+      ['a en on Friday next (Tue)', 'We ship on Friday next.', TUE, V, 'held'],
+      ['a en next Friday the 27th stated', 'We ship next Friday the 27th.', TUE, { dateKind: 'stated', date: '2026-11-27' }, '2026-11-27'],
+      ['a en next Friday relative 27', 'We ship next Friday.', TUE, { dateKind: 'relative', date: '2026-11-27' }, 'held'],
+      ['a en next Friday, 27 November', 'Ships next Friday, 27 November.', TUE, { dateKind: 'stated', date: '2026-11-27' }, '2026-11-27'],
+      ['a en next Friday (27 Nov) vague', 'Ships next Friday (27 Nov).', TUE, V, '2026-11-27'],
+      // other item in the same quote
+      ['item en blue ones ship next Wed (Sat)', 'The blue ones ship next Wednesday; the red ones are on hold.', SAT, V, 'held'],
+  ]
+  for (const [label, text, receivedOn, fields, expected] of cases) {
+    const [reply, quote] = Array.isArray(text) ? text : [text, text]
+    const row = checkReplyReading({ order: probeOrder, text: reply, receivedOn, reading: reading([{ line: 'L1', quote, quantity: null, ...fields }]) }).lines[0]
+    const proposed = ['proposed', 'confirmed'].includes(row.outcome) ? row.proposedDate : null
+    if (proposed) assert.equal(proposed, expected, label)
+  }
+})
+
+test('"next <weekday>" said on a Sunday or on that weekday, and a bare weekday said on that day, offer both days; a day of the month settles it', () => {
+  const row = (quote, receivedOn, fields = { dateKind: 'relative', date: null }) => check(quote, reading([{ line: 'L1', quote, ...fields }]), { receivedOn }).lines[0]
+  const pick = (value) => [value.outcome, value.issue, value.readings]
+  // Sunday 22 Nov: the coming Friday, or the one after.
+  assert.deepEqual(pick(row('We ship next Friday.', '2026-11-22')), ['needs_you', 'ambiguous_weekday', ['2026-11-27', '2026-12-04']])
+  assert.deepEqual(pick(row('We ship next Monday.', '2026-11-22')), ['needs_you', 'ambiguous_weekday', ['2026-11-23', '2026-11-30']])
+  // Friday 20 Nov: "next Friday" is a week on, or two; 周五 is today, or a week on.
+  assert.deepEqual(pick(row('We ship next Friday.', '2026-11-20')), ['needs_you', 'ambiguous_weekday', ['2026-11-27', '2026-12-04']])
+  assert.deepEqual(pick(row('周五发货。', '2026-11-20')), ['needs_you', 'ambiguous_weekday', ['2026-11-20', '2026-11-27']])
+  // Saturday 21 Nov: one Friday either way, proposed.
+  assert.equal(row('We ship next Friday.', '2026-11-21').proposedDate, '2026-11-27')
+  // "next Friday the 27th": the day of the month names one of the two.
+  assert.equal(row('We ship next Friday the 27th.', RECEIVED, { dateKind: 'stated', date: '2026-11-27' }).proposedDate, '2026-11-27')
+  assert.deepEqual(pick(row('We ship next Friday the 20th.', RECEIVED, { dateKind: 'stated', date: '2026-11-27' })), ['needs_you', 'ambiguous_weekday', ['2026-11-20', '2026-11-27']])
+  // A reading that gives one of the two without a written day is not settled.
+  assert.equal(row('We ship next Friday.', RECEIVED, { dateKind: 'relative', date: '2026-11-27' }).issue, 'ambiguous_weekday')
+  // "Friday next" is "next Friday".
+  assert.equal(row('We ship on Friday next.', RECEIVED, { dateKind: 'vague', date: null }).issue, 'ambiguous_weekday')
+})
+
+test('a relative day before the reply goes to the person; last, 上周, 下下周, 下周的周三 and past verbs are read as written', () => {
+  const pick = (quote, receivedOn = RECEIVED) => relativeDateInQuote(quote, receivedOn)?.date ?? null
+  // Tue 17 Nov.
+  assert.equal(pick('货已于上周三发货。'), '2026-11-11')
+  assert.equal(pick('上个星期五已经发出。'), '2026-11-13')
+  assert.equal(pick('下下周三发货。'), '2026-12-02')
+  assert.equal(pick('下周的周三发货。'), '2026-11-25')
+  assert.equal(pick('下周 周三发货。'), '2026-11-25')
+  assert.equal(pick('We shipped last Wednesday.'), '2026-11-11')
+  // Thu 19 Nov: a bare weekday in a sentence about goods already sent is the last one.
+  assert.equal(pick('We shipped the 60 pcs on Wednesday.', '2026-11-19'), '2026-11-18')
+  assert.equal(pick('They were dispatched on Monday.', '2026-11-19'), '2026-11-16')
+  assert.equal(pick('货已于周一发出。', '2026-11-19'), '2026-11-16')
+  // Future verbs, or a past verb in another sentence, do not.
+  assert.equal(pick('It will be shipped on Friday.'), '2026-11-20')
+  assert.equal(pick('The order was confirmed. We ship on Friday.'), '2026-11-20')
+  assert.equal(pick('已确认，周五发货。'), '2026-11-20')
+  for (const quote of ['已确认周五发货。', '已安排周五发货。', '已定于周五发货。', 'The samples were sent last month, and the rest ship on Friday.', '已发出一半，剩下的周五发。']) assert.equal(pick(quote), '2026-11-20', quote)
+  // "Tues" and "Thurs" are days, not plurals.
+  assert.equal(pick('Ships next Thurs.', '2026-11-21'), '2026-11-26')
+  // Schedules, ranges, alternatives and weeks counted apart name no one day.
+  for (const quote of ['We ship every Friday.', '我们每周五发货。', '2-3天后发货。', '下周三或四发货。', 'On Wed/Thu.', 'Next week on Wednesday.', 'On Wednesday week.']) assert.equal(pick(quote), null, quote)
+  // End to end: a relative day that falls before the reply is never proposed.
+  for (const [quote, receivedOn] of [['货已于上周三发货。', RECEIVED], ['We shipped last Wednesday.', RECEIVED], ['We shipped the 60 pcs on Wednesday.', '2026-11-19']]) {
+    const row = check(quote, reading([{ line: 'L1', date: null, quote, dateKind: 'relative' }]), { receivedOn }).lines[0]
+    assert.deepEqual([row.outcome, row.issue], ['needs_you', 'before_reply'], quote)
+  }
+})
 test('一起 ("together") after a day is no "from" hedge; 起 on its own still is', () => {
   const zh = (quote) => check(quote, reading([{ line: 'L1', date: null, quote, dateKind: 'relative' }])).lines[0]
   // Batch 3, zh-uci-0013: "the other five ship together next Wednesday".
   assert.deepEqual([zh('其余五款下周三一起发货。').outcome, zh('其余五款下周三一起发货。').proposedDate], ['proposed', '2026-11-25'])
   assert.equal(zh('下周三起陆续发货。').outcome, 'needs_you')
+  // 一起 after a weekday 一 is 周一 + 起, "from Monday on": held.
+  for (const quote of ['下周一起发货。', '从下周一起发货。', '星期一起发货。']) assert.equal(zh(quote).outcome, 'needs_you', quote)
+  const stated = (quote, date) => check(quote, reading([{ line: 'L1', date, quote, dateKind: 'stated' }])).lines[0]
+  for (const quote of ['12月7日周一起发货。', '12月7日星期一起发货。', '12月7日（周一）起发货。', '12月7日(周一)起发货。']) assert.equal(stated(quote, '2026-12-07').outcome, 'needs_you', quote)
+  // 前 bounds a window ("before 2 Dec"); 前后 is "around".
+  assert.equal(stated('12月2日前发货。', '2026-12-02').outcome, 'needs_you')
+  assert.equal(stated('12月2日发货。', '2026-12-02').outcome, 'proposed')
+  assert.equal(stated('12月2日提前发货。', '2026-12-02').outcome, 'proposed')
 })
