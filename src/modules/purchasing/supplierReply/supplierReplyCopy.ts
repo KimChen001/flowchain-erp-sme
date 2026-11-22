@@ -80,6 +80,7 @@ export const SUPPLIER_REPLY_COPY = {
   ambiguous: ["Day and month could be read either way:", "日和月的顺序无法确定："],
   severalDates: ["The sentence names two dates. Which is the new one?", "这句话提到两个日期，哪个是新的交期？"],
   vagueChoices: ["No exact day was given. It could mean:", "回复没有给出确切日期，可能指："],
+  weekdayChoices: ["\"next\" with a weekday can mean this week or next:", "“next + 星期几” 可能指本周或下周："],
   vagueSaid: ["The supplier said: \"{quote}\"", "供应商说：“{quote}”"],
 
   // Why a line is not proposed (SUPPLIER_REPLY_LINE_ISSUES).
