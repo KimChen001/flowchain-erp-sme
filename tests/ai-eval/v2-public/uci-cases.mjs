@@ -138,10 +138,16 @@ export function buildUciCases(facts) {
   // scene's 22423, which on 2026-11-22 was 18th by SKU, 21st by shortfall
   // and 29th by quantity of the 64 items due: no answer had to name it. A
   // question that names the item (cake-zh) still requires it.
-  const dueNow = facts.reorder.map(({ sku, quantity }) => ({ sku, quantity, name: facts.item(sku)?.name }))
+  // Each due item with the figures the reorder list shows for it: an answer
+  // may give any of them, and no other figure for that item (#446 recheck).
+  const dueNow = facts.reorder.map((row) => {
+    const item = facts.item(row.sku)
+    const values = [item.onHand, item.reserved, item.available, item.onOrder, item.position, item.safetyStock, item.reorderPoint, item.minimumOrderQuantity, item.leadTimeDays, item.averageDailyDemand, Math.round(item.averageDailyDemand * 10) / 10, item.daysOfStock, row.shortfall, row.orderUpTo, row.position, ...row.incomingLines]
+    return { sku: row.sku, quantity: row.quantity, name: item.name, values: values.filter((value) => Number.isFinite(value)) }
+  })
   const itemCount = `(?<![\\d.,])${dueNow.length}(?:\\s+(?:more\\s+)?(?:items|SKUs|products)\\b|\\s*(?:个|项|种|款))`
   const pageWords = '\\b(?:see|open|view|find|on|in)\\s+the\\s+(?:full\\s+|whole\\s+|complete\\s+)?reorder\\s+(?:list\\s+)?page|Inventory\\s*[>›→]\\s*Reorder|补货清单(?:页|页面)|(?:打开|查看)补货清单|补货清单(?:里|中|上)[^。\\n]{0,6}看|查看全部'
-  const reorderList = { matches: [{ label: 'says how many items are due', pattern: itemCount, textOnly: true }], listed: { rows: dueNow, atLeast: Math.min(3, dueNow.length) }, wholeList: { route: 'inventory:reorder', words: pageWords } }
+  const reorderList = { matches: [{ label: 'says how many items are due', pattern: itemCount, textOnly: true }], listed: { rows: dueNow, alsoOnList: facts.reorderSoon, atLeast: Math.min(3, dueNow.length) }, wholeList: { route: 'inventory:reorder', words: pageWords } }
   add({ id: 'reorder-en', kind: 'reorder', language: 'en-US', turns: ['What should I reorder this week?'], expect: reorderList })
   add({ id: 'reorder-zh', kind: 'reorder', language: 'zh-CN', turns: ['这周需要补什么货？'], expect: reorderList })
   add({ id: 'cake-zh', kind: 'reorder', language: 'zh-CN', turns: ['蛋糕架还要补货吗？'], expect: { mentions: [named(cake)], numbers: [{ label: '建议数量', value: suggestion.quantity }] } })

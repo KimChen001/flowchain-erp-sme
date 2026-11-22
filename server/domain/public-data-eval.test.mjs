@@ -204,7 +204,9 @@ test('the UCI figures: stock and position, late orders, the reorder rule, months
   // 16, raised to its minimum of 20. P1's order waiting for approval is not on
   // order, but is in the reorder list's position (design audit C2): 15 + 10 =
   // 25 against 21, 4 days of demand above it, so it is not listed.
-  assert.deepEqual(facts.reorder, [{ sku: 'C1', shortfall: 2, orderUpTo: 56, quantity: 20 }])
+  // Its row also gives the list's position and its open orders' quantities,
+  // which an answer may quote (the listed value rule).
+  assert.deepEqual(facts.reorder, [{ sku: 'C1', shortfall: 2, orderUpTo: 56, quantity: 20, position: 40, incomingLines: [] }])
   assert.equal(facts.item('P1').onOrder, 0)
   // Further below, up to the level (design audit C3): 30 on hand asks for 26.
   // Less than a day of demand above the reorder point is due today: S1 at
@@ -212,7 +214,7 @@ test('the UCI figures: stock and position, late orders, the reorder rule, months
   // orders up to 105 + 35 = 140: 31, raised to its minimum of 40.
   const lower = smallPlan()
   lower.purchasing.closing = { ...lower.purchasing.closing, C1: 30, S1: 19 }
-  assert.deepEqual(uciFacts(lower).reorder, [{ sku: 'S1', shortfall: 0, orderUpTo: 140, quantity: 40 }, { sku: 'C1', shortfall: 12, orderUpTo: 56, quantity: 26 }])
+  assert.deepEqual(uciFacts(lower).reorder.map(({ sku, shortfall, orderUpTo, quantity }) => ({ sku, shortfall, orderUpTo, quantity })), [{ sku: 'S1', shortfall: 0, orderUpTo: 140, quantity: 40 }, { sku: 'C1', shortfall: 12, orderUpTo: 56, quantity: 26 }])
   assert.deepEqual(facts.belowSafetyStock, ['H1', 'S1'])
   const october = facts.month('2026-10')
   assert.deepEqual([october.orders, october.units, october.revenue, october.byUnits[0].sku, october.customers[0].id, october.customers[0].topItem], [2, 23, 86, 'H1', 'c2', { sku: 'H1', units: 20 }])
@@ -501,33 +503,53 @@ test('scoring calls: the tools a case must call, and the UCI cases that need the
 // form of due items only, a pointer that is a link or words beside a table,
 // a count of items, and the conversation's first turn.
 test('scoring listed items, a form at their quantities, the whole list and the count', () => {
-  const rows = [{ sku: '23309', quantity: 570, name: 'Set Of 60 Pantry Design Tins' }, { sku: '22961', quantity: 503, name: 'Jam Making Set Printed' }, { sku: '22423', quantity: 112, name: 'Regency Cakestand 3 Tier' }, { sku: '84077', quantity: 665, name: 'World War 2 Gliders Asstd Designs' }]
+  // Each due item with the figures the list shows for it (on hand, position,
+  // reorder point, shortfall, order-up-to, open orders, lead time…).
+  const rows = [
+    { sku: '23309', quantity: 570, name: 'Set Of 60 Pantry Design Tins', values: [39, 286, 247, 354.13, 14, 60] },
+    { sku: '22961', quantity: 503, name: 'Jam Making Set Printed', values: [173, 565, 392, 90, 14] },
+    { sku: '22423', quantity: 112, name: 'Regency Cakestand 3 Tier', values: [228, 293, 65, 50, 14] },
+    { sku: '84077', quantity: 665, name: 'World War 2 Gliders Asstd Designs', values: [550, 327, 14] },
+  ]
   const check = (answer, expect, name, answers) => scoreAnswer({ status: 200, ui: [], flags: [], errors: [], ...answer }, expect, answers ? { answers } : {}).checks.find((entry) => entry.name === name)
-  const listed = (answer) => check(answer, { listed: { rows, atLeast: 3 } }, 'lists items at their quantity')
+  const listedAs = (answer, extra = {}) => check(answer, { listed: { rows, atLeast: 3, alsoOnList: ['21181'], ...extra } }, 'lists items at their quantity')
+  const listed = (answer) => listedAs(answer)
   const table = (cells) => ({ component: 'table', props: { columns: [], rows: cells, total: cells.length, more: false } })
   // Three named at their quantity: in sentences, bullets, Chinese, or the list's column.
   assert.equal(listed({ text: 'Order 570 of 23309 and 503 of 22961. 22423: 112 pcs.' }).ok, true)
-  assert.equal(listed({ text: '- **23309 Set Of 60 Pantry Design Tins**: 39 pcs in position against a reorder point of 286, order 570 pcs by 22 Nov 2026.\n- **22961**: order 503 pcs (PO-202611-0009 already brings 90).\n- **22423**: order 112 pcs.' }).ok, true)
-  assert.equal(listed({ text: '最急的是 23309（缺口 431 件，建议 570 件）、22961（建议 503 件）和 22423（建议订 112 件）；84077 有 2 张采购订单共 550 件在途。' }).ok, true)
-  assert.equal(listed({ text: 'Order 570 of 23309.', ui: [table([{ sku: { type: 'item', id: 'I2', label: '22961' }, request_quantity: 503 }, { sku: { type: 'item', id: 'I4', label: '84077' }, request_quantity: 665, shortfall: 327 }])] }).ok, true)
+  assert.equal(listed({ text: '- **23309 Set Of 60 Pantry Design Tins**: 39 pcs in position against a reorder point of 286, order 570 pcs by 22 Nov 2026.\n- **22961**: order 503 pcs (PO-202611-0009 already brings 90, a 14-day lead time).\n- **22423**: order 112 pcs.' }).ok, true)
+  assert.equal(listed({ text: '64 items are due. 最急的是 23309（缺口 247 件，建议 570 件）、22961（建议 503 件）和 22423（建议订 112 件）；84077 有 2 张采购订单共 550 件在途。' }).ok, true)
+  assert.equal(listed({ text: 'Order 570 of 23309.', ui: [table([{ sku: { type: 'item', id: 'I2', label: '22961' }, request_quantity: 503, on_hand: 173 }, { sku: { type: 'item', id: 'I4', label: '84077' }, request_quantity: 665, shortfall: 327 }])] }).ok, true)
+  // An item named by its name, or a run of its name's words (recheck point 3).
+  assert.equal(listed({ text: 'Order 570 of 23309 and 503 of 22961. Cake stand 112.' }).ok, true)
+  assert.equal(listed({ text: 'Set Of 60 Pantry Design Tins: 570. Jam Making Set Printed: 503. Regency Cakestand 3 Tier: 112.' }).ok, true)
   // The solver's quantities, or items without one, are not the list's.
   assert.equal(listed({ text: 'Order 617 of 23309, 650 of 22961 and 140 of 22423.' }).ok, false)
   assert.equal(listed({ text: '23309, 22961 and 22423 are the most short.' }).detail, '0 of 4, 3 wanted')
-  // Another quantity for the same item: after an order word, against the list's, or in a solver column.
-  assert.equal(listed({ text: 'For 23309 the list says 570, but I recommend 617. For 22961 the list says 503; I suggest 650. 22423: 112 on the list, order 140 instead.' }).ok, false)
-  assert.equal(listed({ text: '23309 (617 vs 570), 22961 (650 vs 503) and 22423 (140 instead of 112).' }).ok, false)
+  // Any figure the list does not show for the item fails it, whatever the words (recheck point 1).
+  for (const [rival, zh] of [['(I\'d round to 600)', false], ['— go with 617', false], ['— make it 617', false], ['— aim for 617', false], ['(solver 617)', false], ['(optimal 617)', false], ['，采购 617 件', true], ['，买 617 件', true], ['(617 vs 570)', false], [', but I recommend 617', false]]) {
+    const text = zh ? `23309 建议 570 件${rival}。22961 建议 503 件${rival.replace('617', '650')}。22423 建议 112 件${rival.replace('617', '140')}。` : `23309 570 ${rival}. 22961 503 ${rival.replace('617', '650').replace('600', '520')}. 22423 112 ${rival.replace('617', '140').replace('600', '120')}.`
+    assert.equal(listed({ text }).ok, false, text)
+  }
+  // A markdown table in the text, its header on another line (recheck point 2).
+  assert.equal(listed({ text: '| SKU | List | Suggested |\n|---|---|---|\n| 23309 | 570 | 617 |\n| 22961 | 503 | 650 |\n| 22423 | 112 | 140 |' }).ok, false)
+  assert.equal(listed({ text: '| SKU | Order | Position |\n|---|---|---|\n| 23309 | 570 | 39 |\n| 22961 | 503 | 173 |\n| 22423 | 112 | 228 |' }).ok, true)
+  // A solver column in a shown table, and a form line at another quantity.
   assert.equal(listed({ text: 'The plan:', ui: [table([
     { sku: { label: '23309' }, optimal_quantity: 617, reorder_list_quantity: 570, request_quantity: 570 },
     { sku: { label: '22961' }, optimal_quantity: 650, request_quantity: 503 },
     { sku: { label: '22423' }, plan_quantity: 140, request_quantity: 112 },
   ])] }).ok, false)
-  // A form at another quantity contradicts the list's.
   assert.equal(listed({ text: 'Order 570 of 23309, 503 of 22961 and 112 of 22423.', ui: [{ component: 'pr_form', props: { lines: [{ item: { sku: '23309' }, suggestedQuantity: { value: 617 } }, { item: { sku: '22961' }, suggestedQuantity: { value: 650 } }] } }] }).detail, '1 of 4, 3 wanted: 22423')
   // Quantities swapped between items fail.
   assert.equal(listed({ text: 'Order 503 of 23309, 570 of 22961 and 665 of 22423.' }).ok, false)
   assert.equal(listed({ text: '23309: order 503 pcs. 22961: order 570 pcs. 22423: order 665 pcs.' }).ok, false)
-  // A number in an item's name or a record number is not its quantity.
-  assert.equal(listed({ text: '84077 World War 2 Gliders Asstd Designs is short; PO-202611-0665 covers it.' }).detail, '0 of 4, 3 wanted')
+  // A number in a record number is not a figure of the item.
+  assert.equal(listed({ text: 'Order 570 of 23309, 503 of 22961 and 112 of 22423; PO-202611-0665 covers 84077.' }).ok, true)
+  // A SKU not on the list today fails the check, beside three right items (recheck point 4); one due within 7 days does not.
+  assert.equal(listed({ text: 'Order 570 of 23309, 503 of 22961 and 112 of 22423. Also 99999: 40 pcs.' }).detail, '3 of 4, 3 wanted: 23309, 22961, 22423; not on the list: 99999')
+  assert.equal(listed({ text: 'Order 570 of 23309, 503 of 22961 and 112 of 22423.', ui: [table([{ sku: { label: '99998' }, request_quantity: 10 }])] }).ok, false)
+  assert.equal(listed({ text: 'Order 570 of 23309, 503 of 22961 and 112 of 22423. 21181 falls due on Friday.' }).ok, true)
 
   // The form: every ticked line a due item at its quantity, nothing extra.
   const formAt = (lines, earlier = []) => check({ text: 'I\'ve filled in a request form.', ui: [{ component: 'pr_form', props: { lines } }] }, { formAt: { rows } }, 'form at their quantities', [...earlier, { text: '' }])

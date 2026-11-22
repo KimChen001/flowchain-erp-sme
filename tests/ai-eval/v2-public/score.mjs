@@ -11,8 +11,10 @@
 //               its SKU in a display row, or in the text;
 //   form        a purchase request form holds the SKU at the quantity;
 //   listed      (2026-11-22) at least atLeast of the rows (items due, with
-//               the reorder list's quantity) named with that quantity, and
-//               none of them with another (see itemsAtQuantity);
+//               the reorder list's quantity and the figures it shows for
+//               them) named with that quantity and no figure the list does
+//               not show for them, and no SKU off the list (alsoOnList: the
+//               items due within 7 days); see itemsAtQuantity;
 //   formAt      every ticked form line is one of the rows' items at its
 //               quantity, and one line or more is ticked;
 //   wholeList   the answer points to the whole list: a table that links its
@@ -207,41 +209,71 @@ const WIDE = /[\u3000-\u303f\u3400-\u9fff\uf900-\ufaff\uff00-\uffef]/g
 // The text's length in English-letter terms: a Chinese character counts twice.
 export const answerLength = (text) => { const value = String(text || ''); return value.length + (value.match(WIDE) || []).length }
 
-// Which items an answer names at their quantity (listed, 2026-11-22 and the
-// #446 review). In the text, each figure belongs to the SKU written before it
-// in its sentence ("23309 (431 short, order 570)"), or to the next one when
-// it reads "570 of 23309", after record numbers, dates, amounts, percentages
-// and the items' names are set aside. An item counts when the figures that
-// belong to it hold its quantity, or a table row of it shows its quantity in
-// the reorder list's column (request_quantity, suggested_quantity), and none
-// gives it another: a figure after an order word (order, recommend,
-// suggest, buy, plan; 建议, 下单, 订, 补) that is not its quantity, its
-// quantity set against another ("617 vs 149", "instead of", 而不是), or a
-// row or form line of it at another quantity (the solver's optimal_quantity,
-// plan_quantity or quantity columns).
+// Which items an answer names at their quantity (listed; 2026-11-22, the
+// #446 review and its recheck), by value, not by the words around a figure.
+// A figure belongs to the item written before it in its sentence or table
+// row (by its SKU, its name, or a run of its name's words such as "Cake
+// stand"), or to the next one when it reads "570 of 23309" or comes first.
+// Record numbers, dates, amounts, percentages, durations (14 days, 7 天),
+// counts of items or orders (64 items, 2 张) and list marks are set aside.
+// An item counts when the figures that belong to it hold its quantity (or a
+// table row of it shows the quantity in the list's column) and every figure
+// that belongs to it is one the list shows for it (its row's values: the
+// quantity, on hand, available, position, reorder point, safety stock,
+// order-up-to, shortfall, open orders, minimum order, demand). Any other
+// figure fails the item, whatever the words around it ("round to 600",
+// "optimal 617", "| 23309 | 570 | 617 |"), and so does a table row or form
+// line of it with another figure. A SKU that is not on the list today (due
+// now or within 7 days) fails the check (notOnList).
 const RECORD_TEXT = /\b[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*-\d{3,}\b/g
 const MONTH_WORD = '(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\\.?'
 const DATE_TEXT = new RegExp([`\\b\\d{1,2}\\s+${MONTH_WORD}(?:,?\\s+\\d{4})?`, `\\b${MONTH_WORD}\\s+\\d{1,2}(?:,?\\s+\\d{4})?`, '\\b\\d{4}-\\d{2}-\\d{2}\\b', '\\d{4}\\s*年\\s*\\d{1,2}\\s*月(?:\\s*\\d{1,2}\\s*日)?', '\\d{1,2}\\s*月\\s*\\d{1,2}\\s*日', '\\b\\d{1,2}/\\d{1,2}(?:/\\d{2,4})?\\b'].join('|'), 'gi')
 const AMOUNT_TEXT = /[£$€¥]\s?\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s?%/g
+const SPAN_TEXT = /\d[\d,]*(?:\.\d+)?(?:\s*-\s*|\s+)?(?:days?|weeks?|months?|天|日|周|个月)(?![a-z])/gi
+const COUNT_TEXT = /\d[\d,]*\s*(?:(?:more\s+)?(?:items?|SKUs?|products?|lines?|(?:open\s+|late\s+|purchase\s+)*orders?|suppliers?)\b|个物料|项|种|张|家)/gi
+const LIST_MARK = /^\s*(?:[-*•]\s*)?\d{1,2}[.)、]\s/gm
 const SKU_TEXT = /(?<![\w-])\d{5}[A-Z]{0,2}(?![\w-])/g
-const ORDER_BEFORE = /(?:\b(?:order(?:ing)?(?!\s*-?\s*(?:up|by)\b)|recommend(?:ed|s)?|suggest(?:ed|s)?|buy(?:ing)?|plan(?:ned|s)?)\b|建议|下单|(?<!采购)订(?!单)|补(?!货清单))[^\d\n]{0,16}$/i
-const AGAINST = /(\d[\d,]*)\s*(?:pcs|units|件|个)?\s*(?:vs\.?|versus|instead of|rather than|对比|而不是)\s*(\d[\d,]*)/gi
 const LIST_COLUMNS = new Set(['request_quantity', 'suggested_quantity'])
-const OTHER_COLUMNS = new Set(['quantity', 'optimal_quantity', 'plan_quantity', 'planned_quantity', 'order_quantity'])
 const blankOut = (text, pattern) => text.replace(pattern, (match) => ' '.repeat(match.length))
-function itemsAtQuantity(answer, rows) {
-  const wanted = new Map(rows.map((row) => [row.sku, row.quantity]))
+const compact = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+const fits = (value, values) => values.some((known) => Math.abs(value - known) <= (Number.isInteger(value) ? 0.5 : 0.051) + 1e-9)
+
+function itemsAtQuantity(answer, { rows, alsoOnList = [] }) {
+  const due = new Map(rows.map((row) => [row.sku, row]))
+  const onList = new Set([...due.keys(), ...alsoOnList])
   const found = new Map(rows.map((row) => [row.sku, { at: false, other: false }]))
-  const escape = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const names = rows.map((row) => row.name).filter((name) => typeof name === 'string' && name.trim().length >= 3)
+  const known = (sku) => [due.get(sku).quantity, ...(due.get(sku).values || [])].map(Number).filter(Number.isFinite)
+  const notOnList = new Set()
+  const names = rows.filter((row) => compact(row.name).length >= 8).map((row) => ({ sku: row.sku, key: compact(row.name) }))
+  // A run of up to four words of one due item's name (eight letters or more,
+  // no other due item's name holding it) names that item.
+  const nameAnchors = (text) => {
+    const words = [...text.matchAll(/[A-Za-z0-9]+/g)].map((match) => ({ word: match[0], start: match.index, end: match.index + match[0].length }))
+    const anchors = []
+    for (let at = 0; at < words.length; at += 1) {
+      for (let size = Math.min(4, words.length - at); size >= 1; size -= 1) {
+        const run = words.slice(at, at + size)
+        if (run.some((word, index) => index && !/^\s+$/.test(text.slice(run[index - 1].end, word.start)))) continue
+        const key = compact(run.map((word) => word.word).join(''))
+        if (key.length < 8 || !/[a-z]/.test(key) || /^\d{5}[a-z]{0,2}$/.test(key)) continue
+        const holders = names.filter((name) => name.key.includes(key))
+        if (holders.length !== 1) continue
+        anchors.push({ sku: holders[0].sku, start: run[0].start, end: run.at(-1).end })
+        at += size - 1
+        break
+      }
+    }
+    return anchors
+  }
   for (const sentence of String(answer.text || '').split(SENTENCE)) {
-    let text = [RECORD_TEXT, DATE_TEXT, AMOUNT_TEXT].reduce(blankOut, sentence)
-    for (const name of names) text = blankOut(text, new RegExp(escape(name), 'gi'))
-    const anchors = [...text.matchAll(SKU_TEXT)].map((match) => ({ sku: match[0], start: match.index, end: match.index + match[0].length }))
-    if (!anchors.length) continue
+    let text = [RECORD_TEXT, DATE_TEXT, AMOUNT_TEXT, SPAN_TEXT, COUNT_TEXT, LIST_MARK].reduce(blankOut, sentence)
+    const skus = [...text.matchAll(SKU_TEXT)].map((match) => ({ sku: match[0], start: match.index, end: match.index + match[0].length }))
+    for (const { sku } of skus) if (!onList.has(sku)) notOnList.add(sku)
     text = blankOut(text, SKU_TEXT)
-    // The SKU written before the figure, or the next one for "570 of 23309"
-    // and a figure before any SKU.
+    const named = nameAnchors(text)
+    const anchors = [...skus, ...named].sort((a, b) => a.start - b.start)
+    for (const anchor of named) text = text.slice(0, anchor.start) + ' '.repeat(anchor.end - anchor.start) + text.slice(anchor.end)
+    if (!anchors.length) continue
     const owner = (start, end) => {
       const before = anchors.filter((anchor) => anchor.end <= start).at(-1)
       const after = anchors.find((anchor) => anchor.start >= end)
@@ -250,28 +282,30 @@ function itemsAtQuantity(answer, rows) {
     }
     for (const match of text.matchAll(/\d[\d,]*(?:\.\d+)?/g)) {
       const sku = owner(match.index, match.index + match[0].length)
-      if (!wanted.has(sku)) continue
+      if (!due.has(sku)) continue
       const value = Number(match[0].replace(/,/g, ''))
-      if (value === wanted.get(sku)) found.get(sku).at = true
-      else if (ORDER_BEFORE.test(text.slice(Math.max(0, match.index - 24), match.index))) found.get(sku).other = true
-    }
-    for (const match of text.matchAll(AGAINST)) {
-      const [left, right] = [match[1], match[2]].map((value) => Number(value.replace(/,/g, '')))
-      const sku = owner(match.index, match.index + match[0].length)
-      if (wanted.has(sku) && left !== right && [left, right].includes(wanted.get(sku))) found.get(sku).other = true
+      if (value === due.get(sku).quantity) found.get(sku).at = true
+      if (!fits(value, known(sku))) found.get(sku).other = true
     }
   }
   for (const part of answer.ui || []) {
-    const lines = part.component === 'pr_form' ? [...(part.props?.lines || []), ...(part.props?.suggested || [])].map((line) => ({ sku: line.item?.sku, values: [Number(line.suggestedQuantity?.value ?? line.quantity)], list: [] }))
-      : part.component === 'table' ? (part.props?.rows || []).map((row) => ({ sku: Object.values(row).map((cell) => (cell && typeof cell === 'object' ? cell.label : cell)).find((value) => wanted.has(String(value))), values: Object.entries(row).filter(([code]) => OTHER_COLUMNS.has(code)).map(([, cell]) => Number(cell)), list: Object.entries(row).filter(([code]) => LIST_COLUMNS.has(code)).map(([, cell]) => Number(cell)) }))
+    const lines = part.component === 'pr_form' ? [...(part.props?.lines || []), ...(part.props?.suggested || [])].map((line) => ({ sku: line.item?.sku, cells: [], form: Number(line.suggestedQuantity?.value ?? line.quantity), list: [] }))
+      : part.component === 'table' ? (part.props?.rows || []).map((row) => {
+        const labels = Object.values(row).map((cell) => (cell && typeof cell === 'object' ? cell.label : cell)).filter((value) => typeof value === 'string')
+        return { sku: labels.find((value) => due.has(value)) || labels.find((value) => /^\d{5}[A-Z]{0,2}$/.test(value)), cells: Object.entries(row).filter(([code, cell]) => typeof cell === 'number' && !/_one$/.test(code)).map(([, cell]) => cell), list: Object.entries(row).filter(([code]) => LIST_COLUMNS.has(code)).map(([, cell]) => Number(cell)) }
+      })
         : []
     for (const line of lines) {
-      if (!wanted.has(line.sku)) continue
-      if (line.list.includes(wanted.get(line.sku))) found.get(line.sku).at = true
-      if ([...line.values, ...line.list].some((value) => Number.isFinite(value) && value !== wanted.get(line.sku))) found.get(line.sku).other = true
+      if (!line.sku) continue
+      if (!onList.has(line.sku)) { notOnList.add(line.sku); continue }
+      if (!due.has(line.sku)) continue
+      const quantity = due.get(line.sku).quantity
+      if (line.list.includes(quantity)) found.get(line.sku).at = true
+      if (line.cells.some((value) => !fits(value, known(line.sku)))) found.get(line.sku).other = true
+      if (Number.isFinite(line.form) && line.form !== quantity) found.get(line.sku).other = true
     }
   }
-  return rows.filter((row) => found.get(row.sku).at && !found.get(row.sku).other)
+  return { named: rows.filter((row) => found.get(row.sku).at && !found.get(row.sku).other), notOnList: [...notOnList] }
 }
 
 export function scoreAnswer(answer, expect = {}, { language = 'en-US', answers = [answer] } = {}) {
@@ -396,8 +430,8 @@ export function scoreAnswer(answer, expect = {}, { language = 'en-US', answers =
     }
   }
   if (expect.listed) {
-    const named = itemsAtQuantity(answer, expect.listed.rows)
-    add('lists items at their quantity', named.length >= expect.listed.atLeast, `${named.length} of ${expect.listed.rows.length}, ${expect.listed.atLeast} wanted${named.length ? `: ${named.slice(0, 8).map((row) => row.sku).join(', ')}` : ''}`)
+    const { named, notOnList } = itemsAtQuantity(answer, expect.listed)
+    add('lists items at their quantity', named.length >= expect.listed.atLeast && !notOnList.length, `${named.length} of ${expect.listed.rows.length}, ${expect.listed.atLeast} wanted${named.length ? `: ${named.slice(0, 8).map((row) => row.sku).join(', ')}` : ''}${notOnList.length ? `; not on the list: ${notOnList.slice(0, 5).join(', ')}` : ''}`)
   }
   if (expect.formAt) {
     const wanted = new Map(expect.formAt.rows.map((row) => [row.sku, row.quantity]))
