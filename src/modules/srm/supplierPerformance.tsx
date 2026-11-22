@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Info, RefreshCw } from "lucide-react";
 import { useSearchParams } from "react-router";
 import { A, Card } from "../../components/ui";
@@ -225,13 +225,22 @@ function PeriodFilter({ from, to, graceDays, asOf, onChange, onReload, dates = t
 function Definition() {
   const tr = useCopy();
   const [open, setOpen] = useState(false);
+  const panel = useRef<HTMLSpanElement>(null);
+  // Inside the screen: shift left by what runs past the right edge.
+  useLayoutEffect(() => {
+    const node = panel.current;
+    if (!open || !node) return;
+    node.style.transform = "";
+    const overflow = node.getBoundingClientRect().right - (window.innerWidth - 8);
+    if (overflow > 0) node.style.transform = `translateX(-${Math.ceil(overflow)}px)`;
+  }, [open]);
   return (
     <span className="relative inline-flex">
       <button type="button" aria-label={tr("definitionTitle")} aria-expanded={open} data-testid="supplier-performance-definition-toggle" onClick={() => setOpen((value) => !value)} onBlur={() => setOpen(false)} className="rounded p-1 hover:bg-slate-100" title={tr("definitionTitle")}>
         <Info size={14} color={A.blue} />
       </button>
       {open && (
-        <span role="tooltip" data-testid="supplier-performance-definition" className="absolute left-0 top-7 z-20 w-[min(28rem,80vw)] rounded-lg border bg-white p-3 text-left text-[11px] leading-5 shadow-lg" style={{ color: A.label, borderColor: A.border }}>
+        <span ref={panel} role="tooltip" data-testid="supplier-performance-definition" className="absolute left-0 top-7 z-20 w-[min(28rem,80vw)] rounded-lg border bg-white p-3 text-left text-[11px] font-normal leading-5 shadow-lg" style={{ color: A.label, borderColor: A.border }}>
           <span className="mb-1 block font-semibold">{tr("definitionTitle")}</span>
           {tr("definition")}
         </span>

@@ -8,6 +8,11 @@
 // for exceptions and what is late, blue for in progress, gray for drafts,
 // cancelled and closed records. Codes and the server's older Chinese labels
 // are both recognised; anything unknown is neutral.
+//
+// An RFQ participant's states read the same rules (2026-11-22): a recorded
+// response is done, no response yet waits on the supplier, an internal
+// invitation is in progress, a supplier that declined is red like 已拒绝, and
+// a planned participant is gray like a draft.
 
 export type StatusTone = "success" | "warning" | "danger" | "info" | "neutral";
 
@@ -15,28 +20,28 @@ const TONES: Record<StatusTone, string[]> = {
   success: [
     "approved", "matched", "variance_approved", "recorded", "auto_matched", "converted", "completed", "fully_received", "received",
     "fully_reserved", "fully_fulfilled", "fulfilled", "delivered", "awarded", "settled", "paid", "resolved", "posted", "passed",
-    "active", "available", "ok", "low",
+    "active", "available", "ok", "low", "response_recorded",
     "已批准", "已审批", "已匹配", "自动匹配", "已完成", "已转换", "已解决", "已入库", "已收货",
   ],
   warning: [
     "submitted", "pending", "pending_approval", "pending_match", "held", "on_hold", "awaiting_receipt", "unposted", "partially_reserved",
-    "below_safety_stock", "below_reorder_point", "medium", "due", "warning",
+    "below_safety_stock", "below_reorder_point", "medium", "due", "warning", "no_response",
     "待审批", "待匹配", "待处理", "人工复核", "缺少收货",
   ],
   danger: [
     "rejected", "exception", "variance", "mismatch", "disputed", "overdue", "failed", "blocked", "risk",
-    "out_of_stock", "shortage_risk", "high",
+    "out_of_stock", "shortage_risk", "high", "declined",
     "已驳回", "已拒绝", "存在差异", "差异待处理", "异常处理", "重复发票", "缺货风险", "高风险", "阻塞", "缺货",
   ],
   info: [
     "open", "confirmed", "issued", "sent", "issued_outside_flowchain", "collecting_quotes", "matching", "partially_received",
     "partially_fulfilled", "partially_allocated", "partial", "reserved", "ready_to_ship", "ready_for_receiving", "export_ready",
-    "to_pay", "to_be_paid", "partially_settled", "reviewed",
+    "to_pay", "to_be_paid", "partially_settled", "reviewed", "invited_internal",
     "已发出", "部分到货", "已签收", "质检中", "已确认", "部分分配", "可发货", "部分发货",
   ],
   neutral: [
     "draft", "cancelled", "canceled", "withdrawn", "closed", "not_sent", "reversed", "voided", "void", "not_reserved",
-    "not_fulfilled", "not_received", "not_matched", "inactive", "unavailable", "quarantined", "unknown",
+    "not_fulfilled", "not_received", "not_matched", "inactive", "unavailable", "quarantined", "unknown", "planned",
     "草稿", "已取消", "已撤回", "已关闭",
   ],
 };
