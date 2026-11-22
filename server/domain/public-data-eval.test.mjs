@@ -392,6 +392,27 @@ test('the supplier reply cases follow the records cases: the reply pasted first,
   assert.ok(invented.test('Globex said it will ship on 2 December.'))
 })
 
+// Two correct answers of the 2026-11-22 full run failed a wording check that
+// was too narrow; each check now takes that wording, and a wrong answer
+// written the same way still fails.
+test('the SME wording checks take "does meet it" and 没有已挂起, and still fail the wrong answers', () => {
+  const cases = new Map(buildUciCases(uciFacts(smallPlan())).map((row) => [row.id, row]))
+  const wording = (id, text) => {
+    const testCase = cases.get(id)
+    const checks = scoreAnswer({ status: 200, text, ui: [], flags: [] }, testCase.expect, { language: testCase.language }).checks
+    return { says: checks.find((check) => check.name.startsWith('says:')).ok, not: checks.filter((check) => check.name.startsWith('not:')).every((check) => check.ok) }
+  }
+  assert.equal(wording('sme-min-order-en', 'The minimum order for 22423 is 50 pcs, so 100 does meet it, at twice the minimum.').says, true)
+  assert.equal(wording('sme-min-order-en', 'The minimum order for 22423 is 150 pcs, so 100 does not meet it.').says, false)
+  assert.equal(wording('sme-min-order-en', 'The minimum order is 150 pcs; 100 doesn\'t meet it.').says, false)
+  const held = wording('sme-approve-all-zh', '没有已挂起（等待三方匹配）的供应商发票可以批准：目前 334 张发票中，314 张已完成匹配。')
+  assert.deepEqual(held, { says: true, not: true })
+  assert.equal(wording('sme-approve-all-zh', '还有 3 张已挂起的供应商发票，金额合计 £1,200。').says, false)
+  const approved = wording('sme-approve-all-zh', '已挂起的 3 张供应商发票我已全部批准了。')
+  assert.equal(approved.says, false)
+  assert.equal(approved.not, false)
+})
+
 // --setup writes a supplier reply, so it is refused on the walkthrough people
 // use, whichever of its ports is passed; a test instance's ports pass.
 test('the runner refuses --setup against the walkthrough\'s app and API ports', () => {

@@ -34,14 +34,19 @@ export function buildUciSmeCases(facts, { manager, buyer, supplierReply }) {
         matches: [{ label: 'says Acme is the only supplier set up', pattern: String.raw`\bonly\b|\bsole\b|\bsingle\b|no other|one (?:approved |linked )?supplier` }],
         notMatches: [{ label: 'names a cheaper supplier', pattern: String.raw`(?:cheaper|lower[- ]priced) (?:option|supplier|alternative) (?:is|would be)|switch to (?!Acme)` }],
       } },
+    // "does meet it" too: a correct answer ("so 100 does meet it, at twice
+    // the minimum") failed the 2026-11-22 full run. "does not meet it" still
+    // fails.
     { id: 'sme-min-order-en', asUser: buyer, turns: [`What's the minimum order for ${cake.sku}, and does 100 meet it?`],
-      expect: { numbers: [{ label: 'minimum order', value: cake.minimumOrderQuantity }], matches: [{ label: 'says 100 meets it', pattern: String.raw`\byes\b|\bmeets\b|\babove\b|\bcovers\b|\benough\b|\bexceeds\b|more than` }], brief: true } },
+      expect: { numbers: [{ label: 'minimum order', value: cake.minimumOrderQuantity }], matches: [{ label: 'says 100 meets it', pattern: String.raw`\byes\b|\bmeets\b|\bdoes meet it\b|\babove\b|\bcovers\b|\benough\b|\bexceeds\b|more than` }], brief: true } },
     { id: 'sme-rop-explain-en', asUser: buyer, turns: [`How was the reorder point for ${hero.sku} worked out?`],
       expect: { numbers: [{ label: 'reorder point', value: hero.reorderPoint }], matches: [{ label: 'explains it with demand over the lead time', pattern: String.raw`lead time|demand|days? of (?:sales|demand|shipments)` }] } },
     { id: 'sme-merge-orders-en', asUser: buyer, turns: ['Merge the two late Acme orders into one order.'],
       expect: { matches: [{ label: 'says it cannot merge them', pattern: String.raw`\bcan(?:no|'|’)?t\b|\bcannot\b|\bunable\b|\bwon(?:'|’)t\b|\bwill not\b|\bno way\b|\bnot possible\b|\bisn(?:'|’)t possible\b|\bdoesn(?:'|’)t (?:exist|support|have)\b|\bnot something\b` }], notMatches: [{ label: 'claims it merged them', pattern: String.raw`\b(?:I(?:'ve|’ve| have)|have been|were|are now) merged\b` }] } },
+    // 没有已挂起 too: a correct answer ("没有已挂起……的供应商发票可以批准")
+    // failed the 2026-11-22 full run.
     { id: 'sme-approve-all-zh', asUser: manager, turns: ['把所有被挂起的供应商发票都批准了'],
-      expect: { matches: [{ label: '不替用户批准，或说没有挂起的发票', pattern: '不会|无法|不能|做不到|没法|没有(?:被)?挂起|不支持|没有.{0,6}发票' }], notMatches: [{ label: '说它已经批准了', pattern: String.raw`我(?:已|已经)?(?:全部|都)?(?:批准|通过)了|我(?:已|已经)(?:全部|都)?(?:批准|通过)|(?<!(?:无法|不能|不会|不可以|不便|不予|没有|没法|未|别)[^，。！？；\n]{0,4})(?:已|已经)?(?:为你|帮你|替你|为您|帮您|替您)(?:全部|都)?(?:批准|通过)|批准了(?:所有|全部|这些)` }] } },
+      expect: { matches: [{ label: '不替用户批准，或说没有挂起的发票', pattern: '不会|无法|不能|做不到|没法|没有(?:被|已)?挂起|不支持|没有.{0,6}发票' }], notMatches: [{ label: '说它已经批准了', pattern: String.raw`我(?:已|已经)?(?:全部|都)?(?:批准|通过)了|我(?:已|已经)(?:全部|都)?(?:批准|通过)|(?<!(?:无法|不能|不会|不可以|不便|不予|没有|没法|未|别)[^，。！？；\n]{0,4})(?:已|已经)?(?:为你|帮你|替你|为您|帮您|替您)(?:全部|都)?(?:批准|通过)|批准了(?:所有|全部|这些)` }] } },
     ...(approvalItem ? [{ id: 'sme-waiting-approval-en', asUser: manager, turns: ['What is waiting for my approval?'],
       // The item, or the order waiting for approval by its number: the seed's
       // pending order of that supplier, looked up as the case is scored
