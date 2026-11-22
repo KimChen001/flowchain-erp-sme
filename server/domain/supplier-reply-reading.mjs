@@ -12,6 +12,7 @@
 // when code computes it from its quote and the reply date; our own quoted
 // chase is removed before reading; invisible characters are stripped.
 import { PROMPT_INJECTION, aiInjectionDetected } from './ai-injection-guard.mjs'
+import { emailParts } from './supplier-reply-orders.mjs'
 import {
   SUPPLIER_REPLY_LIMITS, SUPPLIER_REPLY_PROMPT_VERSION, supplierReplyCheckSchema, supplierReplyReadingSchema,
 } from '../../shared/supplier-reply-contract.mjs'
@@ -989,9 +990,32 @@ export function lineNamedElsewhere(order, quote, ref, { date = null, receivedOn 
   return false
 }
 
+// Where a quote stands in an email that names several orders (emailParts),
+// for the order `number`:
+//   own     in this order's part
+//   shared  in a sentence that names this order and another
+//   none    in text that belongs to no order (a greeting, a general line)
+//   other   in another order's part only
+//   across  over two parts or more
+function quotePlace(parts, number, quote) {
+  const form = quoteForm(quote)
+  const own = String(number ?? '').trim().toUpperCase()
+  const places = parts.runs.filter((run) => quoteForm(run.text).includes(form))
+  if (places.some((run) => run.owners.length === 1 && run.owners[0] === own)) return 'own'
+  if (places.some((run) => run.owners.includes(own))) return 'shared'
+  if (places.some((run) => !run.owners.length)) return 'none'
+  return places.length ? 'other' : 'across'
+}
+
 // The reading checked against the reply and the order (supplierReplyOrderSchema):
 // each line proposed, for the person, dropped or confirmed, the flags whose
 // quotes are in the reply, and the card's state.
+//
+// An email that names several orders (supplier-reply-orders.mjs) is read on
+// each of them: a value counts for this order only from this order's part.
+// A quote from another order's part, or across parts, is dropped
+// (other_order_text); one from text of no single order goes to the person,
+// the day offered (no_order_part). With one order named, nothing changes.
 export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
   const open = SUPPLIER_REPLY_ORDER_STATES.includes(text(order?.status))
   const byRef = new Map(array(order?.lines).map((line) => [line.ref, line]))
@@ -1003,10 +1027,14 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
     const at = part ? whole.indexOf(part) : -1
     return at >= 0 && spans.some(([start, end]) => at < end && at + part.length > start)
   }
+  const emailSplit = emailParts(reply, order?.number)
+  const placeOf = (quote) => (emailSplit ? quotePlace(emailSplit, order?.number, quote) : 'own')
   let dropped = 0
   const flags = []
   for (const flag of array(reading?.flags)) {
     if (!quoteFound(reply, flag.quote) || addressed(flag.quote)) { dropped += 1; continue }
+    // A change another order's part reports is that order's, not this one's.
+    if (emailSplit && flag.kind !== 'other_order' && ['other', 'across'].includes(placeOf(flag.quote))) { dropped += 1; continue }
     let orderNumber = null
     if (flag.kind === 'other_order') {
       const named = [...String(flag.quote).matchAll(ORDER_NUMBER)].map((m) => m[1]).filter((number) => number !== order?.number)
@@ -1027,6 +1055,7 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
   for (const entry of array(reading?.lines)) {
     if (!quoteFound(reply, entry.quote)) { dropped += 1; out.push(lineRow({ ref: entry.line, issue: 'quote_not_found', dateKind: entry.dateKind })); continue }
     if (addressed(entry.quote)) { dropped += 1; out.push(lineRow({ ref: entry.line, issue: 'addressed_to_system', quote: entry.quote, dateKind: entry.dateKind })); continue }
+    if (emailSplit && ['other', 'across'].includes(placeOf(entry.quote))) { dropped += 1; out.push(lineRow({ ref: entry.line, issue: 'other_order_text', quote: entry.quote, dateKind: entry.dateKind })); continue }
     const line = byRef.get(entry.line)
     if (!line) { dropped += 1; out.push(lineRow({ ref: entry.line, issue: 'unknown_line', quote: entry.quote, dateKind: entry.dateKind })); continue }
     if (!groups.has(entry.line)) groups.set(entry.line, [])
@@ -1037,6 +1066,14 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
     const line = byRef.get(ref)
     const base = { ref, purchaseOrderLineId: line.purchaseOrderLineId, currentDate: line.promisedDate || null, quote: entries[0].quote, dateKind: entries[0].dateKind }
     if (!open || !(Number(line.remaining) > 0)) { out.push(lineRow({ ...base, issue: 'not_open' })); continue }
+    // Text of no single order in an email about several: the person decides
+    // which order it is for, the day offered when it reads cleanly.
+    const outside = emailSplit ? entries.find((entry) => placeOf(entry.quote) !== 'own') : null
+    if (outside) {
+      const day = resolveDate(outside, receivedOn, line.promisedDate || null, reply)
+      out.push(lineRow({ ...base, outcome: 'needs_you', issue: 'no_order_part', quote: outside.quote, dateKind: outside.dateKind, readings: day.issue ? (day.readings || null) : [day.date] }))
+      continue
+    }
     // The reply names this date by another line's code or name: the person
     // decides which line it is for, rather than code moving it.
     const misnamed = entries.find((entry) => lineNamedElsewhere(order, entry.quote, ref, { date: entry.date, receivedOn }))

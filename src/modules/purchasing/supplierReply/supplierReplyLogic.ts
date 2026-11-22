@@ -83,12 +83,13 @@ export function recordLines(card: SupplierReplyCardData, values: Record<string, 
 // date_mismatch with readings offers none (one may be the model's own date,
 // not the supplier's), so the person types the day.
 // A vague line may offer the one or two days its words could mean
-// (二十八号, "on Friday", a hedged "starting 3 Dec"), as choices.
+// (二十八号, "on Friday", a hedged "starting 3 Dec"), as choices; so may a
+// line read from text of no single order in an email about several.
 const PICKABLE = new Set(["ambiguous_numeric", "ambiguous_weekday", "several_dates"]);
 export function pickableReadings(line: { issue: string | null; readings: string[] | null }) {
   const readings = line.readings || [];
   if (PICKABLE.has(String(line.issue)) && readings.length === 2) return readings;
-  if (line.issue === "vague" && readings.length >= 1 && readings.length <= 2) return readings;
+  if ((line.issue === "vague" || line.issue === "no_order_part") && readings.length >= 1 && readings.length <= 2) return readings;
   return null;
 }
 

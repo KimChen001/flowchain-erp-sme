@@ -1016,3 +1016,59 @@ test('一起 ("together") after a day is no "from" hedge; 起 on its own still i
   assert.equal(stated('12月2日发货。', '2026-12-02').outcome, 'proposed')
   assert.equal(stated('12月2日提前发货。', '2026-12-02').outcome, 'proposed')
 })
+
+test('an email naming several orders: a value counts for this order only from its own part (assessment §9, step 3)', () => {
+  const B = 'PO-202611-0013'
+  const C = 'PO-202611-0014'
+  const reply = [
+    'Hi Daniel,',
+    'Our factory closes from 24 December, and the brackets can go on 2 December.',
+    '',
+    'PO-202611-0012: the brackets ship on 4 December.',
+    'The hinges follow on 8 December.',
+    '',
+    `${B}: the brackets ship on 10 December, the price goes up 4%.`,
+    '',
+    `PO-202611-0012 and ${C} both have springs, those ship on 9 December.`,
+    '',
+    'Regards, Pat',
+  ].join('\n')
+  const line = (ref, date, quote, dateKind = 'stated') => ({ line: ref, date, quote, dateKind })
+  const result = check(reply, reading([
+    line('L1', '2026-12-04', 'the brackets ship on 4 December.'),
+    line('L2', '2026-12-08', 'The hinges follow on 8 December.'),
+  ], { flags: [{ kind: 'price_change', quote: 'the price goes up 4%' }, { kind: 'other_order', quote: `${B}: the brackets ship on 10 December` }] }))
+  assert.deepEqual(outcomes(result), [['L1', 'proposed', null, '2026-12-04'], ['L2', 'proposed', null, '2026-12-08']])
+  // Another order's change is that order's; the flag naming it stays.
+  assert.deepEqual(result.flags.map((flag) => [flag.kind, flag.orderNumber]), [['other_order', B]])
+  // Another order's date, on this order's line: dropped, never proposed.
+  const wrong = check(reply, reading([line('L1', '2026-12-10', 'the brackets ship on 10 December')]))
+  assert.deepEqual(outcomes(wrong), [['L1', 'dropped', 'other_order_text', null]])
+  // A quote across two parts is dropped too.
+  const across = check(reply, reading([line('L1', '2026-12-04', 'The hinges follow on 8 December.\n\nPO-202611-0013: the brackets')]))
+  assert.equal(across.lines[0].issue, 'other_order_text')
+  // Text of no single order (the greeting, a sentence naming two orders): the
+  // person decides, the day offered.
+  const greeting = check(reply, reading([line('L1', '2026-12-02', 'the brackets can go on 2 December')])).lines[0]
+  assert.deepEqual([greeting.outcome, greeting.issue, greeting.readings], ['needs_you', 'no_order_part', ['2026-12-02']])
+  const shared = check(reply, reading([line('L1', '2026-12-09', 'those ship on 9 December')])).lines[0]
+  assert.deepEqual([shared.outcome, shared.issue, shared.readings], ['needs_you', 'no_order_part', ['2026-12-09']])
+  // A hedged day of no single order is held with no day offered.
+  const hedged = check(reply, reading([line('L1', '2026-12-24', 'Our factory closes from 24 December')])).lines[0]
+  assert.deepEqual([hedged.outcome, hedged.issue], ['needs_you', 'no_order_part'])
+  assert.notDeepEqual(hedged.readings, ['2026-12-24'])
+  // Read on the other order, its own part counts there and this one's does not.
+  const onB = check(reply, reading([line('L1', '2026-12-10', 'the brackets ship on 10 December'), line('L2', '2026-12-04', 'the brackets ship on 4 December.')]), { order: { ...order, number: B } })
+  assert.deepEqual(outcomes(onB), [['L2', 'dropped', 'other_order_text', null], ['L1', 'proposed', null, '2026-12-10']])
+})
+
+test('an email naming one order, or orders outside the numbering, is read exactly as before', () => {
+  const quote = 'the brackets ship on 4 December.'
+  const lines = reading([{ line: 'L1', date: '2026-12-04', quote, dateKind: 'stated' }])
+  for (const reply of [`Hi, PO-202611-0012: ${quote} Thanks`, `Hi, PO-202611-0013: ${quote} Thanks`, `Hi, PO-0012 and PO-0013: ${quote}`, `Hi, ${quote}`]) {
+    assert.deepEqual(outcomes(check(reply, lines)), [['L1', 'proposed', null, '2026-12-04']], reply)
+  }
+  // An order outside the numbering is never split, whatever the email names.
+  const legacy = { ...order, number: 'PO-12' }
+  assert.deepEqual(outcomes(check(`PO-202611-0013: ${quote}\nPO-202611-0014: the hinges ship on 8 December.`, lines, { order: legacy })), [['L1', 'proposed', null, '2026-12-04']])
+})
