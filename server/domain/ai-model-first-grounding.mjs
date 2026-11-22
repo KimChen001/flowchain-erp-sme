@@ -243,6 +243,33 @@ function listSizesOf(results) {
   return sizes
 }
 const STEP_BEFORE = /(?:\bsteps?|步骤|第)[^.\n。！？!?]{0,16}$/i
+// What a counted noun counts, for the strict pass: items (SKUs and item
+// names), record numbers, or names (suppliers, customers, and their codes).
+// null when the kind is not clear: records, a bare 个/项/种/款, 笔 or 条, or a
+// list in brackets right after the counted words, which belongs to the
+// count whatever it names. The head is the first noun of the counted words
+// that is not a possessive, or the last of a compound ("order lines",
+// "customer orders").
+const COUNT_HEADS = [[/^(?:items?|skus?|products?)$/i, ['item']], [/^(?:orders?|requests?)$/i, ['record']], [/^(?:suppliers?|customers?)$/i, ['name']], [/^lines?$/i, ['item', 'record']]]
+function countKind(after) {
+  const counted = String(after || '').replace(/^\s+/, '')
+  if (/^[个项种款]\s*(?:物料|商品|产品|SKU)/i.test(counted)) return ['item']
+  if (/^(?:个\s*(?:客户|供应商)|家)/.test(counted)) return ['name']
+  if (/^(?:张|[个笔]\s*(?:采购)?(?:订单|申请|发票))/.test(counted)) return ['record']
+  if (/^条\s*(?:采购)?(?:订单)?行/.test(counted)) return ['item', 'record']
+  if (/^[个项张家种笔条款]/.test(counted)) return null
+  const phrase = counted.split(/[:：;；。]|\.(?:\s|$)/)[0]
+  if (/[(（]/.test(phrase)) return null
+  const words = phrase.split(/\s+/).slice(0, 4).map((word) => word.replace(/[,，!?)）]+$/, ''))
+  const headOf = (word) => COUNT_HEADS.find(([pattern]) => pattern.test(word))?.[1] || null
+  let head = words.findIndex((word) => !/['’]s?$/.test(word) && headOf(word))
+  if (head < 0) return null
+  while (head + 1 < words.length && headOf(words[head + 1])) head += 1
+  return headOf(words[head])
+}
+// A listed entity of the counted kinds: its own kind, or, counting names,
+// a customer's or supplier's code (CUST-14096, SUP-85).
+const entityOfKind = (key, kinds) => kinds.includes(key.split(':')[0]) || (kinds.includes('name') && /^record:(?:cust|customer|sup|supp|supplier|vendor)-/i.test(key))
 const COUNT_NOUN =/^\s*(?:(?:[\p{L}\p{N}_-]+\s+){0,2}(?:items?|skus?|products?|orders?|requests?|suppliers?|customers?|lines?|records?)(?![\p{L}])|(?:个|项|张|家|种|笔|条|款))/iu
 // An answer about overdue or aged amounts, and the bucket labels it may write:
 // 1–30, 31–60, 61–90, 91–120, 121–180, over 90 days, over-90-day, 90+ days,
@@ -652,7 +679,7 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
   // The answer's text before anything is blanked out, and what the strict
   // pass notes on the way; neither changes the check above it.
   const unmaskedText = figuresText(`${title}\n${body}`).replace(/^\s*(?:>\s*)*(?:\d{1,2}[.)]|[-*•])\s+/gm, ' ')
-  const strictNotes = { dates: [] }
+  const strictNotes = { dates: [], counts: [] }
   let rest = figuresText(`${title}\n${body}`).replace(/^\s*(?:>\s*)*(?:\d{1,2}[.)]|[-*•])\s+/gm, ' ')
     // Payment terms are a term, not a figure: "Net 30", "2/10 net 30", 月结 30 天.
     .replace(PAYMENT_TERMS, (match) => ' '.repeat(match.length))
@@ -708,7 +735,9 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
     if (!(rest[at - 1] === '(' && /^\s*\)/.test(after)) && !COUNT_NOUN.test(after)) return null
     const start = rest.lastIndexOf('\n', at) + 1
     const end = rest.indexOf('\n', at) === -1 ? rest.length : rest.indexOf('\n', at)
-    return new Set(listed.filter((row) => row.at >= start && row.at < end).map((row) => row.key)).size
+    const size = new Set(listed.filter((row) => row.at >= start && row.at < end).map((row) => row.key)).size
+    strictNotes.counts.push({ at, length, after, start, end, size, bracketed: rest[at - 1] === '(' && /^\s*\)/.test(after) })
+    return size
   }
   // Dates: the same day (and year, when written) as a date in the results.
   const dayKnown = ({ year, month, day }) => {
@@ -867,6 +896,21 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
       if (rest[at] === ' ') continue
       if (figureHeld(Number(match[0].replace(/,/g, '')))) continue
       fail('number', match[0])
+    }
+    // (a) A count grounded by the entities listed on its line ("3 items:
+    // …") must also be met by its noun's kind: a customer is no item, a
+    // supplier no order. Only when the kind is clear (countKind) and, for
+    // items, the workspace's items are known; a count the line did not
+    // ground is left as the check left it.
+    const itemsKnown = array(facts?.inventory?.rows).length > 0 || array(facts?.inventory?.masterOnly).length > 0
+    for (const note of strictNotes.counts) {
+      if (note.bracketed) continue
+      const written = rest.slice(note.at, note.at + note.length)
+      if (note.size !== Number(written)) continue
+      const kinds = countKind(note.after)
+      if (!kinds || (kinds.length === 1 && kinds[0] === 'item' && !itemsKnown)) continue
+      const own = new Set(listed.filter((row) => row.at >= note.start && row.at < note.end && entityOfKind(row.key, kinds)).map((row) => row.key)).size
+      if (own !== note.size) fail('number', written)
     }
   }
   const counts = {}
