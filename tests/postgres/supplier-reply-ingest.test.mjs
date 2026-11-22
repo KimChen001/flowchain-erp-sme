@@ -29,7 +29,7 @@ async function seedTenant(prisma, tenantId, tag, { publicData = false } = {}) {
     id: `PO-${tag}`, number: `PO-202611-00${tag === 'E' ? '21' : '22'}`, tenantId, supplierId: `SUP-${tag}`, supplierName: `Acme ${tag}`, status: 'issued', currency: 'USD', amount: '250.0000',
     expectedDate: dayOffset(-3), issuedAt: dayOffset(-20),
     lines: { create: [
-      { id: `PO-${tag}-L1`, sku: 'SKU-1040', itemName: 'Bracket', orderedQuantity: '100.0000', receivedQuantity: '0.0000', unit: 'pcs', unitPrice: '2.5000', amount: '250.0000', originalPromisedDate: dayOffset(-3), promisedDate: dayOffset(-3) },
+      { id: `PO-${tag}-L1`, sku: 'SKU-1040', itemName: 'Bracket', orderedQuantity: '100.0000', receivedQuantity: '0.0000', unit: 'pcs', unitPrice: '2.5000', amount: '250.0000', originalPromisedDate: dayOffset(-3), metadata: { promisedDate: dayOffset(-3).toISOString().slice(0, 10) } },
     ] },
   } })
   if (publicData) {
