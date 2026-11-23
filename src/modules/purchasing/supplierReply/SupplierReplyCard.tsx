@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { A } from "../../../components/ui";
-import { listButtonClass } from "../../../components/ui/listLayout";
+import { StatusChip, listButtonClass, statusToneOf } from "../../../components/ui/listLayout";
 import { useI18n } from "../../../i18n/I18n";
 import { unitLabel } from "../../../i18n/unitLabels";
 import { apiJson } from "../../../lib/api-client";
@@ -12,7 +12,7 @@ import { procurementErrorCode, procurementErrorText } from "../../procurement/pr
 import { SUPPLIER_REPLY_EMAIL_ORDER_LIMIT } from "../../../../shared/supplier-reply-contract.mjs";
 import { SUPPLIER_REPLY_ERROR_TEXT, supplierReplyText, type SupplierReplyCopyKey } from "./supplierReplyCopy";
 import { SupplierReplyStockLine } from "./SupplierReplyStockLine";
-import { SUPPLIER_REPLY_NOTE_LIMIT, dismissReady, formStart, isOpenReply, isOutage, lineNow, markQuotes, needsManualForm, openQuestions, pickableReadings, proposalRecord, recordKey, recordLines, replyErrorKind } from "./supplierReplyLogic";
+import { EMAIL_ORDER_LINKED, SUPPLIER_REPLY_NOTE_LIMIT, dismissReady, formStart, isOpenReply, isOutage, lineNow, markQuotes, needsManualForm, openQuestions, pickableReadings, proposalRecord, recordKey, recordLines, replyErrorKind, severalOrdersOnce, shownIssue } from "./supplierReplyLogic";
 import type { SupplierReplyCardData, SupplierReplyDismissReason, SupplierReplyLine } from "./supplierReplyTypes";
 
 // One supplier reply on an order (docs/supplier-reply-dates-design.md §4.5–4.9):
@@ -154,12 +154,22 @@ export function SupplierReplyCard({ card, onChanged, onRefused, notice = null, m
 
       {card.instructionsIgnored ? <p className="mt-2 rounded-md bg-amber-50 px-2 py-1 text-amber-800" role="note" data-testid="supplier-reply-instructions-ignored">{t("instructionsIgnored")}</p> : null}
 
-      {/* An email about several orders: this card reads only its own part. */}
+      {/* An email about several orders: this card reads only its own part.
+          While open, the note says the several-orders reason once
+          (severalOrdersOnce); once decided, it says what the card covered.
+          Each other order is a link where FlowChain found it, with its
+          state as a chip and the full sentence as its tooltip. */}
       {card.emailOrders?.length ? (
         <div className="mt-2 rounded-md bg-slate-50 px-2 py-1" role="note" data-testid="supplier-reply-email-orders">
-          <div>{t("emailOrders", { n: card.emailOrders.length, number: card.purchaseOrderNumber, limit: SUPPLIER_REPLY_EMAIL_ORDER_LIMIT })}</div>
-          <ul className="ml-4 list-disc" style={{ color: A.sub }}>
-            {card.emailOrders.filter((item) => item.status !== "this").map((item) => <li key={item.number} data-status={item.status}>{t(`emailOrder_${item.status}` as SupplierReplyCopyKey, { number: item.number, limit: SUPPLIER_REPLY_EMAIL_ORDER_LIMIT })}</li>)}
+          <div>{t(open ? "emailOrders" : "emailOrdersDone", { n: card.emailOrders.length, number: card.purchaseOrderNumber, limit: SUPPLIER_REPLY_EMAIL_ORDER_LIMIT })}</div>
+          {open && severalOrdersOnce(card) ? <div className="mt-0.5 text-amber-800" data-testid="supplier-reply-several-orders-once">{t("severalOrdersOnce")}</div> : null}
+          <ul className="mt-1 space-y-1">
+            {card.emailOrders.filter((item) => item.status !== "this").map((item) => (
+              <li key={item.number} className="flex flex-wrap items-center gap-1.5" data-status={item.status} title={t(`emailOrder_${item.status}` as SupplierReplyCopyKey, { number: item.number, limit: SUPPLIER_REPLY_EMAIL_ORDER_LIMIT })}>
+                {EMAIL_ORDER_LINKED.has(item.status) ? <Link className="font-medium text-blue-600 hover:underline" to={`/app/procurement/orders/${encodeURIComponent(item.number)}`} data-testid="supplier-reply-email-order-link">{item.number}</Link> : <span className="font-medium">{item.number}</span>}
+                <StatusChip label={t(`emailOrderChip_${item.status}` as SupplierReplyCopyKey, { limit: SUPPLIER_REPLY_EMAIL_ORDER_LIMIT })} tone={statusToneOf(item.status)} />
+              </li>
+            ))}
           </ul>
         </div>
       ) : null}
@@ -202,7 +212,7 @@ export function SupplierReplyCard({ card, onChanged, onRefused, notice = null, m
                   <div key={lineId} className="rounded-md bg-amber-50/60 p-2" data-testid="supplier-reply-question" data-line={lineId}>
                     <div className="font-medium">{lineName(line)} <span className="font-normal" style={{ color: A.sub }}>· {t("left", { qty: qty(line.remaining, line.unit) })}</span></div>
                     <div style={{ color: A.sub }}>{t("now")}: {nowCell(line)}</div>
-                    {line.issue && !pickableReadings(line) ? <div className="text-amber-800">{t(`issue_${line.issue}` as SupplierReplyCopyKey)}</div> : null}
+                    {shownIssue(card, line.issue) && !pickableReadings(line) ? <div className="text-amber-800">{t(`issue_${line.issue}` as SupplierReplyCopyKey)}</div> : null}
                     {line.quote ? <div className="italic" style={{ color: A.gray1 }}>{t("vagueSaid", { quote: line.quote })}</div> : null}
                     {readingButtons(line, lineId)}
                     {lineExtras(line)}
@@ -241,7 +251,7 @@ export function SupplierReplyCard({ card, onChanged, onRefused, notice = null, m
                 <div key={lineId} className="rounded-md bg-slate-50 p-2" data-testid="supplier-reply-form-line" data-line={lineId}>
                   <div className="font-medium">{lineName(formLine)} <span className="font-normal" style={{ color: A.sub }}>· {t("left", { qty: qty(formLine.remaining, formLine.unit) })}</span></div>
                   <div style={{ color: A.sub }}>{t("now")}: {nowCell({ purchaseOrderLineId: lineId, currentDate: line ? line.currentDate : formLine.currentDate, overdueDays: formLine.overdueDays })}</div>
-                  {line?.issue && line.outcome === "needs_you" && !pickableReadings(line) ? <div className="text-amber-800">{t(`issue_${line.issue}` as SupplierReplyCopyKey)}</div> : null}
+                  {line && shownIssue(card, line.issue) && line.outcome === "needs_you" && !pickableReadings(line) ? <div className="text-amber-800">{t(`issue_${line.issue}` as SupplierReplyCopyKey)}</div> : null}
                   {line?.quote ? <div className="italic" style={{ color: A.gray1 }} data-testid="supplier-reply-form-quote">{t("vagueSaid", { quote: line.quote })}</div> : null}
                   {line ? readingButtons(line, lineId) : null}
                   {lineExtras(line)}
@@ -263,7 +273,7 @@ export function SupplierReplyCard({ card, onChanged, onRefused, notice = null, m
       {open && droppedLines.length ? (
         <div className="mt-2" data-testid="supplier-reply-not-used">
           <span style={{ color: A.sub }}>{t("notUsed")}</span>
-          <ul className="ml-4 list-disc">{droppedLines.map((line, index) => <li key={index}>{lineName(line)}{line.issue ? ` — ${t(`issue_${line.issue}` as SupplierReplyCopyKey)}` : ""}{line.quote ? ` (“${line.quote}”)` : ""}</li>)}</ul>
+          <ul className="ml-4 list-disc">{droppedLines.map((line, index) => <li key={index}>{lineName(line)}{shownIssue(card, line.issue) ? ` — ${t(`issue_${line.issue}` as SupplierReplyCopyKey)}` : ""}{line.quote ? ` (“${line.quote}”)` : ""}</li>)}</ul>
         </div>
       ) : null}
       {card.flags.length ? (

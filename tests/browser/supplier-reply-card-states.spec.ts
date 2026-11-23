@@ -106,7 +106,12 @@ test.describe("the supplier reply card's states", () => {
     await page.goto(`/app/procurement/orders/${encodeURIComponent(orderId)}`);
     const view = page.getByTestId("supplier-reply-card").first();
     await expect(view).toHaveAttribute("data-state", "needs_you");
-    await expect(view).toContainText("this email is about several orders, so no date is filled in");
+    // Every held line has the same reason, so the note says it once (11/23).
+    await expect(view.getByTestId("supplier-reply-several-orders-once")).toHaveText("Check each line against the whole email and enter the dates yourself.");
+    await expect(view).not.toContainText("this email is about several orders, so no date is filled in");
+    // The other order opens as an order page, with its state as a chip.
+    await expect(view.getByTestId("supplier-reply-email-order-link")).toHaveAttribute("href", "/app/procurement/orders/PO-TEST-2");
+    await expect(view.getByTestId("supplier-reply-email-orders")).toContainText("Read on its order");
     await expect(view).toContainText("hinges 6 pcs on 4 December and 4 pcs on 9 December");
     await expect(view.getByTestId("supplier-reply-read-as")).toHaveCount(0);
     await expect(view.getByTestId("supplier-reply-split")).toHaveCount(0);

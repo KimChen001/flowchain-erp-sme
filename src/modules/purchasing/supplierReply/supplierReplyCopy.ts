@@ -123,6 +123,17 @@ export const SUPPLIER_REPLY_COPY = {
   emailOrder_closed: ["{number}: closed, not read", "{number}：已关闭，未读取"],
   emailOrder_other_supplier: ["{number}: another supplier's order, not read", "{number}：其他供应商的订单，未读取"],
   emailOrder_unknown: ["{number}: no such order, not read", "{number}：找不到该订单，未读取"],
+  // Once the card is decided, the note says what the card covered.
+  emailOrdersDone: ["This email named {n} orders. This card covered only {number}'s lines.", "这封邮件提到了 {n} 张订单。本卡片只涉及 {number} 的行。"],
+  // The several-orders reason, said once in the note instead of on every line.
+  severalOrdersOnce: ["Check each line against the whole email and enter the dates yourself.", "请对照整封邮件逐行确认，自己填写交期。"],
+  // Each other order's state as a chip; the sentence above is its tooltip.
+  emailOrderChip_read: ["Read on its order", "已在该订单读取"],
+  emailOrderChip_open_card_kept: ["Open card kept, not read", "保留待处理卡片，未读取"],
+  emailOrderChip_closed: ["Closed, not read", "已关闭，未读取"],
+  emailOrderChip_other_supplier: ["Another supplier's order, not read", "其他供应商的订单，未读取"],
+  emailOrderChip_unknown: ["No such order", "找不到该订单"],
+  emailOrderChip_over_limit: ["Over the {limit}-order limit, not read", "超过 {limit} 张上限，未读取"],
   emailOrder_over_limit: ["{number}: more than {limit} orders in one email, not read", "{number}：一封邮件超过 {limit} 张订单，未读取"],
 
   // Buttons.
