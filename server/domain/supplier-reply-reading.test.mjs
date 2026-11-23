@@ -1273,3 +1273,35 @@ test('several orders: another order named in passing inside an order\'s part lea
     assert.deepEqual(run(orderB, plain, [L('L1', '2026-12-05', 'HOUSEHOLD_2_044 ships on 5 December.')], emailRead).map((one) => [one.outcome, one.proposedDate]), [['proposed', '2026-12-05']])
   }
 })
+
+test('several orders: a sentence correcting which order earlier lines are for holds every line; an apology or a back-reference about one order does not (coordinator, 11/22)', () => {
+  const A = 'PO-202611-0021'
+  const B = 'PO-202611-0014'
+  const item = (ref, sku) => ({ ref, purchaseOrderLineId: `${ref}-${sku}`, sku, supplierSku: null, itemName: `Item ${sku.slice(-3)}`, remaining: 10, unit: 'pcs', promisedDate: '2026-11-25' })
+  const orderA = { number: A, supplierName: 'Household 2', status: 'issued', lines: [item('L1', 'HOUSEHOLD_2_074'), item('L2', 'HOUSEHOLD_2_110')] }
+  const orderB = { number: B, supplierName: 'Household 2', status: 'issued', lines: [item('L1', 'HOUSEHOLD_2_044'), item('L2', 'HOUSEHOLD_2_110')] }
+  const run = (on, email, quote, date, ref = 'L2') => checkReplyReading({ order: on, text: email, receivedOn: RECEIVED, reading: reading([{ line: ref, date, quote, dateKind: 'stated' }]), emailRead: [A, B] }).lines.map((line) => [line.ref, line.outcome, line.issue, line.proposedDate])
+  // Corrections: every line, on both orders, goes to the person; none dropped.
+  for (const [email, quote] of [
+    [`${A}: HOUSEHOLD_2_110 ships on 3 December.\nSorry, that line is for ${B}, not ${A}.`, `${A}: HOUSEHOLD_2_110 ships on 3 December.`],
+    [`${A}: HOUSEHOLD_2_110 ships on 3 December.\nCorrection: the above is for ${B}.`, `${A}: HOUSEHOLD_2_110 ships on 3 December.`],
+    [`${A}：HOUSEHOLD_2_110 12月3日发货。\n抱歉，上面那行是 ${B} 的，不是 ${A} 的。`, `${A}：HOUSEHOLD_2_110 12月3日发货。`],
+    [`${A}：HOUSEHOLD_2_110 12月3日发货。\n更正：以上是 ${B} 的。`, `${A}：HOUSEHOLD_2_110 12月3日发货。`],
+    [`${A}: HOUSEHOLD_2_110 ships on 3 December.\n\nCorrection: those lines belong to ${B}.`, `${A}: HOUSEHOLD_2_110 ships on 3 December.`],
+  ]) {
+    for (const on of [orderA, orderB]) assert.deepEqual(run(on, email, quote, '2026-12-03'), [['L2', 'needs_you', 'correction_across_orders', null]], `${email} on ${on.number}`)
+  }
+  // Not a correction: an apology or a back-reference that names only the
+  // order whose part it is in, or that opens its own part, or that has no
+  // number; or "sorry" outside any part. Dates are proposed as before.
+  for (const [email, on, quote, date, ref] of [
+    [`Sorry for the delay, ${A} ships on 4 December.\n${B}: HOUSEHOLD_2_044 ships on 5 December.`, orderB, 'HOUSEHOLD_2_044 ships on 5 December.', '2026-12-05', 'L1'],
+    [`${A}:\nSorry for the delay, ${A} HOUSEHOLD_2_074 ships on 4 December.\n\n${B}: HOUSEHOLD_2_044 ships on 5 December.`, orderB, 'HOUSEHOLD_2_044 ships on 5 December.', '2026-12-05', 'L1'],
+    [`${A}:\nHOUSEHOLD_2_074 ships on 4 December. Sorry for the delay.\n${B}: HOUSEHOLD_2_044 ships on 5 December.`, orderA, 'HOUSEHOLD_2_074 ships on 4 December.', '2026-12-04', 'L1'],
+    [`${A}: HOUSEHOLD_2_074 ships on 4 December.\n${B}: sorry, HOUSEHOLD_2_044 slipped to 9 December.`, orderB, 'HOUSEHOLD_2_044 slipped to 9 December.', '2026-12-09', 'L1'],
+    [`${A}: HOUSEHOLD_2_074 ships on 4 December.\n\nSorry for the delay on ${B}, it ships on 9 December.`, orderA, 'HOUSEHOLD_2_074 ships on 4 December.', '2026-12-04', 'L1'],
+    [`${A}：HOUSEHOLD_2_074 12月4日发货，以上是 ${A} 的全部。\n${B}：HOUSEHOLD_2_044 12月5日发货。`, orderB, 'HOUSEHOLD_2_044 12月5日发货。', '2026-12-05', 'L1'],
+  ]) {
+    assert.deepEqual(run(on, email, quote, date, ref), [[ref, 'proposed', null, date]], email)
+  }
+})

@@ -97,6 +97,7 @@ export const SUPPLIER_REPLY_COPY = {
   issue_line_mismatch: ["the reply names another line's item code or name here", "回复此处写的是另一行的物料编码或名称"],
   issue_other_order_text: ["this text is about another order in the same email: nothing is recorded from it here", "这段文字说的是同一封邮件里的另一张订单：这里不记录"],
   issue_no_order_part: ["the email names several orders and this text is not about this order alone: check which order it is for", "邮件提到了几张订单，这段文字不只关于本订单：请确认它属于哪张订单"],
+  issue_correction_across_orders: ["the supplier corrects in this email which order some lines are for: check each line against the whole email", "供应商在这封邮件里更正了某些行属于哪张订单：请对照整封邮件逐行确认"],
   issue_not_open: ["nothing left to receive on this line", "该行已无待收数量"],
   issue_unchanged: ["same as the current date", "与当前交期相同"],
   issue_split_incomplete: ["the parts do not cover what is still open", "分批数量未覆盖剩余待收数量"],

@@ -131,20 +131,24 @@ function check(kase, on, lines, mode) {
 }
 const wrongIn = (result, kase) => result.lines.filter((line) => line.outcome === 'proposed' && (kase.bad || []).some(([ref, date]) => ref === line.ref && date === line.proposedDate)).map((line) => `${line.ref}@${line.proposedDate}`)
 
-// A later sentence that gives earlier lines to another order ("Sorry, that
-// line is for B, not A.", "Correction: the above is for B.") is not caught:
-// parts only end forward, and nothing hands back what came before. Open,
-// for the owner and the coordinator to decide (wrong on 6fa2d753 too).
-const OPEN = ['W23', 'W24']
-test('second review probes: no date is ever proposed on an order it is not for (38 of 40 emails, both ways of reading)', () => {
+test('second review probes: no date is ever proposed on an order it is not for (40 emails, both ways of reading)', () => {
   assert.equal(W.length, 40)
-  for (const kase of W.filter((one) => !OPEN.includes(one.id.split(' ')[0]))) {
+  for (const kase of W) {
     for (const mode of ['paste', 'empty']) assert.deepEqual(wrongIn(check(kase, kase.on, kase.lines, mode), kase), [], `${kase.id} [${mode}]`)
   }
 })
-test('second review probes: a correction that hands earlier lines to another order (W23, W24)', { todo: 'open: needs a rule that looks back; see the PR' }, () => {
-  for (const kase of W.filter((one) => OPEN.includes(one.id.split(' ')[0]))) {
-    for (const mode of ['paste', 'empty']) assert.deepEqual(wrongIn(check(kase, kase.on, kase.lines, mode), kase), [], `${kase.id} [${mode}]`)
+// A later sentence that gives earlier lines to another order ("Sorry, that
+// line is for B, not A.", "Correction: the above is for B."): every line of
+// the email goes to the person, on every order, none dropped (coordinator,
+// 11/22; wrong on 6fa2d753).
+test('second review probes: a correction that hands earlier lines to another order holds every line (W23, W24)', () => {
+  for (const kase of W.filter((one) => ['W23', 'W24'].includes(one.id.split(' ')[0]))) {
+    for (const mode of ['paste', 'empty']) {
+      for (const on of [A, B]) {
+        const lines = check(kase, on, [L('L2', '2026-12-03', `${A}: ${H110} ships on 3 December.`)], mode).lines
+        assert.deepEqual(lines.map((line) => [line.ref, line.outcome, line.issue]), [['L2', 'needs_you', 'correction_across_orders']], `${kase.id} on ${short(on)} [${mode}]`)
+      }
+    }
   }
 })
 

@@ -94,7 +94,10 @@ export const SUPPLIER_REPLY_DISMISS_REASONS = Object.freeze(['wrong_reading', 's
 //   no_order_part        an email naming several orders: the quote is from
 //                        text of no single order (a greeting, a general line,
 //                        a sentence naming two orders); the day is offered
-export const SUPPLIER_REPLY_LINE_ISSUES = Object.freeze(['quote_not_found', 'date_mismatch', 'ambiguous_numeric', 'vague', 'relative_unreadable', 'before_reply', 'too_far', 'unknown_line', 'not_open', 'unchanged', 'split_incomplete', 'several_dates', 'refused', 'addressed_to_system', 'line_mismatch', 'ambiguous_weekday', 'other_order_text', 'no_order_part'])
+//   correction_across_orders  an email naming several orders corrects which
+//                        order earlier text is for ("Sorry, that line is for
+//                        PO-B"): every line goes to the person, no day offered
+export const SUPPLIER_REPLY_LINE_ISSUES = Object.freeze(['quote_not_found', 'date_mismatch', 'ambiguous_numeric', 'vague', 'relative_unreadable', 'before_reply', 'too_far', 'unknown_line', 'not_open', 'unchanged', 'split_incomplete', 'several_dates', 'refused', 'addressed_to_system', 'line_mismatch', 'ambiguous_weekday', 'other_order_text', 'no_order_part', 'correction_across_orders'])
 // An email that names several orders (supplier-reply-orders.mjs) is read on
 // at most this many of them, the one it was pasted on first.
 export const SUPPLIER_REPLY_EMAIL_ORDER_LIMIT = 5

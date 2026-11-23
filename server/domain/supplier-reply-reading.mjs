@@ -1089,7 +1089,9 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading, ema
   for (const entry of array(reading?.lines)) {
     if (!quoteFound(reply, entry.quote)) { dropped += 1; out.push(lineRow({ ref: entry.line, issue: 'quote_not_found', dateKind: entry.dateKind })); continue }
     if (addressed(entry.quote)) { dropped += 1; out.push(lineRow({ ref: entry.line, issue: 'addressed_to_system', quote: entry.quote, dateKind: entry.dateKind })); continue }
-    if (emailSplit && ['other', 'across'].includes(placeOf(entry.quote))) { dropped += 1; out.push(lineRow({ ref: entry.line, issue: 'other_order_text', quote: entry.quote, dateKind: entry.dateKind })); continue }
+    // In an email that corrects which order earlier text is for, which part
+    // is which cannot be trusted: nothing is dropped as another order's.
+    if (emailSplit && !emailSplit.correction && ['other', 'across'].includes(placeOf(entry.quote))) { dropped += 1; out.push(lineRow({ ref: entry.line, issue: 'other_order_text', quote: entry.quote, dateKind: entry.dateKind })); continue }
     const line = byRef.get(entry.line)
     if (!line) { dropped += 1; out.push(lineRow({ ref: entry.line, issue: 'unknown_line', quote: entry.quote, dateKind: entry.dateKind })); continue }
     if (!groups.has(entry.line)) groups.set(entry.line, [])
@@ -1100,6 +1102,10 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading, ema
     const line = byRef.get(ref)
     const base = { ref, purchaseOrderLineId: line.purchaseOrderLineId, currentDate: line.promisedDate || null, quote: entries[0].quote, dateKind: entries[0].dateKind }
     if (!open || !(Number(line.remaining) > 0)) { out.push(lineRow({ ...base, issue: 'not_open' })); continue }
+    // The email corrects which order earlier text is for ("Sorry, that line
+    // is for PO-B, not PO-A."): every line goes to the person, no day offered
+    // (#449 review probes W23, W24).
+    if (emailSplit?.correction) { out.push(lineRow({ ...base, outcome: 'needs_you', issue: 'correction_across_orders' })); continue }
     // Text of no single order in an email about several: the person decides
     // which order it is for, the day offered when it reads cleanly.
     const outside = emailSplit ? entries.map((entry) => ({ entry, place: placeOf(entry.quote) })).find((row) => row.place !== 'own') : null

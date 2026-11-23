@@ -146,6 +146,16 @@ const NOTHING_ELSE = /^[\s.,;。，；)）\]】]*$/u
 // A line that introduces quoted text of ours without a mail client's marker
 // ("Kim wrote:"): nothing after it is the supplier's (review probe W25).
 const QUOTE_INTRO = /(?:\bwrote|写道)\s*[:：]\s*$/iu
+// A sentence that corrects which order earlier text is for ("Sorry, that
+// line is for PO-B, not PO-A.", "Correction: the above is for PO-B."): a
+// correction word, and another order's number that does not start the
+// sentence. Which lines it moves cannot be told, so every line of the email
+// goes to the person (#449 review probes W23, W24; coordinator, 11/22).
+// "Sorry" counts only inside another order's part; outside any part only a
+// word that points back at earlier text does, and only when earlier text
+// was another order's.
+const CORRECTION = /\bcorrection\b|\bcorrect\s+that\b|\bthe\s+above\b|\bthat\s+line\b|\bthose\s+lines\b|更正|纠正|以上|上面|刚才/iu
+const APOLOGY = /\bsorry\b/iu
 // A header: the number with at most one label word and a colon, nothing after.
 const HEADER = /^\s*(?:[-*•·>]+\s*)?(?:[\p{L}]+[:.]?\s*)?#?\s*\u0000\s*:\s*$/u
 // An order pointed to by its place, not its number.
@@ -176,6 +186,9 @@ export function emailParts(text, number, known = []) {
   let headerOnly = false
   let lineStart = true
   let quoted = false
+  let correction = false
+  // The orders that own text so far.
+  const given = new Set()
   for (const sentence of sentencesOf(source)) {
     if (quoted || QUOTE_INTRO.test(sentence.trim())) {
       // Our quoted text: no order's, to the end.
@@ -195,21 +208,28 @@ export function emailParts(text, number, known = []) {
     }
     const tokens = tokensIn(sentence, prefix, all)
     const numbers = [...new Set(tokens.map((row) => row.number).filter(Boolean))]
+    const before = tokens.length ? sentence.slice(0, tokens[0].index) : ''
+    const after = tokens.length ? sentence.slice(tokens[0].end) : ''
+    const pointer = numbers.length === 1 && POINTER_WORDS.test(before) && NOTHING_ELSE.test(after)
+    // A correction word before the number ("更正：以上是 PO-B 的") opens nothing.
+    const opens = numbers.length === 1 && !pointer && !NOT_ITS_OWN.test(before) && !CORRECTION.test(before) && (LEADING.test(before) || (LEADING_BEFORE_COLON.test(before) && /^\s*[:：]/.test(after)))
+    if (numbers.length && !opens && !tokens.some((row) => !row.number)) {
+      const inPart = current !== null && numbers.some((one) => one !== current) && (CORRECTION.test(sentence) || APOLOGY.test(sentence))
+      const backAtOther = current === null && CORRECTION.test(sentence) && numbers.some((one) => [...given].some((owner) => owner !== one))
+      if (inPart || backAtOther) correction = true
+    }
     if (tokens.some((row) => !row.number) || (!tokens.length && BY_PLACE.test(sentence))) {
       // An order this email cannot tell, or one pointed to by its place.
       current = null
       headerOnly = false
       add(sentence, [])
     } else if (numbers.length === 1) {
-      const first = tokens[0]
-      const before = sentence.slice(0, first.index)
-      const after = sentence.slice(first.end)
-      if (POINTER_WORDS.test(before) && NOTHING_ELSE.test(after)) {
+      if (pointer) {
         // Only points to another order: the part ends, none opens.
         current = null
         headerOnly = false
         add(sentence, [])
-      } else if (!NOT_ITS_OWN.test(before) && (LEADING.test(before) || (LEADING_BEFORE_COLON.test(before) && /^\s*[:：]/.test(after)))) {
+      } else if (opens) {
         // The number leads: its part starts here.
         add(sentence, numbers)
         current = numbers[0]
@@ -233,8 +253,9 @@ export function emailParts(text, number, known = []) {
       add(sentence, current ? [current] : [])
     }
     lineStart = sentence.endsWith('\n')
+    for (const owner of runs[runs.length - 1]?.owners || []) given.add(owner)
   }
-  return { named, runs }
+  return { named, runs, correction }
 }
 
 // Which named orders an email is read on, and why the others are not.
