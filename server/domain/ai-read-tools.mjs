@@ -250,11 +250,46 @@ const listSalesOrders = defineAiTool({
     rows = [...rows].sort((a, b) => (a.promisedDate || '9999').localeCompare(b.promisedDate || '9999') || text(a.number).localeCompare(text(b.number)))
     return {
       asOf: facts.asOf,
-      note: 'Only open sales orders with demand not yet shipped or reserved.',
-      ...aiToolList(rows.map((row) => ({ orderNumber: row.number, customer: row.customer, promisedDate: row.promisedDate, lines: array(row.lines).map((line) => ({ sku: line.sku, notShippedOrReserved: line.open })), ref: aiToolRef('sales_order', row.id, row.number) })), args.limit),
+      // Every open order still to ship some of its lines (2026-11-20: a
+      // reserved line read "0 not yet shipped or reserved" as nothing to ship).
+      note: 'Open sales orders still to ship. Per line: stillToShip (ordered less shipped), reserved (of it), notShippedOrReserved (still to reserve).',
+      ...(facts.salesOrdersNotRead ? { partial: { ordersNotRead: facts.salesOrdersNotRead } } : {}),
+      ...aiToolList(rows.map((row) => ({
+        orderNumber: row.number, customer: row.customer, promisedDate: row.promisedDate, status: row.status || null,
+        lines: array(row.lines).map((line) => ({ sku: line.sku, stillToShip: line.toShip ?? line.open, reserved: line.reserved ?? 0, notShippedOrReserved: line.open })),
+        ref: aiToolRef('sales_order', row.id, row.number),
+      })), args.limit),
     }
   },
 })
+
+const REVIEWED_READ = 500
+// The supplier invoice differences a person already reviewed at the match
+// (approved, accepted at the quantity received, or rejected), by invoice, with
+// the latest. The facts hold only the open ones, so "how many were reviewed,
+// and the latest?" was answered "none" (2026-11-20 question set). null when
+// the records cannot be read.
+async function reviewedDifferences(context) {
+  // As the match exceptions page reads them (operational-finance-read-service.mjs).
+  if (!context?.actor?.permissionCodes?.has?.('finance.three_way_match.read')) return null
+  if (typeof context?.prisma?.financeMatchException?.findMany !== 'function' || !context.tenantId) return null
+  const rows = await context.prisma.financeMatchException.findMany({
+    where: { tenantId: context.tenantId, status: { in: ['approved', 'rejected'] }, resolvedById: { not: null } },
+    select: { supplierInvoiceId: true, status: true, exceptionType: true, resolvedAt: true, supplierInvoice: { select: { invoiceNumber: true } } },
+    orderBy: [{ resolvedAt: 'desc' }, { id: 'asc' }],
+    take: REVIEWED_READ + 1,
+  }).catch(() => null)
+  if (!Array.isArray(rows)) return null
+  const read = rows.slice(0, REVIEWED_READ)
+  const invoices = new Set(read.map((row) => text(row.supplierInvoiceId)).filter(Boolean))
+  const [latest] = read
+  return {
+    invoices: invoices.size,
+    // More reviews than read: the count is of the latest ones only.
+    ...(rows.length > REVIEWED_READ ? { partial: { limit: REVIEWED_READ } } : {}),
+    ...(latest ? { latest: { invoice: text(latest.supplierInvoice?.invoiceNumber || latest.supplierInvoiceId), decision: text(latest.status), kind: text(latest.exceptionType) || null, reviewedOn: latest.resolvedAt instanceof Date ? latest.resolvedAt.toISOString().slice(0, 10) : text(latest.resolvedAt).slice(0, 10) || null, ref: aiToolRef('supplier_invoice', latest.supplierInvoiceId, text(latest.supplierInvoice?.invoiceNumber || latest.supplierInvoiceId)) } } : {}),
+  }
+}
 
 // The window of the receipts and invoices called recent, as the facts read them.
 const RECENT_DAYS = AI_SKILL_RECENT_DAYS
@@ -297,7 +332,10 @@ const listSupplierInvoices = defineAiTool({
   async run(args, { facts, context }) {
     const kind = args.kind || 'summary'
     const summary = { committedTotal: facts.invoices.committed ?? null, committedCount: facts.invoices.committedCount, match: facts.invoices.matchCounts, differences: array(facts.invoices.variances).length, recentWindowDays: RECENT_DAYS }
-    if (kind === 'summary') return { asOf: facts.asOf, summary, ...partialOf(facts, ['supplier_invoices']) }
+    if (kind === 'summary') {
+      const reviewed = await reviewedDifferences(context)
+      return { asOf: facts.asOf, summary: { ...summary, ...(reviewed ? { reviewedDifferences: reviewed } : {}) }, ...partialOf(facts, ['supplier_invoices']) }
+    }
     const rows = kind === 'differences' ? array(facts.invoices.variances) : array(facts.invoices.recent)
     // A held invoice set aside on Today (bill_exception; design audit
     // 2026-11-15, L5-09).

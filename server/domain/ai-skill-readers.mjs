@@ -13,6 +13,57 @@ import { itemStockUnit, preferredSupplierFor, requestMinimumOf } from './reorder
 import { listItemSupplierRecords } from './master-data-commands.mjs'
 import { OPEN_PURCHASE_REQUEST_STATUSES } from '../../shared/purchase-suggestion.mjs'
 
+// Open sales orders outside the business context's latest orders, read by id
+// for the chat's list of orders still to ship.
+const SALES_ORDERS_READ_MAX = 200
+
+// The open sales orders still to ship: those listed in the business context
+// that the demand names (openIds), and those it names outside the listed
+// ones, read by id (up to SALES_ORDERS_READ_MAX) for a reader of every
+// warehouse; a reader of some keeps the listed ones.
+// notRead: the open orders past that bound, which the list says it left out.
+// readsEvery: an async check that the reader's warehouses are all of them,
+// run only when an order outside the list is to be read (#430 recheck).
+export async function openSalesOrdersOf({ listed = [], openIds = new Set(), prisma = null, tenantId = '', someWarehouses = false, readsEvery = null } = {}) {
+  const rows = array(listed)
+  const listedIds = new Set(rows.map((row) => text(row.salesOrderId || row.id)))
+  const candidates = [...openIds].map(text).filter((id) => id && !listedIds.has(id))
+  const restricted = someWarehouses || (candidates.length > 0 && typeof readsEvery === 'function' && !(await readsEvery()))
+  const outside = restricted ? [] : candidates
+  const missing = outside.slice(0, SALES_ORDERS_READ_MAX)
+  const read = missing.length && typeof prisma?.salesOrder?.findMany === 'function'
+    ? await prisma.salesOrder.findMany({ where: { tenantId, id: { in: missing } }, include: { lines: true } }).catch(() => [])
+    : []
+  const orders = [...rows, ...array(read)].filter((row) => openIds.has(text(row.salesOrderId || row.id)))
+  return Object.assign(orders, { notRead: Math.max(0, outside.length - missing.length) })
+}
+
+// Whether a reader's warehouses are all the workspace's: no list (every
+// warehouse), or a list that holds each one. A reader scoped to the only
+// warehouse there is reads all of them (2026-11-21 live run: the walkthrough
+// users have one scope row each, so the open orders outside the listed ones
+// were never read). As recordedDemand checks it.
+export async function readsEveryWarehouse(prisma, tenantId, warehouseIds) {
+  if (!Array.isArray(warehouseIds)) return true
+  if (typeof prisma?.warehouse?.findMany !== 'function') return false
+  const warehouses = await prisma.warehouse.findMany({ where: { tenantId }, select: { id: true } }).catch(() => null)
+  return Array.isArray(warehouses) && warehouses.length > 0 && warehouses.every((row) => warehouseIds.includes(text(row.id)))
+}
+
+// The reason and day of each rejected or cancelled request's last step, from
+// its record (metadata.lastReason, written by the reject and cancel commands,
+// which need a reason), by id. Read here for the assistant only: the shared
+// request mapper and its routes are unchanged (#430 review).
+async function closedRequestReasons(prisma, tenantId, ids) {
+  if (!ids.length || typeof prisma?.purchaseRequest?.findMany !== 'function') return new Map()
+  const rows = await prisma.purchaseRequest.findMany({ where: { tenantId, id: { in: ids } }, select: { id: true, metadata: true } }).catch(() => [])
+  return new Map(array(rows).map((row) => {
+    const meta = row.metadata && typeof row.metadata === 'object' ? row.metadata : {}
+    const last = array(meta.timeline).at(-1)
+    return [text(row.id), { reason: text(meta.lastReason) || null, decidedOn: text(last?.at).slice(0, 10) || null }]
+  }))
+}
+
 // The facts every workspace skill reads, through the same definitions the
 // reports use, so an answer can never disagree with a report:
 //   - open, overdue and incomplete purchase orders: the open purchase orders
@@ -522,11 +573,27 @@ export async function readAiSkillFacts(skillContext, { openPurchaseRequests = fa
     if (access.collections.salesOrders) {
       const open = new Set(rows.flatMap((row) => row.salesOrderIds))
       const count = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0)
-      facts.salesOrders = array(business.salesOrders).filter((row) => open.has(text(row.salesOrderId || row.id))).map((row) => ({
+      // The orders still to ship come from the demand over every order; the
+      // business context lists only the latest 500 by last change. An open
+      // order nobody touched since it was entered (not reserved yet) fell
+      // outside them, and the chat said it did not exist (2026-11-20 question
+      // set: two of six orders still to ship were missing). Those are read by
+      // id, up to SALES_ORDERS_READ_MAX, for a reader of every warehouse (a
+      // reader of some keeps the scoped list as it was).
+      const orders = await openSalesOrdersOf({ listed: business.salesOrders, openIds: open, prisma, tenantId, readsEvery: () => readsEveryWarehouse(prisma, tenantId, access.warehouseIds) })
+      if (orders.notRead) facts.salesOrdersNotRead = orders.notRead
+      facts.salesOrders = orders.map((row) => ({
         id: text(row.salesOrderId || row.id), number: text(row.orderNumber || row.salesOrderId || row.id), customer: text(row.customerName) || null, promisedDate: dayOf(row.promisedDate),
         // How far the order is: on hold, partly shipped, or not shipped yet.
         status: text(row.workflowStatus || row.status) === 'on_hold' ? 'on_hold' : /partial/.test(text(row.fulfillmentStatus)) ? 'partially_shipped' : 'not_shipped',
-        lines: array(row.lines).map((line) => ({ sku: text(line.sku || line.itemId), open: Math.max(0, count(line.orderedQuantity ?? line.orderedQty ?? line.quantity) - count(line.fulfilledQuantity ?? line.fulfilledQty ?? line.shippedQty) - count(line.reservedQuantity ?? line.reservedQty)) })).filter((line) => line.sku),
+        // Per SKU: toShip (ordered less shipped), reserved, and open (still to
+        // reserve: toShip less reserved). A reserved line still waits to ship:
+        // with open alone, the chat read a reserved order as nothing to ship.
+        lines: array(row.lines).map((line) => {
+          const toShip = Math.max(0, count(line.orderedQuantity ?? line.orderedQty ?? line.quantity) - count(line.fulfilledQuantity ?? line.fulfilledQty ?? line.shippedQty))
+          const reserved = Math.min(toShip, count(line.reservedQuantity ?? line.reservedQty))
+          return { sku: text(line.sku || line.itemId), toShip, reserved, open: toShip - reserved }
+        }).filter((line) => line.sku),
       }))
     }
   }
@@ -560,6 +627,16 @@ export async function readAiSkillFacts(skillContext, { openPurchaseRequests = fa
         id: text(row.id), number: text(row.number || row.id), status: text(row.status), priority: text(row.priority) || null, requiredDate: text(row.requiredDate).slice(0, 10) || null,
         lines: array(row.lines).map((line) => ({ sku: text(line.sku) || null, itemId: text(line.itemId) || null, quantity: amount(line.quantity), unit: text(line.unit) || null })),
       }))
+      // The rejected and cancelled requests, newest decision first, with the
+      // reason the person gave (a reason is required for both). The open list
+      // has none, so "were any rejected, and why?" was answered "none"
+      // (2026-11-20 question set).
+      const closedRows = array(business.purchaseRequests).filter((row) => ['rejected', 'cancelled'].includes(text(row.status)))
+      const reasons = await closedRequestReasons(prisma, tenantId, closedRows.map((row) => text(row.id)).filter(Boolean))
+      facts.purchaseRequests.closed = closedRows.map((row) => ({
+        id: text(row.id), number: text(row.number || row.id), status: text(row.status), reason: reasons.get(text(row.id))?.reason ?? null, decidedOn: reasons.get(text(row.id))?.decidedOn ?? null,
+        skus: [...new Set(array(row.lines).map((line) => text(line.sku)).filter(Boolean))],
+      })).sort((a, b) => text(b.decidedOn).localeCompare(text(a.decidedOn)) || a.number.localeCompare(b.number))
     }
   }
 
