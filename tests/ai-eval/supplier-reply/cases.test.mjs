@@ -12,6 +12,7 @@ import {
 import { EXTRA_TAGS, SUPPLIER_REPLY_CASES, SUPPLIER_REPLY_REQUIREMENTS, WRITTEN_BY } from './cases.mjs'
 import { HELD_OUT_CASES, HELD_OUT_TAGS } from './held-out-cases.mjs'
 import { HELD_OUT_2_CASES, HELD_OUT_2_TAGS } from './held-out-2-cases.mjs'
+import { ASSUMED_SUPPLIER_SKUS, HELD_OUT_3_CASES, HELD_OUT_3_TAGS } from './held-out-3-cases.mjs'
 import { ORDER_SNAPSHOTS, SNAPSHOT_SEED_DAY } from './orders.mjs'
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/
@@ -25,6 +26,7 @@ const CJK = /[㐀-鿿]/
 const HELD_OUT_BATCHES = [
   { name: 'held-out', cases: HELD_OUT_CASES, tags: HELD_OUT_TAGS },
   { name: 'held-out-2', cases: HELD_OUT_2_CASES, tags: HELD_OUT_2_TAGS },
+  { name: 'held-out-3', cases: HELD_OUT_3_CASES, tags: HELD_OUT_3_TAGS },
 ]
 const EXTRA_CASES = HELD_OUT_BATCHES.flatMap((batch) => batch.cases)
 const batchTagsOf = (kase) => HELD_OUT_BATCHES.find((batch) => batch.cases.includes(kase))?.tags || []
@@ -35,6 +37,27 @@ const batchTagsOf = (kase) => HELD_OUT_BATCHES.find((batch) => batch.cases.inclu
 const QUOTE_MARKERS = [/^On .+ wrote:\s*$/m, /^-{2,}\s*Original Message\s*-{2,}\s*$/mi, /^From: .+$/m, /^-+\s*原始邮件\s*-+\s*$/m, /^发件人[：:]/m, /^>/m, /^-- $/m]
 const newPartOf = (text) => text.slice(0, Math.min(text.length, ...QUOTE_MARKERS.map((marker) => text.search(marker)).filter((index) => index >= 0)))
 const hasQuotedPart = (text) => QUOTE_MARKERS.slice(0, 6).some((marker) => marker.test(text))
+// §4.3 drops the lines that start with ">" as well as everything after a
+// header. In a case tagged inline-answer, the supplier's lines between ">"
+// lines (with no header above them) are its new text too.
+const newTextOf = (kase) => newPartOf(kase.covers.includes('inline-answer') ? kase.replyText.split('\n').filter((line) => !line.startsWith('>')).join('\n') : kase.replyText)
+
+// The seed snapshot a case's order must equal. A held-out case may give the
+// lines assumed supplier codes, labelled as ours (the seed has none): then
+// every line has a code of its own, none is one of our SKUs, and nothing
+// else differs from the snapshot.
+function seedOrderOf(kase) {
+  const snapshot = ORDER_SNAPSHOTS[kase.workspace][kase.order.number]
+  if (kase.assumedSupplierSkus === undefined) return snapshot
+  const { label, codes } = kase.assumedSupplierSkus
+  assert.ok(kase.heldOut, 'assumed supplier codes only in a held-out batch')
+  assert.equal(label, ASSUMED_SUPPLIER_SKUS, 'the codes are labelled as assumed, written by us')
+  assert.deepEqual(Object.keys(codes), snapshot.lines.map((line) => line.ref), 'a code for every line')
+  const values = Object.values(codes)
+  assert.ok(values.every((code) => typeof code === 'string' && code.length > 0 && !snapshot.lines.some((line) => line.sku === code)), 'codes of their own, not our SKUs')
+  assert.equal(new Set(values).size, values.length, 'one code per line')
+  return { ...snapshot, lines: snapshot.lines.map((line) => ({ ...line, supplierSku: codes[line.ref] })) }
+}
 
 // The expected outcome as the contract's checked reading, with the fields a
 // case leaves out set to null, so its enums and shapes are the contract's.
@@ -121,7 +144,7 @@ for (const kase of [...SUPPLIER_REPLY_CASES, ...EXTRA_CASES]) {
     assert.equal(CJK.test(kase.replyText), kase.lang === 'zh', 'the reply is in the case\'s language')
 
     // The order: a seed snapshot, as the contract takes it.
-    assert.deepEqual(order, ORDER_SNAPSHOTS[kase.workspace][order.number], 'the order is the seed snapshot')
+    assert.deepEqual(order, seedOrderOf(kase), 'the order is the seed snapshot')
     assert.ok(orderSchema.safeParse(order).success)
     const lineOf = new Map(order.lines.map((line) => [line.ref, line]))
 
@@ -156,7 +179,7 @@ for (const kase of [...SUPPLIER_REPLY_CASES, ...EXTRA_CASES]) {
       }
       if (line.quoteIncludes) {
         assert.ok(kase.replyText.includes(line.quoteIncludes), `${line.ref} quote "${line.quoteIncludes}" is in the reply`)
-        assert.ok(newPartOf(kase.replyText).includes(line.quoteIncludes), `${line.ref} quote is in the supplier's new text, not a quoted part`)
+        assert.ok(newTextOf(kase).includes(line.quoteIncludes), `${line.ref} quote is in the supplier's new text, not a quoted part`)
       }
       // readAs: a proposed relative date, or a stated day without a month.
       if (line.dateKind === 'relative' && line.outcome === 'proposed') assert.ok(line.readAs, `${line.ref} a relative date says how it was read`)
@@ -242,6 +265,9 @@ for (const kase of [...SUPPLIER_REPLY_CASES, ...EXTRA_CASES]) {
     if (kase.covers.includes('vague')) assert.ok(expected.lines.some((line) => line.issue === 'vague'))
     if (kase.covers.includes('confirms')) assert.ok(outcomes.includes('confirmed'))
     if (kase.covers.includes('auto-reply')) assert.equal(expected.replyKind, 'auto_reply')
+    if (kase.covers.includes('supplier-sku')) assert.ok(kase.assumedSupplierSkus, 'a supplier-code case gives its lines supplier codes')
+    if (kase.covers.includes('several-orders')) assert.ok(expected.flags.some((flag) => flag.kind === 'other_order'), 'several orders: the others are flagged')
+    if (kase.covers.includes('inline-answer')) assert.ok(hasQuotedPart(kase.replyText), 'an inline answer sits in a quoted thread')
     for (const [tag, kind] of [['flag-quantity', 'quantity_change'], ['flag-price', 'price_change'], ['flag-cancellation', 'cancellation'], ['flag-substitution', 'substitution'], ['other-order', 'other_order'], ['wrong-order-number', 'other_order']]) {
       if (kase.covers.includes(tag)) assert.ok(expected.flags.some((flag) => flag.kind === kind), `${tag} expects a ${kind} flag`)
     }
