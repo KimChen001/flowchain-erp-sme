@@ -81,10 +81,41 @@ export const SUPPLIER_REPLY_DISMISS_REASONS = Object.freeze(['wrong_reading', 's
 //   refused              the reply refuses this date ("cannot ship on 28 Nov",
 //                        "28 Nov is no longer possible", 发不了) and names no other
 //   addressed_to_system  quoted from text addressed to the system (dropped)
+//   line_mismatch        the quote names another line by its code (ours or the
+//                        supplier's) or item name, or its code and name point
+//                        to different lines
+//   ambiguous_weekday    "next Friday" early in a week: that week's Friday or
+//                        the next one's, both offered
 //   several_dates        the quote names more than one date, and this one is
 //                        the line's current promise or the one it replaces
 //                        (both offered in readings when there are two)
-export const SUPPLIER_REPLY_LINE_ISSUES = Object.freeze(['quote_not_found', 'date_mismatch', 'ambiguous_numeric', 'vague', 'relative_unreadable', 'before_reply', 'too_far', 'unknown_line', 'not_open', 'unchanged', 'split_incomplete', 'several_dates', 'refused', 'addressed_to_system'])
+//   other_order_text     an email naming several orders: the quote is from
+//                        another order's part, or runs across parts (dropped)
+//   no_order_part        an email naming several orders: the quote is from
+//                        text of no single order (a greeting, a general line,
+//                        a sentence naming two orders); the day is offered
+//   correction_across_orders  an email naming several orders corrects which
+//                        order earlier text is for ("Sorry, that line is for
+//                        PO-B"): every line goes to the person, no day offered
+//   several_orders       an email about several orders (split into parts,
+//                        or read on more than one order): nothing is
+//                        proposed, every line goes to the person with only
+//                        its quote (the final gate)
+export const SUPPLIER_REPLY_LINE_ISSUES = Object.freeze(['quote_not_found', 'date_mismatch', 'ambiguous_numeric', 'vague', 'relative_unreadable', 'before_reply', 'too_far', 'unknown_line', 'not_open', 'unchanged', 'split_incomplete', 'several_dates', 'refused', 'addressed_to_system', 'line_mismatch', 'ambiguous_weekday', 'other_order_text', 'no_order_part', 'correction_across_orders', 'several_orders'])
+// An email that names several orders (supplier-reply-orders.mjs) is read on
+// at most this many of them, the one it was pasted on first.
+export const SUPPLIER_REPLY_EMAIL_ORDER_LIMIT = 5
+// Each order such an email names, as the card lists it:
+//   this            the order the card is on
+//   read            read on its own order (its own card there)
+//   closed          the order takes no dates now: not read
+//   other_supplier  another supplier's order: not read
+//   unknown         no order the reader can open has this number: not read
+//   over_limit      past SUPPLIER_REPLY_EMAIL_ORDER_LIMIT: not read
+//   open_card_kept  another order that already has an open card: the card is
+//                   kept, the email not read there (a paste never replaces
+//                   another order's card, as an emailed reply never does)
+export const SUPPLIER_REPLY_EMAIL_ORDER_STATES = Object.freeze(['this', 'read', 'closed', 'other_supplier', 'unknown', 'over_limit', 'open_card_kept'])
 // What became of one line of the reading.
 export const SUPPLIER_REPLY_LINE_OUTCOMES = Object.freeze(['proposed', 'needs_you', 'dropped', 'confirmed'])
 
@@ -246,6 +277,9 @@ export const supplierReplyCardSchema = z.strictObject({
   notNowUntil: day.nullable(),
   decision: supplierReplyDecisionSchema.nullable(),
   supersededById: id.nullable(),
+  // The orders the email names, when it names several in this order's
+  // numbering; absent otherwise. This card reads only this order's part.
+  emailOrders: z.array(z.strictObject({ number: z.string().min(1).max(120), status: z.enum(SUPPLIER_REPLY_EMAIL_ORDER_STATES) })).max(20).optional(),
 })
 
 // --- Routes --------------------------------------------------------------------

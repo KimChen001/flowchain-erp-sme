@@ -88,6 +88,32 @@ test.describe("the supplier reply card's states", () => {
     expect(stub.posts[0].body.lines).toEqual([{ purchaseOrderLineId: "pol-1", promisedDate: "2026-11-28" }, { purchaseOrderLineId: "pol-2", promisedDate: "2026-12-03" }]);
   });
 
+  test("an email about several orders proposes nothing: each line shows only its quote and the reason, no date read by the model", async ({ page, request }) => {
+    const auth = await signIn(page, request);
+    await useLanguage(page, "en-US");
+    const orderId = await anIssuedOrder(request, auth);
+    // The final gate (#449): every line held as several_orders, with the
+    // quote kept and no proposed date, read-as, readings or split parts.
+    const held = (over: Record<string, unknown>) => line({ outcome: "needs_you", issue: "several_orders", proposedDate: null, readAs: null, readings: null, parts: null, ...over });
+    const several = card(orderId, {
+      state: "needs_you",
+      text: "PO-TEST-1: brackets ship 28 November, hinges 6 pcs on 4 December and 4 pcs on 9 December.\nPO-TEST-2: springs ship 5 December.",
+      lines: [held({ quote: "brackets ship 28 November" }), held({ ref: "L2", purchaseOrderLineId: "pol-2", sku: "SKU-2210", itemName: "Hinge", quote: "hinges 6 pcs on 4 December and 4 pcs on 9 December" })],
+      formLines: [formLine("pol-1", "SKU-1040"), formLine("pol-2", "SKU-2210")],
+      emailOrders: [{ number: "PO-TEST-1", status: "this" }, { number: "PO-TEST-2", status: "read" }],
+    });
+    await stubReplies(page, () => [several]);
+    await page.goto(`/app/procurement/orders/${encodeURIComponent(orderId)}`);
+    const view = page.getByTestId("supplier-reply-card").first();
+    await expect(view).toHaveAttribute("data-state", "needs_you");
+    await expect(view).toContainText("this email is about several orders, so no date is filled in");
+    await expect(view).toContainText("hinges 6 pcs on 4 December and 4 pcs on 9 December");
+    await expect(view.getByTestId("supplier-reply-read-as")).toHaveCount(0);
+    await expect(view.getByTestId("supplier-reply-split")).toHaveCount(0);
+    await expect(view.getByTestId("supplier-reply-readings")).toHaveCount(0);
+    await view.screenshot({ path: test.info().outputPath("several-orders-card.png") });
+  });
+
   test("a stale card and a reply no longer open say so, and keep saying it after the reload", async ({ page, request }) => {
     const auth = await signIn(page, request);
     await useLanguage(page, "en-US");
