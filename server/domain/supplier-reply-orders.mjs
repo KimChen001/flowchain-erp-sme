@@ -156,7 +156,11 @@ export function emailParts(text, number, known = []) {
     } else if (numbers.length === 1) {
       const first = tokens[0]
       const leads = LEADING.test(sentence.slice(0, first.index))
-      add(sentence, numbers)
+      // Another order named in passing inside an order's part: the part's
+      // heading counts as a number, so the sentence names two orders and
+      // belongs to both (blind batch 5, case 12).
+      const passing = !leads && current !== null && current !== numbers[0]
+      add(sentence, passing ? [current, numbers[0]].sort() : numbers)
       current = leads ? numbers[0] : null
       headerOnly = leads && tokens.length === 1 && HEADER.test(sentence.slice(0, first.index) + '\u0000' + sentence.slice(first.end))
     } else if (numbers.length > 1) {

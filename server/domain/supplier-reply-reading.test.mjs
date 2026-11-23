@@ -1213,3 +1213,57 @@ test('several orders: a day said of one listed order is held however the sentenc
     assert.notEqual(row.outcome, 'proposed', email)
   }
 })
+
+test('several orders: another order named in passing inside an order\'s part leaves that sentence to the person on both orders (blind batch 5, case 12)', () => {
+  const A = 'PO-202611-0021'
+  const B = 'PO-202611-0014'
+  const item = (ref, sku) => ({ ref, purchaseOrderLineId: `${ref}-${sku}`, sku, supplierSku: null, itemName: `Item ${sku.slice(-3)}`, remaining: 10, unit: 'pcs', promisedDate: '2026-11-25' })
+  // HOUSEHOLD_2_110 and HOUSEHOLD_2_437 are on both orders.
+  const orderA = { number: A, supplierName: 'Household 2', status: 'issued', lines: [item('L1', 'HOUSEHOLD_2_074'), item('L2', 'HOUSEHOLD_2_110'), item('L3', 'HOUSEHOLD_2_437')] }
+  const orderB = { number: B, supplierName: 'Household 2', status: 'issued', lines: [item('L1', 'HOUSEHOLD_2_044'), item('L2', 'HOUSEHOLD_2_110'), item('L3', 'HOUSEHOLD_2_437')] }
+  const L = (ref, date, quote) => ({ line: ref, date, quote, dateKind: 'stated' })
+  const run = (on, email, entries, emailRead) => checkReplyReading({ order: on, text: email, receivedOn: RECEIVED, reading: reading(entries), emailRead }).lines
+  const row = (lines, ref) => lines.find((one) => one.ref === ref)
+  // [label, email, the own-line quote on A (3 Dec), the passing sentence's quote (8 Dec)]
+  const passing = [
+    ['zh mid-sentence', `${A} 的交期更新如下：\nHOUSEHOLD_2_074 12月3日发货。\nHOUSEHOLD_2_110 和 HOUSEHOLD_2_437 会跟 ${B} 的货一起在12月8日发出。\n\n有问题随时联系。`, 'HOUSEHOLD_2_074 12月3日发货。', `HOUSEHOLD_2_110 和 HOUSEHOLD_2_437 会跟 ${B} 的货一起在12月8日发出。`],
+    ['zh brackets', `${A}：\nHOUSEHOLD_2_074 12月3日发货。\nHOUSEHOLD_2_110 和 HOUSEHOLD_2_437（${B} 也有这两个货）12月8日发出。`, 'HOUSEHOLD_2_074 12月3日发货。', `HOUSEHOLD_2_110 和 HOUSEHOLD_2_437（${B} 也有这两个货）12月8日发出。`],
+    ['zh end of sentence', `订单 ${A}：\nHOUSEHOLD_2_074 12月3日发货。\nHOUSEHOLD_2_110 和 HOUSEHOLD_2_437 12月8日发，和 ${B} 一起。`, 'HOUSEHOLD_2_074 12月3日发货。', `HOUSEHOLD_2_110 和 HOUSEHOLD_2_437 12月8日发，和 ${B} 一起。`],
+    ['en mid-sentence', `${A}\n- HOUSEHOLD_2_074: ships on 3 December\n- HOUSEHOLD_2_110 and HOUSEHOLD_2_437 ship on 8 December together with the ${B} goods.\n\nThanks`, 'HOUSEHOLD_2_074: ships on 3 December', `HOUSEHOLD_2_110 and HOUSEHOLD_2_437 ship on 8 December together with the ${B} goods.`],
+    ['en brackets', `${A}:\nHOUSEHOLD_2_074 ships on 3 December.\nHOUSEHOLD_2_110 and HOUSEHOLD_2_437 (also on ${B}) ship on 8 December.`, 'HOUSEHOLD_2_074 ships on 3 December.', `HOUSEHOLD_2_110 and HOUSEHOLD_2_437 (also on ${B}) ship on 8 December.`],
+    ['en same line as the heading', `Order ${A}: HOUSEHOLD_2_074 ships on 3 December. HOUSEHOLD_2_110 and HOUSEHOLD_2_437 go on 8 December with what we owe on ${B}.`, 'HOUSEHOLD_2_074 ships on 3 December.', `HOUSEHOLD_2_110 and HOUSEHOLD_2_437 go on 8 December with what we owe on ${B}.`],
+  ]
+  for (const emailRead of [[A, B], []]) {
+    for (const [label, email, own, mention] of passing) {
+      const at = `${label} ${JSON.stringify(emailRead)}`
+      // On the order whose part it is: its own line is proposed as before;
+      // the passing sentence's lines go to the person, not dropped.
+      const onA = run(orderA, email, [L('L1', '2026-12-03', own), L('L2', '2026-12-08', mention), L('L3', '2026-12-08', mention)], emailRead)
+      assert.deepEqual([row(onA, 'L1').outcome, row(onA, 'L1').proposedDate], ['proposed', '2026-12-03'], at)
+      for (const ref of ['L2', 'L3']) assert.deepEqual([row(onA, ref).outcome, row(onA, ref).issue], ['needs_you', 'no_order_part'], `${at} A ${ref}`)
+      // On the order named in passing: the same, and nothing proposed.
+      const onB = run(orderB, email, [L('L2', '2026-12-08', mention), L('L3', '2026-12-08', mention)], emailRead)
+      for (const ref of ['L2', 'L3']) assert.deepEqual([row(onB, ref).outcome, row(onB, ref).issue], ['needs_you', 'no_order_part'], `${at} B ${ref}`)
+    }
+    // The number at the start of its own line opens that order's part, as
+    // before: its date is proposed there and dropped from the other order.
+    for (const email of [
+      `${A}:\nHOUSEHOLD_2_074 ships on 3 December.\n${B}: HOUSEHOLD_2_110 ships on 8 December.`,
+      `${A}：\nHOUSEHOLD_2_074 12月3日发货。\n${B}：HOUSEHOLD_2_110 12月8日发货。`,
+    ]) {
+      const quote = email.includes('ships on 8') ? 'HOUSEHOLD_2_110 ships on 8 December.' : 'HOUSEHOLD_2_110 12月8日发货。'
+      assert.deepEqual(run(orderB, email, [L('L2', '2026-12-08', quote)], emailRead).map((one) => [one.outcome, one.proposedDate]), [['proposed', '2026-12-08']], email)
+      assert.deepEqual(run(orderA, email, [L('L2', '2026-12-08', quote)], emailRead).map((one) => [one.outcome, one.issue]), [['dropped', 'other_order_text']], email)
+    }
+    // Items on both orders, each dated in its own order's part, no passing
+    // mention: each order gets its own date, never the other's.
+    const shared = `${A}:\nHOUSEHOLD_2_110 ships on 8 December.\n\n${B}:\nHOUSEHOLD_2_110 ships on 10 December.`
+    assert.deepEqual(run(orderA, shared, [L('L2', '2026-12-08', 'HOUSEHOLD_2_110 ships on 8 December.')], emailRead).map((one) => [one.outcome, one.proposedDate]), [['proposed', '2026-12-08']])
+    assert.deepEqual(run(orderB, shared, [L('L2', '2026-12-10', 'HOUSEHOLD_2_110 ships on 10 December.')], emailRead).map((one) => [one.outcome, one.proposedDate]), [['proposed', '2026-12-10']])
+    assert.deepEqual(run(orderB, shared, [L('L2', '2026-12-08', 'HOUSEHOLD_2_110 ships on 8 December.')], emailRead).map((one) => [one.outcome, one.issue]), [['dropped', 'other_order_text']])
+    // A part that speaks only of its own order is proposed as before.
+    const plain = `${A}:\nHOUSEHOLD_2_074 ships on 3 December.\n\n${B}:\nHOUSEHOLD_2_044 ships on 5 December.`
+    assert.deepEqual(run(orderA, plain, [L('L1', '2026-12-03', 'HOUSEHOLD_2_074 ships on 3 December.')], emailRead).map((one) => [one.outcome, one.proposedDate]), [['proposed', '2026-12-03']])
+    assert.deepEqual(run(orderB, plain, [L('L1', '2026-12-05', 'HOUSEHOLD_2_044 ships on 5 December.')], emailRead).map((one) => [one.outcome, one.proposedDate]), [['proposed', '2026-12-05']])
+  }
+})

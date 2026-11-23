@@ -109,12 +109,18 @@ test('an order number written another way counts when it matches one known order
   assert.equal(emailParts(`${A}: brackets ship on 4 December.\n0013: hinges ship on 9 December.`, A), null)
 })
 
-test('a number named further into a sentence claims that sentence only; an order pointed to by its place belongs to none', () => {
+test('a number named further into a sentence claims that sentence only, or shares it with the order whose part it is in; an order pointed to by its place belongs to none', () => {
+  // Outside any order's part (after a blank line), the sentence is the named order's.
+  assert.deepEqual(runsOf(`${A}: hinges ship on 4 December.\n\nYour other order for the same items, ${B}, follows on 9 December.\nRegards`), [
+    [A, `${A}: hinges ship on 4 December.`], [B, `Your other order for the same items, ${B}, follows on 9 December.`], ['-', 'Regards'],
+  ])
+  // Inside another order's part, the part's heading counts as a number: the
+  // sentence names two orders and belongs to both (blind batch 5, case 12).
   assert.deepEqual(runsOf(`${B}: brackets ship on 9 December.\nThanks, Pat (re ${A})\nAll ship on 9 December.`), [
-    [B, `${B}: brackets ship on 9 December.`], [A, `Thanks, Pat (re ${A})`], ['-', 'All ship on 9 December.'],
+    [B, `${B}: brackets ship on 9 December.`], [`${A}+${B}`, `Thanks, Pat (re ${A})`], ['-', 'All ship on 9 December.'],
   ])
   assert.deepEqual(runsOf(`${A}: hinges ship on 4 December.\nYour other order for the same items, ${B}, follows on 9 December.\nRegards`), [
-    [A, `${A}: hinges ship on 4 December.`], [B, `Your other order for the same items, ${B}, follows on 9 December.`], ['-', 'Regards'],
+    [A, `${A}: hinges ship on 4 December.`], [`${A}+${B}`, `Your other order for the same items, ${B}, follows on 9 December.`], ['-', 'Regards'],
   ])
   // A sentence that starts with the number continues: "It" is that order's.
   assert.deepEqual(runsOf(`${A} ships on 1 December. ${B} is delayed. It will ship on 9 December.`), [[A, `${A} ships on 1 December.`], [B, `${B} is delayed. It will ship on 9 December.`]])
