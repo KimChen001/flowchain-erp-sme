@@ -561,8 +561,9 @@ const suggestPurchaseLines = defineAiTool({
       rows: suggestions,
       // The rows' values added up, so an answer reads the form's value instead
       // of adding it up (2026-11-21/22: £887, £1,555 and £615 for the lines,
-      // each worked out by the model, were flagged).
-      estimatedTotal: estimatedTotalOf(suggestions),
+      // each worked out by the model, were flagged). Like the line values,
+      // only for a role that may see prices: for the others no field at all.
+      ...(prices ? { estimatedTotal: estimatedTotalOf(suggestions) } : {}),
       total: listed.length,
       more: Math.max(0, listed.length - limit),
     }

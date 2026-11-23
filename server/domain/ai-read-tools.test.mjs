@@ -555,12 +555,18 @@ test('the reorder list says how many days the available stock lasts at its daily
   // At the rate as the row shows it (one decimal): 259 ÷ 20.7, not ÷ 20.71.
   assert.equal(lastsDays(259, 20.71), 12.5)
   assert.equal(lastsDays(-5, 20.7), 0)
-  for (const [stock, rate] of [[259, null], [259, 0], [null, 20.7], [259, 0.04]]) assert.equal(lastsDays(stock, rate), null, `${stock} ÷ ${rate}`)
+  // No demand (no history, none shipped, or under 0.05 a day) or a figure
+  // that is not one: no days, never Infinity or NaN.
+  for (const [stock, rate] of [[259, null], [259, undefined], [259, 0], [259, 0.04], [259, Number.NaN], [259, 'abc'], [null, 20.7], [Number.NaN, 20.7], [Number.POSITIVE_INFINITY, 20.7], ['abc', 20.7]]) assert.equal(lastsDays(stock, rate), null, `${stock} ÷ ${rate}`)
   const scenario = aiSkillScenario()
-  const reorderList = { read: async () => ({ rows: [{ sku: 'SKU-1', itemName: 'Item', orderNow: true, orderByDate: '2026-11-08', onHand: 280, reserved: 21, demand: { averageDailyDemand: 20.71 }, supplier: { id: 'SUP-1', name: 'Supplier One' } }] }) }
+  const reorderRow = (sku, demand) => ({ sku, itemName: 'Item', orderNow: true, orderByDate: '2026-11-08', onHand: 280, reserved: 21, demand, supplier: { id: 'SUP-1', name: 'Supplier One' } })
+  const reorderList = { read: async () => ({ rows: [reorderRow('SKU-1', { averageDailyDemand: 20.71 }), reorderRow('SKU-2', { averageDailyDemand: null }), reorderRow('SKU-3', { averageDailyDemand: 0 }), reorderRow('SKU-4', null)] }) }
   const context = await loadAiSkillContext({ ...scenario.ctx, aiReadServices: { reorderList } })
-  const row = (await runAiReadTool('reorder_list', {}, { facts: await readAiSkillFacts(context), context })).result.rows[0]
-  assert.deepEqual([row.availableToday, row.averageDailyDemand, row.availableLastsDays], [259, 20.7, 12.5])
+  const rows = (await runAiReadTool('reorder_list', {}, { facts: await readAiSkillFacts(context), context })).result.rows
+  assert.deepEqual([rows[0].availableToday, rows[0].averageDailyDemand, rows[0].availableLastsDays], [259, 20.7, 12.5])
+  // Without enough shipment history, or with none shipped: no days.
+  assert.deepEqual(rows.slice(1).map((row) => row.availableLastsDays), [null, null, null])
+  assert.doesNotMatch(JSON.stringify(rows), /Infinity|NaN/)
 })
 
 // 2026-11-09 on Flash (UCI scene): "available to promise for 85123A is 408

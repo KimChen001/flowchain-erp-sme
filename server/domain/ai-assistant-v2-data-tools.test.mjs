@@ -639,8 +639,9 @@ test('suggest_purchase_lines hides prices and suppliers from roles that may not 
   const shown = (await viewer.run('suggest_purchase_lines')).result
   assert.equal(shown.pricesHidden, true)
   assert.equal(shown.rows[0].estimatedUnitPrice, null)
-  // No value, so no total either.
-  assert.deepEqual([shown.rows[0].estimatedValue, shown.estimatedTotal], [null, null])
+  // No value, and no total field at all.
+  assert.equal(shown.rows[0].estimatedValue, null)
+  assert.equal('estimatedTotal' in shown, false)
   assert.equal(shown.rows[0].supplier.id, 'SUP-001')
   // Operations reads stock and, since they raise requests (design audit C4,
   // owner decision 2026-11-17), purchase requests: still no supplier, price
@@ -649,7 +650,8 @@ test('suggest_purchase_lines hides prices and suppliers from roles that may not 
   const stock = (await operations.run('suggest_purchase_lines')).result
   assert.equal(stock.suppliersHidden, true)
   assert.equal(stock.purchaseRequestsRead, true)
-  assert.ok(stock.rows.length > 0 && stock.rows.every((row) => row.supplier === null && row.supplierChoices.length === 0 && row.estimatedUnitPrice === null))
+  assert.ok(stock.rows.length > 0 && stock.rows.every((row) => row.supplier === null && row.supplierChoices.length === 0 && row.estimatedUnitPrice === null && row.estimatedValue === null))
+  assert.equal('estimatedTotal' in stock, false)
   assert.doesNotMatch(JSON.stringify(stock), /PO-0\d\d|Acme/)
   // Nobody gets a contact's email address.
   const withEmail = await v2({ change: (data) => { highReorderPoint(data); data.suppliers[0].email = 'orders@acme.example'; data.suppliers[0].contactName = 'Ada' } })
