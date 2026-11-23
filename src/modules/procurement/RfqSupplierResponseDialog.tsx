@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Check, RefreshCw, Save, Send, X } from "lucide-react";
+import { AlertTriangle, Check, RefreshCw, Save, Send } from "lucide-react";
 import { A, Card, Chip, Modal } from "../../components/ui";
+import { listButtonClass } from "../../components/ui/listLayout";
 import { ApiError } from "../../lib/api-client";
 import { procurementApi } from "./procurementApi";
 import { useI18n } from "../../i18n/I18n";
@@ -238,9 +239,9 @@ export function RfqSupplierResponseDialog({
   return (
     <Modal open={open} onClose={submitting ? () => undefined : onClose} title={title} subtitle={tr("内部采购记录。保存后会生成新的报价修订，已有记录不会被改动。", "Internal procurement record. Saving adds a quote revision; earlier ones stay as they are.")} width={900} footer={(
       <>
-        <button type="button" className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold" style={{ color: A.sub }} disabled={submitting} onClick={onClose}><X size={15} />{tr("取消", "Cancel")}</button>
-        <button type="button" data-testid="rfq-response-save-draft" className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold" disabled={submitting || !canSubmit} onClick={() => void submit("draft")}><Save size={15} />{tr("保存草稿", "Save draft")}</button>
-        <button type="button" data-testid="rfq-response-submit" className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={submitting || !canSubmit} onClick={() => void submit("submitted")}><Send size={15} />{tr("记录并提交报价", "Record and submit quotation")}</button>
+        <button type="button" className={`${listButtonClass.secondary} disabled:opacity-60`} disabled={submitting} onClick={onClose}>{tr("取消", "Cancel")}</button>
+        <button type="button" data-testid="rfq-response-save-draft" className={`${listButtonClass.secondary} disabled:cursor-not-allowed disabled:opacity-60`} disabled={submitting || !canSubmit} onClick={() => void submit("draft")}><Save size={13} />{tr("保存草稿", "Save draft")}</button>
+        <button type="button" data-testid="rfq-response-submit" className={`${listButtonClass.primary} disabled:cursor-not-allowed`} disabled={submitting || !canSubmit} onClick={() => void submit("submitted")}><Send size={13} />{tr("记录并提交报价", "Record and submit quotation")}</button>
       </>
     )}>
       <div className="space-y-5" data-testid="rfq-supplier-response-editor">

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, CheckCircle2, CircleAlert, RefreshCw, Scale, ShieldCheck, TriangleAlert } from "lucide-react";
 import { Link } from "react-router";
 import { A, Card, Chip, useConfirm } from "../../components/ui";
+import { listButtonClass, rowActionClass } from "../../components/ui/listLayout";
 import { ApiError } from "../../lib/api-client";
 import { procurementApi } from "./procurementApi";
 import { useI18n } from "../../i18n/I18n";
@@ -257,7 +258,7 @@ function CopySupplierNote({ comparison, response, history, historyKeyOf }: {
   };
   return (
     <div className="mt-2 font-normal">
-      <button type="button" className="rounded border px-2 py-1 text-[11px]" data-testid={`rfq-comparison-copy-note-${response.supplierId}`} data-note={note} onClick={() => void copyNote()}>{copy("copyNote")}</button>
+      <button type="button" className={rowActionClass.neutral} data-testid={`rfq-comparison-copy-note-${response.supplierId}`} data-note={note} onClick={() => void copyNote()}>{copy("copyNote")}</button>
       {status && <div className="mt-1 text-[11px]" role="status" style={{ color: A.sub }}>{copy(status === "copied" ? "noteCopied" : "noteCopyFailed")}</div>}
     </div>
   );
@@ -312,7 +313,7 @@ function AwardDecisionPanel({ comparison, award, canAward, onAward }: { comparis
       <label className="flex items-start gap-2 text-xs"><input className="mt-0.5" type="checkbox" checked={reviewed} onChange={(event) => setReviewed(event.target.checked)} /><span>{tr("我已复核所选供应商、报价金额及具体报价修订，并理解授标记录不可修改。", "I reviewed the supplier, quoted amount, and quote revision, and understand that the award record cannot be changed.")}</span></label>
       {error && <p className="rounded-lg bg-rose-50 p-2 text-xs text-rose-700" role="alert">{error}</p>}
       {confirmDialog.element}
-      <button type="button" data-testid="record-rfq-award" disabled={busy || !selected || !reviewed || !reason.trim()} onClick={() => void submit()} className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{busy ? tr("正在记录…", "Recording…") : tr("记录正式授标决定", "Record formal award decision")}</button>
+      <button type="button" data-testid="record-rfq-award" disabled={busy || !selected || !reviewed || !reason.trim()} onClick={() => void submit()} className={`${listButtonClass.primary} disabled:cursor-not-allowed`}>{busy ? tr("正在记录…", "Recording…") : tr("记录正式授标决定", "Record formal award decision")}</button>
     </div>}
   </div></div></Card>;
 }

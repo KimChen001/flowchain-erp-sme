@@ -100,8 +100,8 @@ export function SuppliedItemTermsRow({ colSpan, itemLabel, currency, terms, pric
           {problems.length ? problems.map((problem) => say(problem)).join(" ") : say(nothing ? "nothingChanged" : "blank")}
         </p>
         <div className="mt-2 flex gap-2">
-          <button type="button" className={rowActionClass.primary} disabled={saving || problems.length > 0 || nothing} onClick={() => void save()} data-testid="supplied-item-terms-save">{say(saving ? "saving" : "save")}</button>
           <button type="button" className={rowActionClass.neutral} disabled={saving} onClick={onCancel}>{say("cancel")}</button>
+          <button type="button" className={rowActionClass.primary} disabled={saving || problems.length > 0 || nothing} onClick={() => void save()} data-testid="supplied-item-terms-save">{say(saving ? "saving" : "save")}</button>
         </div>
       </td>
     </tr>

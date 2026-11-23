@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Ban, ExternalLink, FilePlus2, Play, RefreshCw, Scale, TriangleAlert } from "lucide-react";
 import { Link } from "react-router";
 import { A, Card, useConfirm } from "../../components/ui";
-import { StatusChip, listHeadRowStyle, statusToneOf } from "../../components/ui/listLayout";
+import { StatusChip, listHeadRowStyle, rowActionClass, statusToneOf } from "../../components/ui/listLayout";
 import { thClass, thRightClass } from "../../components/ui/workbenchTable";
 import { ApiError } from "../../lib/api-client";
 import { apiErrorText } from "../../lib/apiErrorText";
@@ -231,6 +231,8 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, canTransition, no
   const [transitionError, setTransitionError] = useState("");
   const canOpen = canTransition && record.status === "draft";
   const canCancel = canTransition && CANCELLABLE_RFQ.includes(record.status || "");
+  // Comparing quotes is the next step while they are being collected.
+  const compareIsNext = !canOpen && (record.status === "open" || record.status === "collecting_quotes");
   const transition = async (action: "open" | "cancel") => {
     const number = record.number || record.id || "";
     const sure = action === "open"
@@ -292,11 +294,11 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, canTransition, no
             {canOpen && <button type="button" disabled={busy !== null} onClick={() => void transition("open")} className={listButtonClass.primary} data-testid="rfq-open-button"><Play size={14} />{tr("开启询价", "Open RFQ")}</button>}
             {canCancel && <button type="button" disabled={busy !== null} onClick={() => void transition("cancel")} className={listButtonClass.danger} data-testid="rfq-cancel-button"><Ban size={14} />{tr("取消询价单", "Cancel RFQ")}</button>}
             {canCompare && <Link
-              className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-700"
+              className={compareIsNext ? listButtonClass.primary : listButtonClass.secondary}
               data-testid="rfq-comparison-link"
               to={`/app/procurement/rfq/${encodeURIComponent(record.id || "")}/comparison`}
             >
-              <Scale size={15} />{tr("比较供应商报价", "Compare supplier quotations")}
+              <Scale size={13} />{tr("比较供应商报价", "Compare supplier quotations")}
             </Link>}
           </div>
           {!responseWorkflowOpen && <span className="text-xs" style={{ color: A.sub }}>{tr("当前询价单状态不允许录入新的供应商响应。", "The current RFQ status does not allow new supplier responses.")}</span>}
@@ -347,7 +349,7 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, canTransition, no
             const disabledByStatus = !responseWorkflowOpen || ["declined", "withdrawn", "closed"].includes(supplier.status || "");
             const actionLabel = quotation ? tr("新增报价修订", "Add quote revision") : tr("录入报价", "Record quotation");
             const allowed = quotation ? canRevise : canCreate;
-            return <div key={supplier.supplierId} className="rounded-lg border p-3 text-xs" data-testid={`rfq-participant-${supplier.supplierId}`}><div className="flex items-start justify-between gap-2"><div><div className="font-medium">{supplier.supplierName || tr("未提供名称", "Name not provided")}</div><div className="mt-1" style={{ color: A.sub }}>{statusLabel(supplier.status, PARTICIPATION_STATUS_LABELS, language)}</div></div>{!disabledByStatus && allowed && <button type="button" data-testid={`rfq-response-action-${supplier.supplierId}`} className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-blue-200 px-2 py-1 font-semibold text-blue-700" onClick={() => openEditor(supplier)}><FilePlus2 size={13} />{actionLabel}</button>}</div><div className="mt-1 font-medium">{statusLabel(supplier.responseState, RESPONSE_STATE_LABELS, language)}</div>{quotation && <div className="mt-1 text-[11px]" style={{ color: A.sub }}>{tr("当前报价修订", "Current quote revision")}: {quotation.latestRevision?.revisionNumber || quotation.revisionNumber || "—"} · {tr("历史报价修订只读", "Earlier quote revisions are read-only")}</div>}</div>;
+            return <div key={supplier.supplierId} className="rounded-lg border p-3 text-xs" data-testid={`rfq-participant-${supplier.supplierId}`}><div className="flex items-start justify-between gap-2"><div><div className="font-medium">{supplier.supplierName || tr("未提供名称", "Name not provided")}</div><div className="mt-1" style={{ color: A.sub }}>{statusLabel(supplier.status, PARTICIPATION_STATUS_LABELS, language)}</div></div>{!disabledByStatus && allowed && <button type="button" data-testid={`rfq-response-action-${supplier.supplierId}`} className={`${rowActionClass.primary} shrink-0 gap-1`} onClick={() => openEditor(supplier)}><FilePlus2 size={13} />{actionLabel}</button>}</div><div className="mt-1 font-medium">{statusLabel(supplier.responseState, RESPONSE_STATE_LABELS, language)}</div>{quotation && <div className="mt-1 text-[11px]" style={{ color: A.sub }}>{tr("当前报价修订", "Current quote revision")}: {quotation.latestRevision?.revisionNumber || quotation.revisionNumber || "—"} · {tr("历史报价修订只读", "Earlier quote revisions are read-only")}</div>}</div>;
           })}
           {record.suppliers.knownParticipants.length === 0 && <div className="rounded-lg bg-slate-50 p-4 text-xs" style={{ color: A.sub }}>{tr("当前询价单没有供应商参与记录。", "This RFQ has no supplier participation records.")}</div>}
         </div>

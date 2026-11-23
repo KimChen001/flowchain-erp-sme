@@ -3,6 +3,7 @@ import { ArrowLeft, Lock, Printer } from "lucide-react";
 import { Link } from "react-router";
 import type { DocumentLanguage } from "../../../shared/business-documents.mjs";
 import { A, Card } from "../../components/ui";
+import { listButtonClass } from "../../components/ui/listLayout";
 import { useI18n } from "../../i18n/I18n";
 import { documentPageRule } from "./documentPaging";
 import "./business-documents.css";
@@ -107,10 +108,9 @@ export function DocumentShell({
               data-testid="business-document-print"
               disabled={!printable}
               onClick={() => window.print()}
-              className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-              style={{ background: A.blue }}
+              className={`${listButtonClass.primary} disabled:cursor-not-allowed`}
             >
-              <Printer size={15} />{t("documents.print")}
+              <Printer size={13} />{t("documents.print")}
             </button>
           </div>
         </div>

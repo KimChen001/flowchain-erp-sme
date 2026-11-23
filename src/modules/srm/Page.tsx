@@ -557,7 +557,7 @@ export default function SupplierMasterPage({
               <button
                 type="button"
                 onClick={() => void toggle(selected)}
-                className={listButtonClass.secondary}
+                className={selected.status === "active" ? listButtonClass.danger : listButtonClass.secondary}
               >
                 {copy(selected.status === "active" ? "Set inactive" : "Set active")}
               </button>
@@ -759,7 +759,7 @@ export default function SupplierMasterPage({
                         </button>
                         <button
                           type="button"
-                          className={rowActionClass.neutral}
+                          className={r.active ? rowActionClass.danger : rowActionClass.neutral}
                           onClick={() => void toggleRelationship(r)}
                         >
                           {copy(r.active ? "Set inactive" : "Set active")}
@@ -957,7 +957,7 @@ export default function SupplierMasterPage({
                     {writes.suppliers && <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
                       <div className="flex items-center gap-1.5">
                         <button type="button" onClick={() => startEdit(row)} className={rowActionClass.primary}>{copy("编辑")}</button>
-                        <button type="button" onClick={() => void toggle(row)} className={rowActionClass.neutral}>
+                        <button type="button" onClick={() => void toggle(row)} className={row.status === "active" ? rowActionClass.danger : rowActionClass.neutral}>
                           {copy(row.status === "active" ? "Set inactive" : "Set active")}
                         </button>
                       </div>

@@ -1,7 +1,6 @@
 import React, { useLayoutEffect, useRef, useState, useId } from "react";
 import { FileSpreadsheet, Plus, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { A, Card } from "./index";
-import { typography } from "./typography";
 import { listTableCardsRef } from "./workbenchTable";
 import { useI18n } from "../../i18n/I18n";
 
@@ -32,13 +31,22 @@ export function useListCopy() {
     COPY[key][language === "en-US" ? 0 : 1].replace(/\{(\w+)\}/g, (_, name) => typeof values[name] === "number" ? formatNumber(values[name] as number) : String(values[name] ?? ""));
 }
 
+// The type a <button> renders at: theme.css sets every button to 13 px on a
+// 20 px line outside the utility layers, so a 12 px class never reaches one.
+// A link drawn as a button (Compare, Edit draft, New) takes the same type, so
+// it sits level with the buttons beside it.
+const buttonType = "text-[13px] leading-5 font-medium tracking-normal";
+
 export const listButtonClass = {
   // 32 px on a desk, 36 px on a phone, for a finger.
-  secondary: `inline-flex h-8 items-center gap-1.5 rounded-lg bg-slate-50 px-3 max-sm:h-9 ${typography.denseButton} text-slate-900 hover:bg-slate-100`,
-  export: `inline-flex h-8 items-center gap-1.5 rounded-lg bg-blue-50 px-3 max-sm:h-9 ${typography.denseButton} text-blue-600 hover:bg-blue-100`,
-  primary: `inline-flex h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 max-sm:h-9 ${typography.denseButton} text-white hover:bg-blue-700 disabled:opacity-60`,
+  secondary: `inline-flex h-8 items-center gap-1.5 rounded-lg bg-slate-50 px-3 max-sm:h-9 ${buttonType} text-slate-900 hover:bg-slate-100`,
+  export: `inline-flex h-8 items-center gap-1.5 rounded-lg bg-blue-50 px-3 max-sm:h-9 ${buttonType} text-blue-600 hover:bg-blue-100`,
+  // The secondary look on a grey box or on the page background, where the
+  // slate fill above has no visible edge: white with a light border.
+  outline: `inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 max-sm:h-9 ${buttonType} text-slate-900 hover:bg-slate-50 disabled:opacity-60`,
+  primary: `inline-flex h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 max-sm:h-9 ${buttonType} text-white hover:bg-blue-700 disabled:opacity-60`,
   // Reject and cancel: one look on every detail page (design audit U-17).
-  danger: `inline-flex h-8 items-center gap-1.5 rounded-lg bg-red-50 px-3 max-sm:h-9 ${typography.denseButton} text-red-700 hover:bg-red-100 disabled:opacity-50`,
+  danger: `inline-flex h-8 items-center gap-1.5 rounded-lg bg-red-50 px-3 max-sm:h-9 ${buttonType} text-red-700 hover:bg-red-100 disabled:opacity-50`,
 };
 
 // Buttons inside a table row: the main one tinted, the others neutral. On a

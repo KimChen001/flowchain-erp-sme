@@ -1,9 +1,8 @@
 import { useId, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
-import { A } from "../../components/ui";
 import { FieldError, RequiredMark, invalidProps } from "../../components/ui/formLayout";
-import { StatusChip as ToneChip, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
+import { StatusChip as ToneChip, listButtonClass, statusToneOf, type StatusTone } from "../../components/ui/listLayout";
 import { useI18n } from "../../i18n/I18n";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { apiErrorText, knownCodeText } from "../../lib/apiErrorText";
@@ -112,7 +111,7 @@ export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reas
   label: string; testId: string; previewUrl: string; runUrl: string; payload: () => Record<string, unknown>;
   reasonLabel?: string; reasonMaxLength?: number; reasonRequired?: string; note?: ReactNode;
   afterRun?: (body: Record<string, unknown>) => Promise<void>;
-  onDone: () => void; tone?: "primary" | "secondary";
+  onDone: () => void; tone?: "primary" | "secondary" | "danger";
   issueText?: (code: string | undefined) => string | undefined;
   issueDetail?: (issue: Issue) => ReactNode;
   oneStep?: boolean;
@@ -192,7 +191,7 @@ export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reas
       setBusy(false);
     }
   };
-  if (!open) return <button type="button" data-testid={testId} data-one-step={oneStep && !reasonLabel ? "true" : undefined} disabled={busy} className={`${button} ${tone === "primary" ? "text-white" : "border border-slate-200"} disabled:opacity-50`} style={tone === "primary" ? { background: A.blue } : undefined} onClick={() => (oneStep && !reasonLabel ? void runAtOnce() : setOpen(true))}>{busy ? t("finance.working") : label}</button>;
+  if (!open) return <button type="button" data-testid={testId} data-one-step={oneStep && !reasonLabel ? "true" : undefined} disabled={busy} className={tone === "secondary" ? `${listButtonClass.secondary} disabled:opacity-50` : listButtonClass[tone]} onClick={() => (oneStep && !reasonLabel ? void runAtOnce() : setOpen(true))}>{busy ? t("finance.working") : label}</button>;
   const reasonErrorId = `${reasonId}-error`;
   return (
     <div className="w-full space-y-2 rounded-xl border border-slate-200 p-3" data-testid={`${testId}-panel`}>
@@ -219,9 +218,11 @@ export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reas
         </div>
       )}
       <div className="flex flex-wrap gap-2">
-        <button type="button" data-testid={`${testId}-preview`} className={`${button} border border-slate-200`} onClick={() => void preview()}><RefreshCw size={14} />{t("finance.preview")}</button>
-        <button type="button" data-testid={`${testId}-confirm`} className={`${button} text-white`} style={{ background: A.blue }} disabled={busy || Boolean(plan && !plan.allowed)} onClick={() => void confirm()}>{busy ? t("finance.working") : t("finance.confirm")}</button>
-        <button type="button" className={`${button} text-slate-600`} onClick={() => { setOpen(false); setPlan(null); setError(""); setReasonError(""); }}>{t("finance.close")}</button>
+        {/* Preview · Confirm · Close: the reason field's next stop is Preview, so
+            Enter there never closes the panel and loses the typed reason. */}
+        <button type="button" data-testid={`${testId}-preview`} className={listButtonClass.secondary} onClick={() => void preview()}><RefreshCw size={13} />{t("finance.preview")}</button>
+        <button type="button" data-testid={`${testId}-confirm`} className={`${tone === "danger" ? listButtonClass.danger : listButtonClass.primary} disabled:cursor-not-allowed`} disabled={busy || Boolean(plan && !plan.allowed)} onClick={() => void confirm()}>{busy ? t("finance.working") : t("finance.confirm")}</button>
+        <button type="button" className={listButtonClass.secondary} onClick={() => { setOpen(false); setPlan(null); setError(""); setReasonError(""); }}>{t("finance.close")}</button>
       </div>
       {plan && (plan.allowed ? <Notice tone="success">{t("finance.previewAllowed")}</Notice> : <Notice>{(plan.blockingIssues || []).map(describe).join(" · ")}</Notice>)}
       {plan && !plan.allowed && issueDetail && (plan.blockingIssues || []).map((issue, index) => <div key={`${issue.code}-${index}`}>{issueDetail(issue)}</div>)}

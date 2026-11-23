@@ -3,6 +3,7 @@ import { Info, RefreshCw } from "lucide-react";
 import { useSearchParams } from "react-router";
 import { A, Card } from "../../components/ui";
 import { listTableCardsRef } from "../../components/ui/workbenchTable";
+import { listButtonClass } from "../../components/ui/listLayout";
 import { EntityLink } from "../../components/business/EntityLink";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
@@ -200,7 +201,7 @@ function PeriodFilter({ from, to, graceDays, asOf, onChange, onReload, dates = t
     <div className="flex flex-wrap items-end gap-2" data-testid="supplier-performance-period">
       {dates && <div className="flex flex-wrap gap-1">
         {PRESETS.map(([key, days]) => (
-          <button key={key} type="button" onClick={() => onChange({ from: shiftDay(to || today, -(days - 1)), to: to || today, graceDays })} className="h-8 rounded-lg px-2.5 text-xs font-medium" style={{ background: A.gray6, color: A.blue }}>{tr(key)}</button>
+          <button key={key} type="button" onClick={() => onChange({ from: shiftDay(to || today, -(days - 1)), to: to || today, graceDays })} className={listButtonClass.secondary}>{tr(key)}</button>
         ))}
       </div>}
       {dates && (["from", "to"] as const).map((field) => (
@@ -215,7 +216,7 @@ function PeriodFilter({ from, to, graceDays, asOf, onChange, onReload, dates = t
           {[0, 1, 2, 3, 5, 7].map((value) => <option key={value} value={value}>{value}</option>)}
         </select>
       </label>
-      <button type="button" onClick={onReload} className="h-8 rounded-lg px-2.5 text-xs" style={{ background: A.gray6, color: A.blue }}><RefreshCw size={12} className="mr-1 inline" />{tr("refresh")}</button>
+      <button type="button" onClick={onReload} className={listButtonClass.secondary}><RefreshCw size={13} />{tr("refresh")}</button>
     </div>
   );
 }
