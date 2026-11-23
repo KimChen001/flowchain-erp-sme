@@ -292,7 +292,13 @@ test('the UCI money figures: purchase price, gross profit, cash, supplier invoic
   assert.deepEqual(expect('payables-overdue-zh').mentions.map((entry) => entry.label), ['INV-A-0002'])
   assert.equal(expect('gross-profit-en').numbers[0].value, 51)
   assert.deepEqual(expect('cash-month-en').numbers.map((entry) => entry.value), [29.8, 0])
-  assert.equal(cases.filter((row) => row.kind === 'payables').length, 8)
+  // The document chain cases (trace_document_chain): the overdue invoice by
+  // its due date, and the open difference by its kind.
+  assert.deepEqual(expect('chain-overdue-invoice-en').dates, [{ label: 'due', date: '2026-10-31' }])
+  assert.deepEqual(expect('chain-overdue-invoice-en').calls, ['trace_document_chain'])
+  assert.deepEqual(cases.find((row) => row.id === 'chain-held-invoice-zh').turns, ['INV-A-0003 这张发票为什么卡住了？'])
+  assert.deepEqual(expect('chain-held-invoice-zh').matches.map((entry) => entry.label), ['说到开票数量多于收货'])
+  assert.equal(cases.filter((row) => row.kind === 'payables').length, 10)
   // Without payables in the plan there are no payables cases.
   assert.equal(buildUciCases(uciFacts(smallPlan())).filter((row) => row.kind === 'payables').length, 0)
 })
@@ -347,13 +353,15 @@ test('the UCI figures with purchase requests, orders still being filled and revi
   const records = cases.slice(cases.findIndex((row) => row.id === 'requests-rejected-en'), cases.findIndex((row) => row.id === 'reply-said-en'))
   // No request waits for approval or is approved here, and the one order
   // being filled is reserved, so those cases are left out.
-  assert.deepEqual(records.map((row) => row.id), ['requests-rejected-en', 'requests-draft-zh', 'open-sales-en', 'reviewed-differences-en', 'tier-one-en'])
+  assert.deepEqual(records.map((row) => row.id), ['requests-rejected-en', 'requests-draft-zh', 'open-sales-en', 'reviewed-differences-en', 'tier-one-en', 'chain-overdue-invoice-en', 'chain-held-invoice-zh'])
   assert.ok(records.every((row) => row.asUser === 'kim@example.com'))
   assert.deepEqual(byId['requests-rejected-en'].expect.mentions, [{ label: 'H1', any: ['H1', 'Hero Lamp'] }])
   assert.deepEqual(byId['requests-draft-zh'].expect, { mentions: [{ label: 'P1', any: ['P1', 'Pending Sign'] }], numbers: [{ label: '草稿张数', value: 1 }] })
   assert.deepEqual(byId['open-sales-en'].expect, { numbers: [{ label: 'orders still to ship', value: 1 }], mentions: [{ label: 'Customer c1 (United Kingdom)', any: ['c1'] }] })
   assert.deepEqual(byId['reviewed-differences-en'].expect, { numbers: [{ label: 'reviewed', value: 1 }], mentions: [{ label: 'INV-A-0003', any: ['INV-A-0003'] }] })
   assert.deepEqual(byId['tier-one-en'].expect.mentions, [{ label: 'Acme Home Goods', any: ['Acme Home Goods'] }])
+  assert.deepEqual(byId['chain-held-invoice-zh'].expect.mentions, [{ label: 'INV-G-0001', any: ['INV-G-0001'] }])
+  assert.deepEqual(byId['chain-held-invoice-zh'].expect.matches.map((entry) => entry.label), ['说到价格高于订单'])
   // Without the C12 documents in the plan there are no records cases.
   assert.equal(buildUciCases(uciFacts(smallPlan())).filter((row) => row.kind === 'records').length, 0)
 })

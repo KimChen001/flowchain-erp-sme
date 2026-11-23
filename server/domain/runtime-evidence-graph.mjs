@@ -31,10 +31,17 @@ function labelOf(type, row, id) {
   return text(row.name || row.supplierName || row.customerName || row.title || row.invoiceNumber || id)
 }
 
-export function buildRuntimeEvidenceGraph(context, { entityType, entityId } = {}) {
+// Every node and edge the context holds, before an anchor picks the part
+// around it: the evidence graph below, and the assistant's document chain
+// (ai-assistant-v2-chain-tools.mjs), which walks further than one step.
+// rowOf(node) is the record a node was built from, for a reader that needs
+// more than the node; it is never served. An edge names the types of its ends
+// too (fromType, toType), since ids of different kinds may repeat.
+export function buildRuntimeEvidenceIndex(context) {
   const nodes = []
   const edges = []
   const index = new Map()
+  const rows = new Map()
   const addNode = (type, row) => {
     const id = idOf(type, row)
     if (!id) return null
@@ -56,9 +63,16 @@ export function buildRuntimeEvidenceGraph(context, { entityType, entityId } = {}
       summary: text(row.deliveryRiskReason || row.summary),
       dataLimitations: [],
     }
-    nodes.push(node); index.set(key, node); return node
+    nodes.push(node); index.set(key, node); rows.set(node, row); return node
   }
-  const addEdge = (from, to, relation) => { if (from && to && !edges.some(edge => edge.from === from.entityId && edge.to === to.entityId && edge.relation === relation)) edges.push({ id: `${relation}:${from.entityId}:${to.entityId}`, from: from.entityId, to: to.entityId, relation, relationLabel: relation, sourceRepository: 'BusinessReadContext' }) }
+  const edgeKeys = new Set()
+  const addEdge = (from, to, relation) => {
+    if (!from || !to) return
+    const key = `${relation}\u0000${from.entityType}:${from.entityId}\u0000${to.entityType}:${to.entityId}`
+    if (edgeKeys.has(key)) return
+    edgeKeys.add(key)
+    edges.push({ id: `${relation}:${from.entityId}:${to.entityId}`, from: from.entityId, to: to.entityId, fromType: from.entityType, toType: to.entityType, relation, relationLabel: relation, sourceRepository: 'BusinessReadContext' })
+  }
 
   for (const [collection, type] of Object.entries(collectionType)) for (const row of array(context[collection])) addNode(type, row)
   const find = (type, id) => index.get(`${type}:${text(id).toLowerCase()}`)
@@ -71,11 +85,27 @@ export function buildRuntimeEvidenceGraph(context, { entityType, entityId } = {}
     const supplier = find('supplier', rel.supplierId || rel.supplierCode)
     addEdge(item, supplier, 'approved_supplier_relationship')
   }
+  // A request quoted through an RFQ, and the order an RFQ was awarded to, as
+  // the RFQ and the order record them (relationship types sourced_by_rfq and
+  // awarded_to_po, src/domain/relationships/model.ts).
+  for (const rfq of array(context.rfqs)) {
+    const rfqNode = find('rfq', idOf('rfq', rfq))
+    addEdge(find('purchase_request', rfq.sourcePrId || rfq.sourceRequest), rfqNode, 'sourced_by_rfq')
+    addEdge(rfqNode, find('purchase_order', rfq.linkedPo), 'awarded_to_po')
+  }
+  const receiptsByPo = new Map()
+  for (const receipt of array(context.receipts)) {
+    const key = text(receipt.poId || receipt.po || receipt.sourcePoId || receipt.purchaseOrderId).toLowerCase()
+    if (!key) continue
+    if (receiptsByPo.has(key)) receiptsByPo.get(key).push(receipt)
+    else receiptsByPo.set(key, [receipt])
+  }
   for (const po of array(context.purchaseOrders)) {
     const poNode = find('purchase_order', idOf('purchase_order', po))
     const prNode = find('purchase_request', po.sourcePrId || po.sourceRequest || po.purchaseRequestId)
     addEdge(prNode, poNode, 'converted_to_po'); addEdge(poNode, prNode, 'sourced_from_pr')
-    for (const receipt of array(context.receipts).filter(row => same(row.poId || row.po || row.sourcePoId || row.purchaseOrderId, poNode?.entityId))) addEdge(poNode, find('receiving_doc', idOf('receiving_doc', receipt)), 'received_by')
+    addEdge(find('rfq', po.sourceRfqId || po.sourceRfq), poNode, 'awarded_to_po')
+    for (const receipt of receiptsByPo.get(text(poNode?.entityId).toLowerCase()) || []) addEdge(poNode, find('receiving_doc', idOf('receiving_doc', receipt)), 'received_by')
   }
   for (const invoice of array(context.supplierInvoices)) {
     const invoiceNode = find('supplier_invoice', idOf('supplier_invoice', invoice))
@@ -83,7 +113,11 @@ export function buildRuntimeEvidenceGraph(context, { entityType, entityId } = {}
     const po = find('purchase_order', invoice.poId || invoice.relatedPo || invoice.purchaseOrderId)
     addEdge(receipt, invoiceNode, 'invoiced_by'); addEdge(po, invoiceNode, 'invoiced_by')
   }
+  return { nodes, edges, find, rowOf: (node) => rows.get(node) }
+}
 
+export function buildRuntimeEvidenceGraph(context, { entityType, entityId } = {}) {
+  const { nodes, edges, find } = buildRuntimeEvidenceIndex(context)
   const normalizedType = typeAliases[text(entityType).toLowerCase()] || text(entityType).toLowerCase()
   let anchor = find(normalizedType, entityId)
   if (!anchor && normalizedType === 'item') anchor = find('inventory_item', entityId)
