@@ -12,7 +12,7 @@
 // when code computes it from its quote and the reply date; our own quoted
 // chase is removed before reading; invisible characters are stripped.
 import { PROMPT_INJECTION, aiInjectionDetected } from './ai-injection-guard.mjs'
-import { emailParts, otherOrderNumberWritten } from './supplier-reply-orders.mjs'
+import { emailParts, knownOrderSequenceWritten, otherOrderNumberWritten } from './supplier-reply-orders.mjs'
 import {
   SUPPLIER_REPLY_LIMITS, SUPPLIER_REPLY_PROMPT_VERSION, supplierReplyCheckSchema, supplierReplyReadingSchema,
 } from '../../shared/supplier-reply-contract.mjs'
@@ -1242,8 +1242,13 @@ function severalOrdersFinalGate(result, { order }) {
 // confirmed or for the person goes to the person as other_order_number with
 // only its quote (no date, no day to pick, no split dates). Lines dropped
 // stay dropped. Like the several-order gate, it only adds holds.
-function otherOrderNumberGate(result, { order, text: reply }) {
-  if (!otherOrderNumberWritten(reply, order?.number)) return result
+// supplierOrders: the supplier's orders with their status ({ number, status
+// }), which the service looks up when the email names an order by its
+// sequence alone ("Order 14", 订单14, "#14:"); such a mention counts when an
+// open order of the supplier other than this one has that sequence
+// (knownOrderSequenceWritten).
+function otherOrderNumberGate(result, { order, text: reply, supplierOrders = null }) {
+  if (!otherOrderNumberWritten(reply, order?.number) && !knownOrderSequenceWritten(reply, order?.number, supplierOrders, SUPPLIER_REPLY_ORDER_STATES)) return result
   const byRef = new Map(array(order?.lines).map((line) => [line.ref, line]))
   const lines = result.lines.map((row) => {
     if (row.outcome === 'dropped') return row

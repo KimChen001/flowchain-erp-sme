@@ -2,7 +2,7 @@
 // the text each order owns, and which named orders are read.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { emailOrdersToRead, emailParts, orderNumberPrefix, orderNumbersNamed, otherOrderNumberWritten } from './supplier-reply-orders.mjs'
+import { emailOrdersToRead, emailParts, knownOrderSequenceWritten, orderNumberPrefix, orderNumbersNamed, orderSequenceMentions, otherOrderNumberWritten } from './supplier-reply-orders.mjs'
 
 const A = 'PO-202611-0012'
 const B = 'PO-202611-0013'
@@ -228,6 +228,52 @@ test('another order\'s number in a form the numbering does not see is found; thi
   ]) assert.equal(otherOrderNumberWritten(text, on), null, text)
   // Only for a number in the numbering format.
   assert.equal(otherOrderNumberWritten('PO No. 202611-0014', 'ACME-17'), null)
+})
+
+test('an order named by its sequence alone, as a label, counts only when the supplier has another open order with that sequence (#463, after its review)', () => {
+  const on = 'PO-202611-0021'
+  const OPEN = ['issued', 'partially_received']
+  const open = (...numbers) => numbers.map((number) => ({ number, status: 'issued' }))
+  const supplier = [...open(on, 'PO-202611-0001', 'PO-202611-0003', 'PO-202611-0012', 'PO-202611-0014', 'PO-202611-0015', 'PO-202611-0018', 'PO-202611-0020', 'PO-202611-0022', 'PO-202611-0024', 'PO-202611-0025', 'PO-202611-0030', 'PO-202611-0200', 'PO-202611-1200', 'PO-202610-0021'), { number: 'PO-202610-0016', status: 'received' }]
+  // As a label: a colon, a closing bracket or the end of the line after it.
+  for (const text of ['Order 14:', 'order #14:', 'Order No. 14:', 'Order 0014:', 'your order 0014:', 'Order ID 14:', 'Purchase order 14:', 'Purchase Order No. 0014:', 'Order (14):', '(order #14)', 'This is about order 14.',
+    '订单14：', '订单号14：', '订单 0014：', '订单编号：0014', '订单（14）：', '采购单14：', '采购订单编号：0014', '第14号单：', '14号单：', '14号订单：', '第14号订单：', '14号采购单：',
+    'Orders 21 and 14:', 'Order Nos. 21 & 14:', '订单21和14：', `${on}/0014:`, `${on}/22:`, `${on} and 14:`, `${on}, 22:`, `${on} and -0014:`,
+    'Order 0003:', 'Order 2026110014', '订单号 2026110014 的货', 'PO 2026110014']) {
+    assert.ok(knownOrderSequenceWritten(text, on, supplier, OPEN), text)
+  }
+  // Not counted. The #463 review's normal phrasings (a number followed by a
+  // unit, a quantity, a time or a currency; list numbers and addresses; other
+  // documents; a whole number after no order word) and the coordinator's
+  // counter-examples, the supplier having open orders with those sequences.
+  for (const text of ['We need to order 20 more reels from our mill first.', 'We had to re-order 24 cases of resin.', 'Minimum order 12 dozen per SKU.', 'Min. order 25 bags.', 'Please place the order 15 working days before pickup.',
+    'Next time please order 30 calendar days ahead.', 'For custom sizes please order 24 hours ahead.', 'Freight: one order 40HQ container.', 'Minimum order 20GP for direct shipping.', 'Minimum order 25 GBP for free delivery.',
+    'If you order 15 percent more we can fill the pallet.', 'Order 12 drums at a time.', 'Order 20 bundles and we cover the freight.', 'Order: 12 x HOUSEHOLD_2_110 also confirmed.', 'We will order 16 mm steel.', 'Kindly order 20 ea minimum.',
+    'Your order 14 days ago is fine.', 'Order 1 of 2 shipped.', 'Minimum order: 25.', 'Please order 14:', '#10: packing as before.', 'No. 12: same packing as last time.', '(#12) see the note below.', 'Re: #24', '#14:', 'No. 0014:',
+    'Our address has changed:\nBuilding 3\nNo. 18\nXinhua Road, Ningbo', 'Case #24: closed.', 'Ticket #14 closed.', 'Item #12 is the same.', 'Our order 14:', 'Sales order 14:', 'Change Order #14:', 'Work order 14:', '我方订单14：',
+    'Our ref 2026110014.', 'Payment ref 2026110018 received, thank you.', 'Remittance 2026110012 received.', '2026110014:', 'Tel 2026110014.',
+    '订单24小时内确认。', '订单12小时内发出。', '订单20公斤以上包邮。', '订单30万以上可以月结。', '订单15个工作日交货。', '订单20盒起订。', '订单24h内回复。', '订单12点前下达，当天发货。', '订单15:00前确认，当天发货。',
+    '这个月你们的订单20多张，排产比较紧。', '本月订单30余笔，产能紧张。', '维修单号 14 已处理。', 'RMA单号：15', '对账单号 12 请查收。', '出库单号：18', '退款单号 20 已处理。', '单据编号：2026110017', '出库单 2026110012 已开。',
+    '订单14天内发出。', '1号楼3号门。', '12月14号单独发货。', '订单 20% 定金已收。', '第12号单元。', '订单18号前确认。', '订单满20台包邮。',
+    'PO 30% deposit received.', '#1 priority for us.', 'Item #3 is the same as last time.', '订单 14 件已备好。', 'Your PO: 1,200 pcs.', 'Order #1:', 'Order 3:', 'order:\n\n14', `${on}, 1,200 pcs`, `${on}, 20 pcs`]) {
+    assert.equal(knownOrderSequenceWritten(text, on, supplier, OPEN), null, text)
+  }
+  // This order's own sequence never counts, even with another month's open
+  // 21 (#463 review: that held about half such replies for an active supplier).
+  for (const text of ['Order 21:', '订单21：', 'Thanks for your order 21.', 'Order 0021:']) assert.equal(knownOrderSequenceWritten(text, on, supplier, OPEN), null, text)
+  // Only an open order of the supplier's other than this one counts.
+  assert.equal(knownOrderSequenceWritten('Order 16:', on, supplier, OPEN), null)
+  assert.equal(knownOrderSequenceWritten('Order 14:', on, open('PO-202611-0015'), OPEN), null)
+  assert.equal(knownOrderSequenceWritten('Order 14:', on, open('INV-202611-0014'), OPEN), null)
+  assert.equal(knownOrderSequenceWritten('Order 14:', on, [], OPEN), null)
+  assert.equal(knownOrderSequenceWritten('Order 14:', on, null, OPEN), null)
+  assert.ok(knownOrderSequenceWritten('Order 14:', on, open('PO-202609-0014'), OPEN))
+  // The whole number counts only as that exact order.
+  assert.equal(knownOrderSequenceWritten('Order 2026110016', on, open('PO-202610-0016'), OPEN), null)
+  // Long runs of list marks, quote marks, wide spaces or numbers are quick.
+  const started = Date.now()
+  for (const text of [`${'-'.repeat(20000)}x #14\n${'>'.repeat(20000)} No. 14`, `订单${' '.repeat(7900)}x`, '2026110014 '.repeat(727), `${on}${'/0014'.repeat(1500)}`, `Order${'　'.repeat(7900)}14:`]) orderSequenceMentions(text)
+  assert.ok(Date.now() - started < 500)
 })
 
 test('the order-number patterns stay quick on long runs of wide spaces and long words (#463 review: up to 2 s before)', async () => {

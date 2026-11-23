@@ -404,3 +404,100 @@ export function otherOrderNumberWritten(text, number) {
   }
   return null
 }
+
+// Another of the supplier's orders named by its sequence alone, which only
+// the supplier's own orders can tell from a count or a list number (the
+// misses left after #461's review; coordinator and #463 review, 11/23).
+// It counts only as a label: the mention ends at a colon, a closing bracket
+// or the end of its line ("Order 14:", "(order #14)", 订单（14）：, a line
+// of its own). Forms:
+//   - "Order 14", "order #14", "Order No. 0014", "Order ID 14", "Purchase
+//     order 14"; 订单14, 订单号 14, 订单编号：0014, 订单（14）, 采购单14;
+//   - 第14号订单, 14号订单, 第14号单, 14号单;
+//   - a list after an order word: "Orders 21 and 14:", 订单21和14：;
+//   - a list after a number in the numbering that shortens the next one:
+//     "PO-202611-0021/0014", "PO-202611-0021/22:", "… and -0014";
+//   - the whole number with no separator after an order word: "Order
+//     2026110014", 订单号 2026110014 (anywhere in the sentence).
+// Not counted: a number followed by anything but a label's end ("order 20
+// more reels", "Minimum order 25 bags", "order 15 working days", 订单24小时
+// 内确认, 订单12点前, 订单20多张, 订单15:00前); a count, a share, a date, a
+// year or a month; the supplier's own order or another kind of order (our
+// order 14, 我方订单14, sales order 14, change order #12, work order 14); an
+// order word after a verb or a quantity word ("please order 14:", "minimum
+// order: 25."); a bare "#14:", "No. 14:" or "Re: #24" (list numbers and
+// addresses); a one-digit sequence written without zeros ("Order #1:" is
+// more often a list's numbering; "Order 0003:" counts); other documents'
+// numbers (出库单号：18, 单据编号 2026110017, "Payment ref 2026110018").
+//
+// orderSequenceMentions returns each mention ({ text, seq } or, for the
+// whole number, { text, month, seq }); the service looks the supplier's
+// orders up only when there is one. knownOrderSequenceWritten counts a
+// mention only when an open order of the supplier other than this one has
+// that sequence (in any month), or is that whole number. This order's own
+// sequence never counts: "thanks for your order 21" on PO-202611-0021 is
+// about this order (#463 review: holding it when another month's 21 was
+// open held about half of such replies for an active supplier).
+const NOT_OUR_ORDER_BEFORE = /(?:^|[^\p{L}])(?:our|my|sales|supplier'?s?|change|work|back|standing|money|sell|buy|limit|market|stop|court|executive|restraining|gag|mail|postal|pecking|to|please|kindly|will|would|can|could|should|must|may|we|you|i|they|also|re-?|min\.?|minimum|max\.?|maximum|moq|each|per|an|one|every|any|first|trial|sample|bulk|place|placed|repeat)[\t ]*$|(?:我方|我司|我们的?|销售|下|起)[\t ]*$/iu
+// The end of a label: a colon (not a time, 15:00), a closing bracket, or the
+// end of the line (a full stop allowed).
+const LABEL_END = /^[\t ]*(?:[:：](?![\t ]*\d)|[)）\]】]|[.。]?[\t ]*(?:\n|$))/u
+const YEAR_OR_MONTH = (digits) => (digits.length === 4 && /^(?:19|20)\d{2}$/.test(digits)) || (digits.length === 6 && /^(?:19|20)\d{2}(?:0[1-9]|1[0-2])$/.test(digits))
+export function orderSequenceMentions(text) {
+  const source = plainText(String(text ?? '').replace(NBSP, ' ')).replace(OTHER_DASHES, '-')
+  const out = []
+  // One sequence: not a year or a month, not one digit without zeros, not
+  // our own side's or another kind of order (the 30 characters before).
+  const fits = (digits, before) => !YEAR_OR_MONTH(digits) && digits.length > 1 && !NOT_OUR_ORDER_BEFORE.test(before.slice(-30))
+  const labelled = (pattern, list = false) => {
+    for (const match of source.matchAll(pattern)) {
+      const at = match.index + match[0].length
+      if (!LABEL_END.test(source.slice(at, at + 8))) continue
+      const before = source.slice(Math.max(0, match.index - 30), match.index)
+      const digits = list ? [...match[0].matchAll(/\d{1,6}/g)].map((one) => one[0]) : [match[1]]
+      for (const one of digits) if (fits(one, before)) out.push({ text: match[0], seq: Number(one) })
+    }
+  }
+  // English: an order word, a label word, a mark, the sequence; a list after
+  // the plural.
+  labelled(/(?<![\p{L}\p{N}])(?:purchase[\t ]+)?order(?:[\t ]*(?:no|nr|num|number|id)\.?)?[\t ]*(?:[-#:.]+[\t ]*)?[(（]?[\t ]*(\d{1,6})[\t ]*[)）]?(?![\p{N}])/giu)
+  labelled(/(?<![\p{L}\p{N}])(?:purchase[\t ]+)?(?:orders|order[\t ]*nos\.?)[\t ]*(?:[-#:.]+[\t ]*)?\d{1,6}(?:[\t ]*(?:,|&|and|\/)[\t ]*#?\d{1,6})+(?![\p{N}])/giu, true)
+  // Chinese: 订单 / 采购单 with 号, 编号 or 号码, a mark, the sequence, in
+  // brackets or not; a list (订单21和14).
+  labelled(/(?:订单|采购单)(?:编号|号码|号)?[\t ]*(?:[#:：.-]+[\t ]*)?[(（]?[\t ]*(\d{1,6})[\t ]*[)）]?(?![\p{N}])/gu)
+  labelled(/(?:订单|采购单)(?:编号|号码|号)?[\t ]*(?:[#:：.-]+[\t ]*)?\d{1,6}(?:[\t ]*(?:,|，|、|和|及|与|\/)[\t ]*\d{1,6})+(?![\p{N}])/gu, true)
+  labelled(/(?<![\p{N}])第?[\t ]*(\d{1,6})[\t ]*号(?:订单|采购单|单)(?![据独价位元次])/gu)
+  // A list after a number in the numbering that shortens the next one.
+  for (const match of source.matchAll(/(?<![\p{L}\p{N}])[A-Za-z][A-Za-z0-9]{0,9}-\d{6}-\d{4,6}((?:[\t ]*(?:[/&,、]|and|also|和|及|与)[\t ]*[-/#]?[\t ]*\d{2,6}(?![\p{N}]|[\t ]*[-./][\t ]*\d))+)/giu)) {
+    const at = match.index + match[0].length
+    if (COUNT_OR_DATE_AFTER.test(source.slice(at, at + 20))) continue
+    for (const one of match[1].matchAll(/\d{2,6}/g)) {
+      // Two digits only as a label ("PO-202611-0021/22:").
+      if (one[0].length < 3 && !LABEL_END.test(source.slice(at, at + 8))) continue
+      if (!YEAR_OR_MONTH(one[0])) out.push({ text: one[0], seq: Number(one[0]) })
+    }
+  }
+  // The whole number, no separator, after an order word.
+  for (const match of source.matchAll(/(?<![\p{L}\p{N}])(?:p\.?o\.?|(?:purchase[\t ]+)?orders?(?:[\t ]*(?:no|nr|num|number|id)\.?)?|订单(?:编号|号码|号)?|采购单(?:编号|号码|号)?)[\t ]*(?:[#:：.-]+[\t ]*)?((?:19|20)\d{2}(?:0[1-9]|1[0-2]))(\d{4,6})(?![\p{N}])/giu)) {
+    const before = source.slice(Math.max(0, match.index - 30), match.index)
+    if (NOT_OUR_ORDER_BEFORE.test(before)) continue
+    out.push({ text: match[0], month: match[1], seq: Number(match[2]) })
+  }
+  return out
+}
+export function knownOrderSequenceWritten(text, number, supplierOrders, openStates) {
+  const own = parsed(number)
+  if (!own || !Array.isArray(supplierOrders) || !supplierOrders.length) return null
+  const open = new Set(Array.isArray(openStates) ? openStates : [])
+  const others = supplierOrders
+    .map((row) => ({ order: parsed(row?.number), status: String(row?.status ?? '') }))
+    .filter(({ order, status }) => order && order.prefix === own.prefix && order.number !== own.number && open.has(status))
+    .map(({ order }) => order)
+  if (!others.length) return null
+  for (const mention of orderSequenceMentions(text)) {
+    if (mention.month) {
+      if (others.some((order) => order.month === mention.month && order.seq === mention.seq)) return mention.text
+    } else if (mention.seq !== own.seq && others.some((order) => order.seq === mention.seq)) return mention.text
+  }
+  return null
+}

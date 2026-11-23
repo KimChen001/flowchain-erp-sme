@@ -10,8 +10,8 @@
 // the second test. No model.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { checkReplyReading, checkReplyReadingBeforeGate, cleanSupplierReply } from '../../../server/domain/supplier-reply-reading.mjs'
-import { emailParts, orderNumbersNamed, otherOrderNumberWritten } from '../../../server/domain/supplier-reply-orders.mjs'
+import { SUPPLIER_REPLY_ORDER_STATES, checkReplyReading, checkReplyReadingBeforeGate, cleanSupplierReply } from '../../../server/domain/supplier-reply-reading.mjs'
+import { emailParts, knownOrderSequenceWritten, orderNumbersNamed, otherOrderNumberWritten } from '../../../server/domain/supplier-reply-orders.mjs'
 import { ROUND_1, ROUND_2, ROUND_3, ROUND_4 } from './review-probes.mjs'
 import { SUPPLIER_REPLY_CASES } from './cases.mjs'
 import { HELD_OUT_CASES } from './held-out-cases.mjs'
@@ -169,4 +169,84 @@ test('on the one-order path the other-order-number gate only adds holds, and an 
   // Not vacuous: the W02-type emails are gated, and the rest still proposes.
   assert.ok(gated >= 21, `${gated} checks gated`)
   assert.ok(checks >= 130 && proposedUngated >= 60, `${checks} one-order checks, ${proposedUngated} ungated with a proposal`)
+})
+
+// An open order for every number an email writes, this month and the month
+// before (and the whole number for every YYYYMM+sequence run): the worst
+// case for the check by the supplier's orders.
+function everyNumberAnOrder(text, number) {
+  const own = /^([A-Z]+)-(\d{4})(\d{2})-\d{4,6}$/.exec(String(number ?? ''))
+  if (!own) return []
+  const [year, month] = [Number(own[2]), Number(own[3])]
+  const months = [`${year}${String(month).padStart(2, '0')}`, month === 1 ? `${year - 1}12` : `${year}${String(month - 1).padStart(2, '0')}`]
+  const out = new Set()
+  for (const run of String(text).normalize('NFKC').match(/\d+/g) || []) {
+    if (run.length <= 6) for (const m of months) out.add(`${own[1]}-${m}-${run.padStart(4, '0')}`)
+    const whole = /^((?:19|20)\d{2}(?:0[1-9]|1[0-2]))(\d{4,6})$/.exec(run)
+    if (whole) out.add(`${own[1]}-${whole[1]}-${whole[2]}`)
+  }
+  return [...out].map((n) => ({ number: n, status: 'issued' }))
+}
+test('with the supplier\'s orders, an order named by its sequence alone holds every line; the check only adds holds, and no case of the eval sets changes (after #461\'s review)', () => {
+  let checks = 0
+  let gated = 0
+  const run = (at, args) => {
+    const before = checkReplyReading({ ...args, supplierOrders: null })
+    const after = checkReplyReading(args)
+    assert.ok(onlyAddsOtherOrderHolds(before, after), at)
+    checks += 1
+    if (knownOrderSequenceWritten(args.text, args.order.number, args.supplierOrders, SUPPLIER_REPLY_ORDER_STATES)) {
+      gated += 1
+      for (const line of after.lines) assert.ok(!['proposed', 'confirmed'].includes(line.outcome), at)
+    }
+    return after
+  }
+  // The review probes as the paste reads them on one order, with the
+  // supplier's orders and their status, and with the worst case.
+  for (const [name, round] of Object.entries(ROUNDS)) {
+    for (const one of emailsOf(round)) {
+      const text = cleanSupplierReply(one.email).text
+      const named = orderNumbersNamed(text, one.on, one.list).filter((number) => one.orders[number])
+      const emailRead = named.length >= 2 ? [one.on, ...named.filter((number) => number !== one.on)] : []
+      const order = one.order || { ...one.orders[one.on], status: 'issued' }
+      for (const [way, supplierOrders] of [['list', one.list.map((number) => ({ number, status: (round.STATUS || {})[number] || 'issued' }))], ['every number', everyNumberAnOrder(one.email, order.number)]]) {
+        run(`round ${name} ${one.id} on ${one.on} [${way}]`, { order, text, receivedOn: round.RECEIVED, reading: { replyKind: 'dates', lines: one.lines, flags: one.flags || [], reason: null }, emailRead, orderNumbers: one.list, supplierOrders })
+      }
+    }
+  }
+  // The eval sets' one-order cases, perfect readings, the worst case: no
+  // line changes.
+  let cases = 0
+  for (const kase of [...SUPPLIER_REPLY_CASES, ...HELD_OUT_CASES, ...HELD_OUT_2_CASES]) {
+    const text = cleanSupplierReply(kase.replyText).text
+    const want = kase.expected.lines.filter((line) => line.outcome === 'proposed' && line.proposedDate && line.quoteIncludes)
+    if (!want.length) continue
+    const args = { order: kase.order, text, receivedOn: kase.replyDate, reading: { replyKind: 'dates', lines: want.map((line) => ({ line: line.ref, date: line.proposedDate, quote: line.quoteIncludes, dateKind: line.dateKind || 'stated' })), flags: [], reason: null } }
+    assert.deepEqual(run(kase.id, { ...args, supplierOrders: everyNumberAnOrder(kase.replyText, kase.order.number) }), checkReplyReading(args), kase.id)
+    cases += 1
+  }
+  // The review's sequence-only forms on round 3's order A, the supplier's
+  // order 14 (PO-202611-0014) open: every line held. Closed: not this check's.
+  const { A: onA, H074, H110, H437, L: line } = ROUND_3
+  const three = [line('L1', '2026-12-03', `${H074} ships on 3 December.`), line('L2', '2026-12-09', `${H110} ships on 9 December.`), line('L3', '2026-12-10', `${H437} ships on 10 December.`)]
+  const orderA = { ...ROUND_3.ORDERS[onA], status: 'issued' }
+  const withB = (status) => [{ number: onA, status: 'issued' }, { number: 'PO-202611-0014', status }]
+  for (const form of ['Order 14', 'order #14', 'Order No. 0014', 'Order ID 14', 'Purchase order 14', 'Order (14)', '订单14', '订单号 14', '订单编号 0014', '订单（14）', '采购单14', '第14号单', '14号订单', 'Order 2026110014']) {
+    const text = cleanSupplierReply(`Hi Kim,\nDates below.\n${H074} ships on 3 December.\n${form}:\n${H110} ships on 9 December.\n${H437} ships on 10 December.`).text
+    const args = { order: orderA, text, receivedOn: ROUND_3.RECEIVED, reading: { replyKind: 'dates', lines: three, flags: [], reason: null }, emailRead: [], orderNumbers: [] }
+    const held = run(`form ${JSON.stringify(form)} [open]`, { ...args, supplierOrders: withB('issued') })
+    assert.deepEqual(held.lines.map((row) => row.issue), ['other_order_number', 'other_order_number', 'other_order_number'], form)
+    assert.deepEqual(run(`form ${JSON.stringify(form)} [closed]`, { ...args, supplierOrders: withB('received') }), checkReplyReading(args), form)
+  }
+  // The counter-examples, the supplier having open orders 1, 3, 14, 30, 200
+  // and 1200: A's date stays proposed.
+  const supplier = [onA, 'PO-202611-0001', 'PO-202611-0003', 'PO-202611-0014', 'PO-202611-0030', 'PO-202611-0200', 'PO-202611-1200'].map((number) => ({ number, status: 'issued' }))
+  for (const extra of ['PO 30% deposit received.', '#1 priority for us.', 'Item #3 is the same as last time.', '订单 14 件已备好。', 'Your PO: 1,200 pcs.', 'Order 1 of 2 shipped.', 'Change Order #14, Rev 6.', 'Our order 14 refers.', 'Minimum order 30 pounds for free delivery.', 'Order 14 days ago.', '#14:', 'No. 14:', '订单24小时内确认。', '出库单号：14', 'Payment ref 2026110014 received.', 'Thanks for your order 21.']) {
+    const text = cleanSupplierReply(`Hi Kim,\n${H074} ships on 3 December.\n${extra}`).text
+    if (emailParts(text, onA, []) !== null) continue
+    const after = run(`counter-example ${JSON.stringify(extra)}`, { order: orderA, text, receivedOn: ROUND_3.RECEIVED, reading: { replyKind: 'dates', lines: [three[0]], flags: [], reason: null }, emailRead: [], orderNumbers: [], supplierOrders: supplier })
+    assert.deepEqual(after.lines.map((row) => [row.outcome, row.proposedDate]), [['proposed', '2026-12-03']], extra)
+  }
+  assert.ok(cases >= 41, `${cases} eval cases`)
+  assert.ok(gated >= 27 && checks >= 930, `${gated} gated of ${checks}`)
 })
