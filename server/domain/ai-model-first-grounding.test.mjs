@@ -503,3 +503,36 @@ test('slash dates are read in the workspace order', () => {
   const [typed] = check('You asked for delivery by 18/11/2026.', [], { locale: 'en-GB', question }).problems
   assert.deepEqual([typed.kind, aiV2UserTypedDate(typed.value, question, { locale: 'en-GB' })], ['date', true])
 })
+
+
+// 2026-11-20 question set: the 10 of "2026 年 10—11 月" (price-2024-zh) was
+// read as a figure. A Chinese month range reads as both months, each
+// checked against the results.
+test('a Chinese month range is both months, each checked', () => {
+  const prices = [{ sku: '85123A', latest: { orderNumber: 'PO-202611-0009', unitPrice: 1.48, date: '2026-11-02' }, earlier: [{ orderNumber: 'PO-202610-0028', unitPrice: 1.48, date: '2026-10-31' }, { orderNumber: 'PO-202610-0026', unitPrice: 1.48, date: '2026-10-26' }] }]
+  const flags = (answer) => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results: prices, question: '', today: '2026-11-20' }).problems.filter((row) => row.kind === 'number' || row.kind === 'date').map((row) => row.value)
+  assert.deepEqual(flags('记录中只有 2026 年 10—11 月的采购价，都是 £1.48。'), [])
+  assert.deepEqual(flags('10-11 月的单价是 £1.48。'), [])
+  // A month the results do not reach, at either end.
+  assert.deepEqual(flags('2026 年 3—4 月的价格是 £1.48。'), ['2026 年 3—4 月'])
+  assert.deepEqual(flags('2026 年 10—12 月的价格是 £1.48。'), ['2026 年 10—12 月'])
+})
+
+// #432 review: counts and month spans the results only seem to imply stay
+// flagged, as on main. A list's size is not a count of anything else, and a
+// period's length is not a lead time or a stock cover.
+test('counts and months the results do not state stay flagged (#432 review)', () => {
+  const flags = (answer, results) => checkAiModelFirstGrounding({ answer: { title: '', answer, records: [] }, results, question: '', today: '2026-11-20' }).problems.filter((row) => row.kind === 'number').map((row) => row.value)
+  // One sales order with 3 lines is not 3 orders, 3 customers or 3 笔订单.
+  const order = [{ rows: [{ orderNumber: 'SO-202611-0356', customer: 'Customer 15484', lines: [{ sku: '22966' }, { sku: '79321' }, { sku: '84077' }] }], total: 1, more: 0 }]
+  for (const answer of ['3 orders are still to ship.', '还有 3 笔订单待发货。', '3 customers are waiting.']) assert.deepEqual(flags(answer, order), ['3'], answer)
+  // A list cut at five, without a total, is not five of anything.
+  const closed = [{ closed: { rejected: 9, latest: [{ request: 'PR-1' }, { request: 'PR-2' }, { request: 'PR-3' }, { request: 'PR-4' }, { request: 'PR-5' }] } }]
+  assert.deepEqual(flags('5 requests were rejected.', closed), ['5'])
+  // A 90-day window grounds no month count.
+  const window = [{ from: '2026-08-22', to: '2026-11-20', rows: [] }]
+  for (const answer of ['Stock will last 4 months.', 'The lead time is 3 months.', '晚了 3 个月。']) assert.equal(flags(answer, window).length, 1, answer)
+  // price_history reads at most three lines, so "only 3 records" is not known.
+  const prices = [{ sku: '85123A', latest: { orderNumber: 'PO-202611-0009', unitPrice: 1.48 }, earlier: [{ orderNumber: 'PO-202610-0028', unitPrice: 1.48 }, { orderNumber: 'PO-202610-0026', unitPrice: 1.48 }] }]
+  assert.deepEqual(flags('价格记录只有 3 笔，都是 £1.48。', prices), ['3'])
+})
