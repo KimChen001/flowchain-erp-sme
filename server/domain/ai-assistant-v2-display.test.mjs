@@ -79,6 +79,13 @@ test('a date the user typed is theirs, in any of the forms people type', () => {
   }
   assert.equal(aiV2UserTypedDate('Nov 21, 2026', 'by Nov 20'), false)
   assert.equal(aiV2UserTypedDate('Nov 20, 2026', 'How many are late?'), false)
+  // A month on its own, with its year where both give one (2026-11-20).
+  for (const [value, typed] of [['October 2026', 'What was our gross margin in October 2026?'], ['2026 年 10 月', '10月的毛利率是多少？'], ['October 2026', 'the margin in Oct 2026'], ['October 2026', 'the margin for 2026-10']]) {
+    assert.equal(aiV2UserTypedDate(value, typed), true, value)
+  }
+  for (const [value, typed] of [['November 2026', 'margin in October 2026?'], ['October 2025', 'margin in October 2026?'], ['May 2026', 'You may show me the margin'], ['2026 年 3 月', '过去 3 个月的毛利率？'], ['3 Oct 2026', 'margin in October 2026?']]) {
+    assert.equal(aiV2UserTypedDate(value, typed), false, value)
+  }
 })
 
 test('codes the results give alone get their words: a request\'s status, a signal type, a priority', () => {
