@@ -126,3 +126,28 @@ test('counts cover every waiting item, not only the rows listed', () => {
   // Without held invoices there is no invoice count.
   assert.equal(decisionItemsResult({ available: true, waiting: waiting.slice(-1) }).heldInvoices, undefined)
 })
+
+// 2026-11-20 question set (sme-waiting-approval-en): the decisions hold the
+// four prepared kinds only, so the approvals waiting for the user on Today
+// come beside them, as Today shows them; other Today rows do not.
+test('decision_items also gives the approvals waiting for this user on Today', () => {
+  const work = [
+    row('purchase_request_to_approve', 'PR-4', { entityType: 'purchase_request', label: 'PR-202611-0004', date: '2026-11-26', dateKind: 'required' }),
+    row('purchase_order_to_approve', 'PO-23', { entityType: 'purchase_order', label: 'PO-202611-0023', name: 'Acme Home Goods', date: '2026-12-03' }),
+    row('bill_to_approve', 'SI-7', { entityType: 'supplier_invoice', label: 'INV-202611-0007' }),
+    row('purchase_order_overdue', 'PO-1', { entityType: 'purchase_order', label: 'PO-202610-0021' }),
+    row('sales_order_to_ship', 'SO-1', { entityType: 'sales_order', label: 'SO-202611-0001' }),
+  ]
+  const result = decisionItemsResult(decisions, {}, { workRows: work })
+  assert.equal(result.approvalsTotal, 3)
+  assert.deepEqual(result.approvals.map((entry) => [entry.kind, entry.label, entry.ref?.type]), [
+    ['purchase_request_to_approve', 'PR-202611-0004', 'purchase_request'],
+    ['purchase_order_to_approve', 'PO-202611-0023', 'purchase_order'],
+    ['bill_to_approve', 'INV-202611-0007', 'supplier_invoice'],
+  ])
+  assert.equal(decisionItemsResult(decisions, { limit: 1 }, { workRows: work }).approvals.length, 1)
+  assert.equal(decisionItemsResult(decisions, {}, { workRows: [] }).approvalsTotal, 0)
+  // Set-aside reads and reads without Today's rows give none.
+  assert.equal(decisionItemsResult(decisions, { include: 'set_aside' }, { workRows: work }).approvals, undefined)
+  assert.equal(decisionItemsResult(decisions).approvals, undefined)
+})
