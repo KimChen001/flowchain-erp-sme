@@ -396,6 +396,17 @@ function coverRecords(facts, row) {
   return [...requests, ...orders]
 }
 
+// The value of every row with a quantity to order, added up: only when each
+// such row has its value, in one currency (prices hidden, or a row without a
+// price, give none, never a part sum).
+export function estimatedTotalOf(rows) {
+  const ordered = array(rows).filter((row) => Number(row?.suggestedQuantity?.value) > 0)
+  if (!ordered.length || !ordered.every((row) => isObject(row.estimatedValue) && Number.isFinite(Number(row.estimatedValue.value)))) return null
+  const currencies = new Set(ordered.map((row) => row.estimatedValue.currency || null))
+  if (currencies.size !== 1) return null
+  return { value: Math.round(ordered.reduce((sum, row) => sum + Number(row.estimatedValue.value), 0) * 100) / 100, currency: [...currencies][0], lines: ordered.length }
+}
+
 const suggestPurchaseLines = defineAiTool({
   name: 'suggest_purchase_lines',
   description: 'Purchase request lines worked out by the server, for the in-chat purchase request form: per item its on-hand stock, safety stock and reorder point, the suggested quantity (once the stock position is at the reorder point or below, up to the order-up-to level orderUpTo, in whole lots, raised to the supplier\'s minimum order; with coverDays, the cover target takes the level\'s place), the supplier (the preferred, or the only approved one), the need-by date (today plus the supplier\'s lead time, with a warning when stock runs short sooner) and the reference price. Items already covered by open requests or orders come back as covered. An item that is not active, or has no stock row, gets no quantity (source item_inactive or no_stock_position). Name SKUs for those items; with none, the items below their stock levels, up to 8, less set-aside ones (setAsideLeftOut). The user chooses which lines to request.',
@@ -548,6 +559,10 @@ const suggestPurchaseLines = defineAiTool({
       purchaseRequestsRead: openRequestsRead(facts),
       ...(leftOut.length ? { setAsideLeftOut: leftOut.map((row) => ({ sku: row.sku, ...asideOfItem(row) })) } : {}),
       rows: suggestions,
+      // The rows' values added up, so an answer reads the form's value instead
+      // of adding it up (2026-11-21/22: £887, £1,555 and £615 for the lines,
+      // each worked out by the model, were flagged).
+      estimatedTotal: estimatedTotalOf(suggestions),
       total: listed.length,
       more: Math.max(0, listed.length - limit),
     }

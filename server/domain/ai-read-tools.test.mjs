@@ -4,8 +4,8 @@ import { aiSkillScenario } from './test-fixtures/ai-skill-scenario.mjs'
 import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { validateAiToolArgs, aiToolList, AI_TOOL_LIMITS } from './ai-read-tool-contract.mjs'
-import { AI_READ_TOOLS, aiStockSku } from './ai-read-tools.mjs'
-import { AI_READ_SERVICE_TOOLS } from './ai-read-service-tools.mjs'
+import { AI_READ_TOOLS, aiStockSku, lineTotals } from './ai-read-tools.mjs'
+import { AI_READ_SERVICE_TOOLS, lastsDays } from './ai-read-service-tools.mjs'
 import { aiReadToolDefinitions, aiReadToolRefs, aiReadToolsFor, runAiReadTool } from './ai-read-tool-runner.mjs'
 import { buildSupplierInsights, createSupplierInsightsReadService } from './supplier-insights.mjs'
 
@@ -79,6 +79,10 @@ test('an administrator is offered every read tool, and each answers with capped 
   const order = await runAiReadTool('get_purchase_order', { order: 'po-001' }, { facts })
   assert.equal(order.result.order.orderNumber, 'PO-001')
   assert.ok(order.result.openLines.length > 0)
+  // The order's lines added up, as the lines give them.
+  const lines = [...order.result.openLines, ...order.result.closedLines]
+  assert.deepEqual(order.result.quantityTotals, lineTotals(lines.map((line) => ({ ordered: line.ordered, received: line.received, remaining: line.remaining, unit: line.unit }))))
+  assert.equal(order.result.quantityTotals.ordered, lines.reduce((sum, line) => sum + line.ordered, 0))
   // As people type it: without zero padding or separators.
   for (const typed of ['PO-1', 'po 1', 'PO1']) assert.equal((await runAiReadTool('get_purchase_order', { order: typed }, { facts })).result?.order.orderNumber, 'PO-001', typed)
   assert.deepEqual(await runAiReadTool('get_purchase_order', { order: 'PO-999' }, { facts }), { ok: false, error: 'not_found' })
@@ -546,6 +550,27 @@ test('the reorder list gives the model its daily demand to one decimal', async (
   const context = await loadAiSkillContext({ ...scenario.ctx, aiReadServices: { reorderList } })
   const row = (await runAiReadTool('reorder_list', {}, { facts: await readAiSkillFacts(context), context })).result.rows[0]
   assert.equal(row.averageDailyDemand, 7.2)
+})
+
+// 2026-11-21 switch-to-zh: "约 12 天" for 259 ÷ 20.7, worked out by the model,
+// was flagged twice; 2026-11-22 open-order-zh: "480 件", the order's lines
+// added up. Both are now read from the results.
+test('the reorder list says how many days the available stock lasts, and an order adds up its lines in one unit', async () => {
+  assert.equal(lastsDays(259, 20.7), 12.5)
+  // At the rate as the row shows it (one decimal): 259 ÷ 20.7, not ÷ 20.71.
+  assert.equal(lastsDays(259, 20.71), 12.5)
+  assert.equal(lastsDays(-5, 20.7), 0)
+  for (const [stock, rate] of [[259, null], [259, 0], [null, 20.7], [259, 0.04]]) assert.equal(lastsDays(stock, rate), null, `${stock} ÷ ${rate}`)
+  const scenario = aiSkillScenario()
+  const reorderList = { read: async () => ({ rows: [{ sku: 'SKU-1', itemName: 'Item', orderNow: true, orderByDate: '2026-11-08', onHand: 280, reserved: 21, demand: { averageDailyDemand: 20.71 }, supplier: { id: 'SUP-1', name: 'Supplier One' } }] }) }
+  const context = await loadAiSkillContext({ ...scenario.ctx, aiReadServices: { reorderList } })
+  const row = (await runAiReadTool('reorder_list', {}, { facts: await readAiSkillFacts(context), context })).result.rows[0]
+  assert.deepEqual([row.availableToday, row.averageDailyDemand, row.availableLastsDays], [259, 20.7, 12.5])
+  assert.deepEqual(lineTotals([{ ordered: 120, received: 0, remaining: 120, unit: 'pcs' }, { ordered: 360, received: 0, remaining: 360, unit: 'pcs' }]), { lines: 2, ordered: 480, received: 0, remaining: 480, unit: 'pcs' })
+  // Lines in different units, or a line without its figures, give no total.
+  assert.equal(lineTotals([{ ordered: 120, received: 0, remaining: 120, unit: 'pcs' }, { ordered: 3, received: 0, remaining: 3, unit: 'boxes' }]), null)
+  assert.equal(lineTotals([{ ordered: 120, received: null, remaining: 120, unit: 'pcs' }]), null)
+  assert.equal(lineTotals([]), null)
 })
 
 // 2026-11-09 on Flash (UCI scene): "available to promise for 85123A is 408
