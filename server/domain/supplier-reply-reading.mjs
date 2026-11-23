@@ -85,7 +85,7 @@ export function cleanSupplierReply(value) {
   // to the assistant hidden in one).
   const comments = []
   const visible = unhidden.replace(/<!--[\s\S]*?(?:-->|$)/g, (comment) => { comments.push(comment); return '' }).replace(/[ 　]/g, ' ')
-  const lines = visible.split('\n')
+  const lines = openForwards(visible.split('\n'), comments)
   let cut = lines.length
   for (let at = 0; at < lines.length && cut === lines.length; at += 1) {
     const line = lines[at]
@@ -107,6 +107,57 @@ export function cleanSupplierReply(value) {
   // In reading order: a signature or quoted lines, then the earlier message.
   const hidden = [...dropped, ...lines.slice(cut), ...comments].join('\n').trim()
   return { text: tidy, quoted: hidden || null, quotedTextHidden: Boolean(hidden), invisibleRemoved }
+}
+
+// Gmail's forward marker, and the header lines of a forwarded message.
+const FORWARD_MARK = /^\s*-{2,}\s*Forwarded message\s*-{2,}\s*$/i
+const MESSAGE_HEADER = /^\s*(?:From|Sent|Date|To|Cc|Bcc|Subject|Reply-To|发件人|发送时间|时间|日期|收件人|抄送|主题)\s*[:：]/i
+
+// Where the next earlier message begins, from line `from` on: the same
+// markers cleanSupplierReply cuts at.
+function threadStartFrom(lines, from) {
+  for (let at = from; at < lines.length; at += 1) {
+    const line = lines[at]
+    if (THREAD_START.some((pattern) => pattern.test(line))) return at
+    if (/^\s*On\b/i.test(line) && /^\s*wrote:\s*$/i.test(lines[at + 1] || '')) return at
+    if (HEADER_FROM.test(line) && lines.slice(at + 1, at + 5).some((next) => HEADER_NEXT.test(next))) return at
+  }
+  return lines.length
+}
+
+// A forwarded message is the supplier's text, not our quoted chase: what
+// follows Gmail's "Forwarded message" marker, or any other earlier-message
+// marker with nothing written above it (a reply always has text above its
+// quote; "On … wrote:" or 写道 alone is still a quote of our chase). The
+// marker, the forward's header lines and a signature written above it are
+// moved to setAside (shown with the hidden text, never read), so cleaning
+// goes on inside the forwarded message and still cuts the supplier's own
+// quote of our chase. At most three forwards inside one another are opened.
+// Enron-shape pilot, 2026-11-22: forwarded replies came out empty and were
+// refused as SUPPLIER_REPLY_EMPTY.
+function openForwards(lines, setAside) {
+  let opened = lines
+  let start = 0
+  for (let forwards = 0; forwards < 3; forwards += 1) {
+    const cut = threadStartFrom(opened, start)
+    if (cut === opened.length) break
+    const marker = opened[cut]
+    const above = opened.slice(start, cut)
+    const signatureAt = above.findIndex((line) => SIGNATURE.test(line))
+    const own = signatureAt < 0 ? above : above.slice(0, signatureAt)
+    const written = own.some((line) => line.trim() && !/^\s*>/.test(line))
+    const quoteOfOurs = /^\s*On\b/i.test(marker) || /(?:\bwrote:|写道\s*[:：])\s*$/i.test(marker)
+    if (!FORWARD_MARK.test(marker) && (written || quoteOfOurs)) break
+    // The header block (with blank lines and wrapped header lines) ends at
+    // the forwarded message's first other line.
+    let body = HEADER_FROM.test(marker) ? cut : cut + 1
+    while (body < opened.length && (MESSAGE_HEADER.test(opened[body]) || !opened[body].trim() || (/^\s/.test(opened[body]) && MESSAGE_HEADER.test(opened[body - 1])))) body += 1
+    const keepUntil = start + own.length
+    setAside.push(...above.slice(own.length), ...opened.slice(cut, body))
+    opened = [...opened.slice(0, keepUntil), '', ...opened.slice(body)]
+    start = keepUntil + 1
+  }
+  return opened
 }
 
 // Whether the reply holds text addressed to the system rather than to the

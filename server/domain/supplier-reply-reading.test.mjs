@@ -42,6 +42,31 @@ test('cleaning drops our quoted chase, a signature and invisible characters, and
   assert.ok(!quoteFound('We can ship the balance on 28 November.', 'We can ship everything on 18 November.'))
 })
 
+test('a forwarded supplier reply is read: its header lines set aside, its own quote of our chase still cut', () => {
+  const supplier = 'Mei,\n\nThe gliders will now ship on 4 December.\n\nTomas'
+  const chase = 'On Mon, 16 Nov 2026 at 10:02, Daniel <daniel@example.com> wrote:\n> Our purchase order PO-202611-0012 was due on 12 Nov 2026.'
+  // Gmail, with a comment above the forward and a signature before it.
+  const gmail = cleanSupplierReply(`Daniel - see below from Globex.\n-- \nMei Lin | Purchasing\n\n---------- Forwarded message ---------\nFrom: Tomas Herrera <orders@globex-party.example>\nDate: Thu, 19 Nov 2026 at 08:47\nSubject: PO-202611-0012 ship date\nTo: Mei Lin <mei@example.com>\n\n\n${supplier}\n\n${chase}`)
+  assert.equal(gmail.text, `Daniel - see below from Globex.\n\n${supplier}`)
+  for (const hidden of [/^-- $/m, /Forwarded message/, /Subject: PO-202611-0012 ship date/, /due on 12 Nov 2026\./]) assert.match(gmail.quoted, hidden)
+  assert.doesNotMatch(gmail.text, /12 Nov|Thu, 19 Nov/)
+  // Sent on without a comment: Outlook's old marker, its header block, or a
+  // rule line above it; QQ's 原始邮件 with Chinese header lines.
+  for (const forward of [
+    `-----Original Message-----\nFrom: Tomas Herrera <orders@globex-party.example>\nSent: Thursday, November 19, 2026 8:47 AM\nTo: Mei Lin\nSubject: RE: PO-202611-0012\n\n${supplier}\n\n${chase}`,
+    `\n\nFrom: Tomas Herrera <orders@globex-party.example>\nSent: Thursday, November 19, 2026 8:47 AM\nTo: Mei Lin;\n  Daniel\nSubject: RE: PO-202611-0012\n\n${supplier}\n\n${chase}`,
+    `________________________________\nFrom: Tomas Herrera <orders@globex-party.example>\nSent: 19 November 2026 08:47\nSubject: RE: PO-202611-0012\n\n${supplier}`,
+  ]) assert.equal(cleanSupplierReply(forward).text, supplier)
+  assert.equal(cleanSupplierReply('------------------ 原始邮件 ------------------\n发件人: "Globex" <orders@globex-party.example>;\n发送时间: 2026年11月19日(星期四) 上午8:47\n收件人: "Mei";\n主题: 回复：PO-202611-0012\n\n滑翔机12月4日发货。\n\n在 2026年11月16日 10:02，Daniel 写道：\n> 请确认').text, '滑翔机12月4日发货。')
+  // A reply with text above the quote is cut as before, and a quote of our
+  // chase alone (nothing written, "On … wrote:") is not read as a forward.
+  assert.equal(cleanSupplierReply(`Balance on 30 Nov.\n\n-----Original Message-----\nFrom: Daniel\nSent: 17 November 2026\n\nOur purchase order was due on 12 Nov.`).text, 'Balance on 30 Nov.')
+  assert.equal(cleanSupplierReply(`\n${chase}`).text, '')
+  assert.equal(cleanSupplierReply('On Mon, 16 Nov 2026 at 10:02, Daniel <daniel@example.com> wrote:\nOur purchase order was due on 12 Nov.').text, '')
+  // A forward of a forward is opened too.
+  assert.equal(cleanSupplierReply(`---------- Forwarded message ---------\nFrom: Mei\nDate: Thu, 19 Nov 2026\n\n---------- Forwarded message ---------\nFrom: Tomas\nDate: Thu, 19 Nov 2026\n\n${supplier}`).text, supplier)
+})
+
 test('the dates a quote writes: exact days, two-way numeric dates, and the next year when a day has passed', () => {
   assert.deepEqual(datesInQuote('the balance on 28 November', RECEIVED), { exact: ['2026-11-28'], ambiguous: [], dayOnly: [] })
   assert.deepEqual(datesInQuote('Nov 28th, 2026 or 2026-12-05 or 11月30日 or 28/11', RECEIVED).exact, ['2026-11-28', '2026-11-30', '2026-12-05'])
