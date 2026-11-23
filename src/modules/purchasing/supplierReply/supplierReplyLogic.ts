@@ -86,6 +86,21 @@ export function recordLines(card: SupplierReplyCardData, values: Record<string, 
 // (二十八号, "on Friday", a hedged "starting 3 Dec"), as choices; so may a
 // line read from text of no single order in an email about several.
 const PICKABLE = new Set(["ambiguous_numeric", "ambiguous_weekday", "several_dates"]);
+// An email about several orders (#449): when the card's note is shown and
+// every line handed to the person is held for that one reason, the note
+// says it once and the lines do not repeat it. Lines held for any other
+// reason keep their own.
+export function severalOrdersOnce(card: SupplierReplyCardData) {
+  const held = card.lines.filter((line) => line.outcome === "needs_you");
+  return Boolean(card.emailOrders?.length) && held.length > 0 && held.every((line) => line.issue === "several_orders");
+}
+// The reason a line shows on its own, or null when the note already says it.
+export const shownIssue = (card: SupplierReplyCardData, issue: string | null | undefined) => (issue && !(issue === "several_orders" && severalOrdersOnce(card)) ? issue : null);
+// The other orders in the note that open as an order page, as the "Another
+// order" flag does: the ones FlowChain found. A number it could not find,
+// or did not look up (over the limit), stays plain text.
+export const EMAIL_ORDER_LINKED: ReadonlySet<string> = new Set(["read", "open_card_kept", "closed", "other_supplier"]);
+
 export function pickableReadings(line: { issue: string | null; readings: string[] | null }) {
   const readings = line.readings || [];
   if (PICKABLE.has(String(line.issue)) && readings.length === 2) return readings;

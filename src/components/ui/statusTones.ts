@@ -17,11 +17,13 @@ const TONES: Record<StatusTone, string[]> = {
     "fully_reserved", "fully_fulfilled", "fulfilled", "delivered", "awarded", "settled", "paid", "resolved", "posted", "passed",
     "active", "available", "ok", "low",
     "已批准", "已审批", "已匹配", "自动匹配", "已完成", "已转换", "已解决", "已入库", "已收货",
+    "read", // a supplier email's other order, read on its own order
   ],
   warning: [
     "submitted", "pending", "pending_approval", "pending_match", "held", "on_hold", "awaiting_receipt", "unposted", "partially_reserved",
     "below_safety_stock", "below_reorder_point", "medium", "due", "warning",
     "待审批", "待匹配", "待处理", "人工复核", "缺少收货",
+    "open_card_kept", "over_limit", // a supplier email's other orders, left for the person
   ],
   danger: [
     "rejected", "exception", "variance", "mismatch", "disputed", "overdue", "failed", "blocked", "risk",
@@ -38,6 +40,7 @@ const TONES: Record<StatusTone, string[]> = {
     "draft", "cancelled", "canceled", "withdrawn", "closed", "not_sent", "reversed", "voided", "void", "not_reserved",
     "not_fulfilled", "not_received", "not_matched", "inactive", "unavailable", "quarantined", "unknown",
     "草稿", "已取消", "已撤回", "已关闭",
+    "other_supplier", // a supplier email naming another supplier's order
   ],
 };
 const toneOf = new Map(Object.entries(TONES).flatMap(([tone, codes]) => codes.map((code) => [code, tone as StatusTone])));
