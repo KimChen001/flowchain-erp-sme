@@ -81,10 +81,13 @@ export const SUPPLIER_REPLY_DISMISS_REASONS = Object.freeze(['wrong_reading', 's
 //   refused              the reply refuses this date ("cannot ship on 28 Nov",
 //                        "28 Nov is no longer possible", 发不了) and names no other
 //   addressed_to_system  quoted from text addressed to the system (dropped)
+//   line_mismatch        the quote names another line by its code (ours or the
+//                        supplier's) or item name, or its code and name point
+//                        to different lines
 //   several_dates        the quote names more than one date, and this one is
 //                        the line's current promise or the one it replaces
 //                        (both offered in readings when there are two)
-export const SUPPLIER_REPLY_LINE_ISSUES = Object.freeze(['quote_not_found', 'date_mismatch', 'ambiguous_numeric', 'vague', 'relative_unreadable', 'before_reply', 'too_far', 'unknown_line', 'not_open', 'unchanged', 'split_incomplete', 'several_dates', 'refused', 'addressed_to_system'])
+export const SUPPLIER_REPLY_LINE_ISSUES = Object.freeze(['quote_not_found', 'date_mismatch', 'ambiguous_numeric', 'vague', 'relative_unreadable', 'before_reply', 'too_far', 'unknown_line', 'not_open', 'unchanged', 'split_incomplete', 'several_dates', 'refused', 'addressed_to_system', 'line_mismatch'])
 // What became of one line of the reading.
 export const SUPPLIER_REPLY_LINE_OUTCOMES = Object.freeze(['proposed', 'needs_you', 'dropped', 'confirmed'])
 
