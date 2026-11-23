@@ -639,6 +639,8 @@ test('suggest_purchase_lines hides prices and suppliers from roles that may not 
   const shown = (await viewer.run('suggest_purchase_lines')).result
   assert.equal(shown.pricesHidden, true)
   assert.equal(shown.rows[0].estimatedUnitPrice, null)
+  // No value, so no total either.
+  assert.deepEqual([shown.rows[0].estimatedValue, shown.estimatedTotal], [null, null])
   assert.equal(shown.rows[0].supplier.id, 'SUP-001')
   // Operations reads stock and, since they raise requests (design audit C4,
   // owner decision 2026-11-17), purchase requests: still no supplier, price
