@@ -190,10 +190,10 @@ function withoutOverdue(facts, row) {
 
 const stockPosition = defineAiTool({
   name: 'stock_position',
-  description: 'Stock per SKU in the inventory page\'s terms: on hand, reserved, available, open sales demand, incoming on approved purchase orders (each order\'s promised date and days overdue in purchaseOrderDates), available to promise (available plus incoming less unreserved demand), safety stock, reorder point and status. One SKU, the SKUs at risk, or all; counts gives how many SKUs are at risk, short against open sales orders, out of stock, below safety stock and below the reorder point.',
+  description: 'Stock per SKU in the inventory page\'s terms: on hand, reserved, available, open sales demand, incoming on approved purchase orders (each order\'s promised date and days overdue in purchaseOrderDates), available to promise (available plus incoming less unreserved demand), safety stock, reorder point and status; counts gives how many SKUs are at risk, short against open sales orders, out of stock, below safety stock and below the reorder point.',
   parameters: {
     sku: { type: 'string', description: 'One SKU, or the item\'s name.' },
-    only: { type: 'string', enum: ['all', 'at_risk'], description: 'at_risk: short against open sales orders or below safety stock or the reorder point. all by default.' },
+    only: { type: 'string', enum: ['all', 'at_risk', 'below_safety_stock'], description: 'at_risk: short against open sales orders or below safety stock or the reorder point. all by default.' },
     limit: limitParam,
   },
   available: (facts) => Boolean(facts.inventory),
@@ -207,6 +207,12 @@ const stockPosition = defineAiTool({
       if (!rows.length) return { asOf: facts.asOf, sku: found.sku, noStockOrOrders: true }
     }
     if (args.only === 'at_risk') rows = rows.filter((row) => array(facts.inventory.atRisk).includes(row.sku) || RISK_STATUSES.has(row.stockStatus))
+    // The rows counts.belowSafetyStock counts, so the list and its count
+    // agree: the status below_safety_stock (stock available, under the safety
+    // stock). An item out of stock has its own status and count (2026-11-21
+    // question set: the 22 below safety stock could only be read among the
+    // 70 at risk, 20 a page by SKU).
+    if (args.only === 'below_safety_stock') rows = rows.filter((row) => row.stockStatus === 'below_safety_stock')
     rows = [...rows].sort((a, b) => text(a.sku).localeCompare(text(b.sku)))
     return {
       asOf: facts.asOf,
@@ -514,7 +520,10 @@ export function aiStockProjection(facts, { sku, weeks = 4 }) {
   if (facts.purchaseOrders) {
     for (const po of array(facts.purchaseOrders.index).filter((entry) => entry.isOpen)) {
       for (const line of array(po.openLines).filter((entry) => fold(entry.sku) === fold(row.sku) && sameUnit(entry.unit) && (entry.remaining || 0) > 0)) {
-        const entry = { orderNumber: po.orderNumber, quantity: line.remaining, promisedDate: line.promisedDate || null, ref: aiToolRef('purchase_order', po.id, po.orderNumber) }
+        // received: what already came in on the line, so a partly received
+        // order is told from one with nothing received (2026-11-21
+        // only-partly-en: "the projection shows no partly received order").
+        const entry = { orderNumber: po.orderNumber, quantity: line.remaining, received: Number(line.received) || 0, promisedDate: line.promisedDate || null, ref: aiToolRef('purchase_order', po.id, po.orderNumber) }
         if (!line.promisedDate) apart.incomingWithoutDate.push(entry)
         else if (dayIndex(line.promisedDate) < start) apart.incomingPastPromisedDate.push(entry)
         else incoming.push(entry)

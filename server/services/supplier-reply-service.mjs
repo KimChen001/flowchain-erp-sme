@@ -14,7 +14,7 @@
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import {
-  SUPPLIER_REPLY_CONTRACT_VERSION, SUPPLIER_REPLY_LIMITS, SUPPLIER_REPLY_OPEN_STATES,
+  SUPPLIER_REPLY_CONTRACT_VERSION, SUPPLIER_REPLY_EMAIL_ORDER_LIMIT, SUPPLIER_REPLY_LIMITS, SUPPLIER_REPLY_OPEN_STATES,
   supplierReplyCardSchema, supplierReplyDismissRequestSchema, supplierReplyNotNowRequestSchema, supplierReplyPasteRequestSchema, supplierReplyRecordRequestSchema,
 } from '../../shared/supplier-reply-contract.mjs'
 import { assertAuthorized, can } from '../auth/authorization-service.mjs'
@@ -30,6 +30,7 @@ import { localDevelopmentEnabled } from '../domain/local-development-contract.mj
 import { ITEM_SUPPLIER_NAMESPACE, mapItemSupplierRecord } from '../domain/master-data-commands.mjs'
 import { resolveProvisionedActor } from '../domain/pilot-identity.mjs'
 import { procurementReadAccessFor } from '../domain/procurement-read-access.mjs'
+import { emailOrdersToRead, orderNumberVariants, orderNumbersNamed } from '../domain/supplier-reply-orders.mjs'
 import { SUPPLIER_REPLY_ORDER_STATES, checkReplyReading, cleanSupplierReply, daysBetween, readSupplierReply, supplierReplyInstructionsIgnored, supplierReplyPromptTokens } from '../domain/supplier-reply-reading.mjs'
 import { tenantCalendarDay } from '../domain/tenant-calendar-day.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
@@ -213,6 +214,11 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
       } : null,
       supersededById: row.supersededById || null,
     }
+    // An email that named several orders: which ones, and this card's.
+    const email = row.usage?.email
+    if (Array.isArray(email?.orders) && email.orders.length) {
+      card.emailOrders = email.orders.slice(0, 20).map((item) => ({ number: text(item.number), status: item.purchaseOrderId && item.purchaseOrderId === order.id ? 'this' : item.why || 'read' }))
+    }
     return supplierReplyCardSchema.parse(card)
   }
 
@@ -263,9 +269,21 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
     if (!cleaned.text) fail('SUPPLIER_REPLY_EMPTY', 'Nothing is left of the reply once the quoted earlier message is removed.', 422, [{ field: 'text' }])
     const skus = await supplierSkusOf(client, actor.tenantId, order)
     const snapshot = supplierReplyOrderSnapshot(order, skus)
+    // An email about several orders is read on each (pasteSeveral); with one
+    // order named, the paste is read as before. An order number written
+    // another way (PO 202611-0013, 0013) counts when it matches exactly one
+    // of the supplier's orders.
+    const known = orderNumberVariants(cleaned.text, snapshot.number) && text(order.supplierId)
+      // Closed orders stay in: they are other orders too. Newest first, in a
+      // stable order, so the same 500 are matched on every paste.
+      ? (await client.purchaseOrder.findMany({ where: { tenantId: actor.tenantId, supplierId: text(order.supplierId) }, select: { number: true }, orderBy: [{ number: 'desc' }, { id: 'asc' }], take: 500 })).map((row) => text(row.number)).filter(Boolean)
+      : []
+    const named = orderNumbersNamed(cleaned.text, snapshot.number, known)
+    if (named.length >= 2) return pasteSeveral({ client, actor, access, context, order, snapshot, skus, cleaned, input, receivedOn, today, named, known, signal })
     const startedAt = Date.now()
     const read = await readWithModel({ client, context, tenantId: actor.tenantId, snapshot, cleaned, receivedOn, today, signal })
-    const check = read.readingStatus === 'read' ? checkReplyReading({ order: snapshot, text: cleaned.text, receivedOn, reading: read.reading, inlineFrom: cleaned.inlineFrom }) : null
+    // The check tells the email's numbers from the same supplier orders.
+    const check = read.readingStatus === 'read' ? checkReplyReading({ order: snapshot, text: cleaned.text, receivedOn, reading: read.reading, orderNumbers: known, inlineFrom: cleaned.inlineFrom }) : null
     const state = check ? check.state : 'needs_you'
     const id = idFactory()
     const open = SUPPLIER_REPLY_OPEN_STATES.includes(state)
@@ -305,6 +323,91 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
       throw error
     }
     const row = await client.supplierReply.findFirst({ where: { id, tenantId: actor.tenantId } })
+    return { reply: cardOf(row, { order, access, actor, today, skus }) }
+  }
+
+  // An email that names two or more orders in this order's numbering
+  // (supplier-reply-orders.mjs, assessment §9): read on this order and on each
+  // other named order that is open and has this order's supplier, at most
+  // SUPPLIER_REPLY_EMAIL_ORDER_LIMIT in all, each against its own lines; the
+  // check keeps each order to its own part of the text. One reply row per
+  // order read, each its order's card as a single paste makes it (the same
+  // supersede rule per order), each keeping the email's orders (usage.email)
+  // for the card's notice. The others are listed, not read.
+  async function pasteSeveral({ client, actor, access, context, order, snapshot, skus, cleaned, input, receivedOn, today, named, known = [], signal }) {
+    const upper = (value) => text(value).toUpperCase()
+    const others = named.filter((number) => number !== upper(snapshot.number))
+    const found = await client.purchaseOrder.findMany({ where: { tenantId: actor.tenantId, number: { in: others } }, select: { id: true, number: true, status: true, supplierId: true } })
+    const byNumber = new Map(found.map((row) => [upper(row.number), row]))
+    const choice = emailOrdersToRead({
+      named, pastedOn: snapshot.number, openStates: SUPPLIER_REPLY_ORDER_STATES, limit: SUPPLIER_REPLY_EMAIL_ORDER_LIMIT,
+      orders: [{ number: snapshot.number, status: text(order.status), supplier: text(order.supplierId) || null }, ...found.map((row) => ({ number: row.number, status: text(row.status), supplier: text(row.supplierId) || null }))],
+    })
+    const notRead = [...choice.notRead]
+    const targets = [{ order, snapshot, skus }]
+    for (const number of choice.read.slice(1)) {
+      // Read as this reader may read it; an order the reader cannot open is
+      // not found, as the routes answer.
+      const other = await readOrder(byNumber.get(number).id, context, access).catch(() => null)
+      if (!other) { notRead.push({ number, why: 'unknown' }); continue }
+      const otherSkus = await supplierSkusOf(client, actor.tenantId, other)
+      targets.push({ order: other, snapshot: supplierReplyOrderSnapshot(other, otherSkus), skus: otherSkus })
+    }
+    const emailRead = targets.map((target) => upper(target.snapshot.number))
+    // Another order that already has an open card keeps it: a paste never
+    // replaces another order's card, as an emailed reply never does (#425).
+    // That order is not read, and the card lists it as kept.
+    const withOpenCard = new Set((await client.supplierReply.findMany({ where: { tenantId: actor.tenantId, purchaseOrderId: { in: targets.slice(1).map((target) => target.order.id) }, activeKey: { not: null } }, select: { purchaseOrderId: true } })).map((row) => row.purchaseOrderId))
+    for (const target of targets.slice(1)) if (withOpenCard.has(target.order.id)) notRead.push({ number: upper(target.snapshot.number), why: 'open_card_kept' })
+    const toRead = targets.filter((target, at) => at === 0 || !withOpenCard.has(target.order.id))
+    const startedAt = Date.now()
+    const readings = await Promise.all(toRead.map(async (target) => {
+      const read = await readWithModel({ client, context, tenantId: actor.tenantId, snapshot: target.snapshot, cleaned, receivedOn, today, signal })
+      const check = read.readingStatus === 'read' ? checkReplyReading({ order: target.snapshot, text: cleaned.text, receivedOn, reading: read.reading, emailRead, orderNumbers: known, inlineFrom: cleaned.inlineFrom }) : null
+      return { ...target, read, check, ms: Date.now() - startedAt, id: idFactory() }
+    }))
+    const email = {
+      orders: [
+        ...readings.map((row) => ({ number: upper(row.snapshot.number), purchaseOrderId: row.order.id, why: null })),
+        ...notRead.map((row) => ({ number: row.number, purchaseOrderId: null, why: row.why })),
+      ].slice(0, 20),
+    }
+    const instructionsIgnored = supplierReplyInstructionsIgnored(input.text)
+    try {
+      await client.$transaction(async (tx) => {
+        for (const row of readings) {
+          const state = row.check ? row.check.state : 'needs_you'
+          const open = SUPPLIER_REPLY_OPEN_STATES.includes(state)
+          // Only the order pasted on may replace its open card; on another
+          // order a card that opened meanwhile is kept, and this reply waits.
+          const takesOver = open && row.read.readingStatus === 'read' && row.order.id === order.id
+          const previous = await tx.supplierReply.findMany({ where: { tenantId: actor.tenantId, purchaseOrderId: row.order.id, activeKey: { not: null } }, select: { id: true } })
+          const superseded = takesOver ? previous.map((item) => item.id) : []
+          if (superseded.length) await tx.supplierReply.updateMany({ where: { tenantId: actor.tenantId, id: { in: superseded } }, data: { state: 'superseded', activeKey: null, supersededById: row.id } })
+          const active = open && (takesOver || !previous.length)
+          await tx.supplierReply.create({
+            data: {
+              id: row.id, tenantId: actor.tenantId, purchaseOrderId: row.order.id, supplierId: text(row.order.supplierId) || null, activeKey: active ? row.order.id : null,
+              source: 'paste', receivedOn, text: cleaned.text, quotedTextHidden: cleaned.quotedTextHidden, quotedText: cleaned.quoted, state, readingStatus: row.read.readingStatus,
+              provider: row.read.provider || null, model: row.read.model || null, promptVersion: row.read.promptVersion || null, reading: row.read.reading || null, check: row.check || null,
+              usage: { calls: row.read.calls, inputTokens: row.read.usage?.inputTokens || 0, outputTokens: row.read.usage?.outputTokens || 0, ms: row.ms, invisibleRemoved: cleaned.invisibleRemoved, issues: row.read.issues || null, email },
+              instructionsIgnored, createdById: actor.user.id,
+            },
+          })
+          await tx.auditLog.create({
+            data: {
+              id: idFactory(), tenantId: actor.tenantId, actorId: actor.user.id, source: 'supplier_reply_service', module: 'procurement', action: 'supplier_reply_pasted',
+              entityType: 'PurchaseOrder', entityId: row.order.id, summary: `Supplier reply on purchase order ${row.snapshot.number}, from an email naming ${named.length} orders: ${state}.`,
+              metadata: { replyId: row.id, state, readingStatus: row.read.readingStatus, calls: row.read.calls, lines: array(row.check?.lines).map((line) => line.outcome), superseded, active, emailOrders: email.orders.map((item) => item.number) },
+            },
+          })
+        }
+      })
+    } catch (error) {
+      if (error?.code === 'P2002') fail('SUPPLIER_REPLY_CONFLICT', 'Another reply was pasted on this order at the same time. Reload and try again.', 409)
+      throw error
+    }
+    const row = await client.supplierReply.findFirst({ where: { id: readings[0].id, tenantId: actor.tenantId } })
     return { reply: cardOf(row, { order, access, actor, today, skus }) }
   }
 

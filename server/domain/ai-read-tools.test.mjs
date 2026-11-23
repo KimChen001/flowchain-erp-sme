@@ -204,6 +204,14 @@ test('the stock projection places only dated lines in a week and lists the rest 
   const placed = new Set(projection.weeks.flatMap((week) => week.purchaseOrders))
   for (const entry of projection.notPlacedInAWeek.incomingPastPromisedDate) assert.ok(!placed.has(entry.orderNumber))
   assert.ok(projection.notPlacedInAWeek.incomingPastPromisedDate.some((entry) => entry.orderNumber === 'PO-001'), 'PO-001 is overdue')
+  // Each incoming line says what already came in on it, as the order's open
+  // line records it (2026-11-21 only-partly-en: the partly received order
+  // could not be told from the other).
+  const openLine = (orderNumber) => facts.purchaseOrders.index.find((po) => po.orderNumber === orderNumber).openLines.find((line) => line.sku === 'LDM-001')
+  const incoming = [...projection.notPlacedInAWeek.incomingPastPromisedDate, ...projection.notPlacedInAWeek.incomingWithoutDate]
+  // PO-001 is partly received (20 in, 30 to come); PO-008 has nothing in.
+  assert.deepEqual(incoming.map((entry) => [entry.orderNumber, entry.received, entry.quantity]), [['PO-001', 20, 30], ['PO-008', 0, 40]])
+  for (const entry of incoming) assert.deepEqual([entry.quantity, entry.received], [openLine(entry.orderNumber).remaining, Number(openLine(entry.orderNumber).received) || 0], entry.orderNumber)
   assert.deepEqual(await runAiReadTool('stock_projection', { sku: 'NOPE-1' }, { facts }), { ok: false, error: 'not_found' })
 })
 
@@ -224,6 +232,29 @@ test('at risk covers short, out of stock, below safety stock and below the reord
     belowSafetyStock: all.filter((row) => row.stockStatus === 'below_safety_stock').length,
     belowReorderPoint: all.filter((row) => row.stockStatus === 'below_reorder_point').length,
   })
+})
+
+// 2026-11-21 question set: "Which items are below their safety stock?" read
+// the 70 at-risk rows, 20 a page, and showed 8 of the 22.
+test('below_safety_stock gives the items counts.belowSafetyStock counts, and only those', async () => {
+  const facts = await factsFor()
+  const all = facts.inventory.rows
+  const others = all.filter((row) => row.stockStatus !== 'below_safety_stock')
+  // One below its reorder point only, one out of stock under its safety stock:
+  // each has its own status and count, and neither is listed here.
+  others[0].stockStatus = 'below_reorder_point'
+  Object.assign(others[1], { stockStatus: 'out_of_stock', available: 0, safetyStock: 10 })
+  if (!all.some((row) => row.stockStatus === 'below_safety_stock')) Object.assign(others[2], { stockStatus: 'below_safety_stock', available: 4, safetyStock: 10 })
+  const below = all.filter((row) => row.stockStatus === 'below_safety_stock')
+  const result = (await runAiReadTool('stock_position', { only: 'below_safety_stock', limit: 50 }, { facts })).result
+  assert.deepEqual(result.rows.map((row) => row.sku), below.map((row) => row.sku).sort())
+  assert.ok(result.rows.every((row) => row.belowSafetyStock === true && row.status === 'below_safety_stock'))
+  assert.equal(result.rows.some((row) => row.sku === others[0].sku || row.sku === others[1].sku), false)
+  // The list is as long as the count that describes it.
+  assert.equal(result.total, result.counts.belowSafetyStock)
+  assert.equal(result.counts.outOfStock, all.filter((row) => row.stockStatus === 'out_of_stock').length)
+  // The counts stay over every SKU.
+  assert.equal(result.counts.atRisk, (await runAiReadTool('stock_position', {}, { facts })).result.counts.atRisk)
 })
 
 test('a stock row gives each incoming order\'s promised date and days overdue, as the order list does', async () => {
