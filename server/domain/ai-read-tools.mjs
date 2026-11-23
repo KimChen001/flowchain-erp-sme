@@ -67,9 +67,14 @@ const ordersBySupplier = (rows) => {
 }
 const orderNumberOf = (facts, id) => array(facts.purchaseOrders?.index).find((row) => row.id === id)?.orderNumber || null
 const salesOrderNumberOf = (facts, id) => array(facts.salesOrders).find((row) => row.id === id)?.number || null
+// A stock row's purchase orders, each once, in order: the read model gives an
+// order's id once per line, so an order with two lines of the item came twice
+// (2026-11-23 review: LDM-001 read PO-001, PO-008, PO-008, three orders to
+// count where there are two).
+export const stockRowOrderIds = (row) => [...new Set(array(row?.purchaseOrderIds))]
 // The promised date of each open purchase order behind a stock row, from the
 // same order index as its number, so the model never calls the dates unrecorded.
-const orderDatesOf = (facts, ids) => array(ids).map((id) => array(facts.purchaseOrders?.index).find((row) => row.id === id)).filter(Boolean)
+const orderDatesOf = (facts, ids) => [...new Set(array(ids))].map((id) => array(facts.purchaseOrders?.index).find((row) => row.id === id)).filter(Boolean)
   .map((row) => ({ orderNumber: row.orderNumber, dueDate: row.dueDate || null, overdueDays: row.overdueDays || 0 }))
 
 // The amounts of some orders added up by currency, never across currencies;
@@ -224,7 +229,7 @@ const stockPosition = defineAiTool({
         availableToPromiseWithoutOverdue: withoutOverdue(facts, row),
         shortage: row.shortage, safetyStock: row.safetyStock, reorderPoint: row.reorderPoint, status: row.stockStatus,
         belowSafetyStock: row.safetyStock !== null && row.safetyStock !== undefined && row.available !== null && row.available !== undefined ? row.available < row.safetyStock : null,
-        purchaseOrders: array(row.purchaseOrderIds).map((id) => orderNumberOf(facts, id)).filter(Boolean),
+        purchaseOrders: stockRowOrderIds(row).map((id) => orderNumberOf(facts, id)).filter(Boolean),
         purchaseOrderDates: orderDatesOf(facts, row.purchaseOrderIds),
         salesOrders: array(row.salesOrderIds).map((id) => salesOrderNumberOf(facts, id)).filter(Boolean),
         orderMinimum: row.orderMinimum ? { quantity: row.orderMinimum.quantity ?? null } : null,

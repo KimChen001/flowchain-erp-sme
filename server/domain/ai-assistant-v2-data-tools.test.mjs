@@ -552,6 +552,30 @@ test('suggest_purchase_lines counts a draft request as cover and names what cove
   assert.ok(aiReadToolRefs((await run('suggest_purchase_lines')).result).some((ref) => ref.id === 'PR-002'))
 })
 
+// 2026-11-23 review: the stock row gives an order's id once per line, so an
+// order with two lines of the item was listed twice. Each order once, in
+// order, in stock_position and in what covers a suggested line; the stock
+// row itself (the inventory read model) is unchanged.
+test('stock_position and suggest_purchase_lines list an order with two lines of the item once', async () => {
+  // The covered case of the test above (a draft request with the submitted
+  // one and both open orders cover LDM-001), with a second line on PO-008.
+  const twoLines = (data) => {
+    highReorderPoint(data)
+    data.purchaseRequests[1].lines = [{ id: 'PRL-002', sku: 'LDM-001', itemId: 'ITEM-001', quantity: 60, unit: 'pcs' }]
+    const order = data.purchaseOrders.find((row) => row.id === 'PO-008')
+    order.lines.push({ ...order.lines[0], id: 'PO-008-L2', quantity: '5', orderedQuantity: '5' })
+  }
+  const { facts, run } = await v2({ change: twoLines })
+  const stockRow = facts.inventory.rows.find((row) => row.sku === 'LDM-001')
+  assert.ok(stockRow.purchaseOrderIds.filter((id) => id === 'PO-008').length >= 2, 'the read model still gives one id per line')
+  const [stock] = (await run('stock_position', { sku: 'LDM-001' })).result.rows
+  assert.deepEqual(stock.purchaseOrders, ['PO-001', 'PO-008'])
+  assert.deepEqual(stock.purchaseOrderDates.map((row) => row.orderNumber), ['PO-001', 'PO-008'])
+  const [row] = (await run('suggest_purchase_lines')).result.rows
+  assert.deepEqual(row.suggestedQuantity, { value: null, source: 'covered_by_open_orders' })
+  assert.deepEqual(row.covered.by.map((entry) => entry.label), ['PR-001', 'PR-002', 'PO-001', 'PO-008'])
+})
+
 test('suggest_purchase_lines warns when the stock runs short before the need-by date', async () => {
   const { run } = await v2({ change: (data) => { highReorderPoint(data); data.salesOrders[0].promisedDate = '2026-10-01' } })
   const [row] = (await run('suggest_purchase_lines')).result.rows

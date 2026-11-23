@@ -389,7 +389,8 @@ function coverRecords(facts, row) {
   const requests = array(facts.purchaseRequests?.open)
     .filter((request) => OPEN_PURCHASE_REQUEST_STATUSES.includes(request.status) && request.lines.some((line) => requestLineCountsFor(line, row)))
     .map((request) => ({ label: request.number || request.id, status: request.status, ref: aiToolRef('purchase_request', request.id, request.number || request.id) }))
-  const orders = array(row.purchaseOrderIds)
+  // Each order once: the stock row gives an order's id once per line.
+  const orders = [...new Set(array(row.purchaseOrderIds))]
     .map((id) => array(facts.purchaseOrders?.index).find((po) => po.id === id))
     .filter((po) => po?.isOpen)
     .map((po) => ({ label: po.orderNumber, status: po.status, ref: aiToolRef('purchase_order', po.id, po.orderNumber) }))
