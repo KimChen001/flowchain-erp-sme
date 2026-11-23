@@ -22,9 +22,21 @@ function emailsOf(round) {
   }
   return out
 }
-const ROUNDS = { 1: ROUND_1, 2: ROUND_2, 3: ROUND_3, 4: ROUND_4 }
+// The fifth review's shape: one line quoted twice, from this order's part
+// and from another's, or twice from another's.
+const { A, B, ORDERS, LIST, RECEIVED, L, H044, H074, H110 } = ROUND_4
+const two = `${A}:\n${H110} ships on 8 December.\n${H074} ships on 3 December.\n\n${B}:\n${H044} ships on 5 December.`
+const TWICE = {
+  ORDERS, LIST, RECEIVED, L,
+  W: [
+    { id: 'T01 L1 from its own part and from A\'s, on B', email: two, on: B, lines: [L('L1', '2026-12-05', `${H044} ships on 5 December.`), L('L1', '2026-12-08', `${H110} ships on 8 December.`)] },
+    { id: 'T02 L2 twice from A\'s part, on B', email: two, on: B, lines: [L('L2', '2026-12-08', `${H110} ships on 8 December.`), L('L2', '2026-12-03', `${H074} ships on 3 December.`)] },
+    { id: 'T03 L1 from A\'s part, then from its own, on B', email: two, on: B, lines: [L('L1', '2026-12-08', `${H110} ships on 8 December.`), L('L1', '2026-12-05', `${H044} ships on 5 December.`)] },
+  ],
+}
+const ROUNDS = { 1: ROUND_1, 2: ROUND_2, 3: ROUND_3, 4: ROUND_4, 'five (one line quoted twice)': TWICE }
 
-test('on the several-order path no line is ever proposed, confirmed or dropped as another order\'s text, in all four reviews\' emails', () => {
+test('on the several-order path no line is ever proposed, confirmed or dropped as another order\'s text, and each line has one question, in all the reviews\' emails', () => {
   let several = 0
   let single = 0
   let proposedOnSingle = 0
@@ -50,6 +62,9 @@ test('on the several-order path no line is ever proposed, confirmed or dropped a
           assert.ok(!(line.outcome === 'dropped' && line.issue === 'other_order_text'), at)
           if (line.outcome === 'needs_you') assert.deepEqual([line.issue, line.proposedDate, line.readAs, line.readings, line.parts], ['several_orders', null, null, null, null], at)
         }
+        // One question per line.
+        const held = result.lines.filter((line) => line.outcome === 'needs_you').map((line) => line.ref)
+        assert.equal(new Set(held).size, held.length, at)
       }
     }
   }

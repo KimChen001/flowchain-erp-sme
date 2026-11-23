@@ -1190,20 +1190,37 @@ function checkLines({ order, text: reply, receivedOn, reading, emailRead = [], o
 function severalOrdersFinalGate(result, { order, text: reply, emailRead = [], orderNumbers = null }) {
   const list = Array.isArray(orderNumbers) && orderNumbers.length > 0
   const candidates = array(list ? orderNumbers : emailRead).map((number) => String(number ?? '').trim().toUpperCase())
-  if (!emailParts(reply, order?.number, candidates) && array(emailRead).length < 2) return result
+  if (!emailParts(reply, order?.number, candidates) && new Set(array(emailRead).map((number) => String(number ?? '').trim().toUpperCase())).size < 2) return result
   const byRef = new Map(array(order?.lines).map((line) => [line.ref, line]))
   const open = SUPPLIER_REPLY_ORDER_STATES.includes(text(order?.status))
-  const lines = result.lines.map((row) => ({ ...row }))
+  // One row per line (fifth review): the line's row that was not dropped,
+  // else its first quote dropped as another order's text, is held. Any other
+  // quote dropped as another order's text for that line is left out, so the
+  // card never says "nothing is recorded here" beside the question. One for
+  // a line that is not on the order, or has nothing left open, is dropped
+  // for that reason instead.
+  const isOpen = (line) => Boolean(line) && open && Number(line.remaining) > 0
+  const holdAt = new Map()
+  for (const [at, row] of result.lines.entries()) {
+    const chosen = holdAt.get(row.ref)
+    if (row.outcome !== 'dropped') { if (chosen === undefined || result.lines[chosen].outcome === 'dropped') holdAt.set(row.ref, at) }
+    else if (row.issue === 'other_order_text' && isOpen(byRef.get(row.ref)) && chosen === undefined) holdAt.set(row.ref, at)
+  }
+  const lines = []
+  const reasonGiven = new Set()
   let dropped = result.dropped
-  // One row per line: a dropped quote becomes the line's question only when
-  // the line has no other row.
-  const kept = new Set(lines.filter((row) => row.outcome !== 'dropped').map((row) => row.ref))
-  for (const [at, row] of lines.entries()) {
+  for (const [at, row] of result.lines.entries()) {
     const line = byRef.get(row.ref)
-    const otherText = row.outcome === 'dropped' && row.issue === 'other_order_text' && !kept.has(row.ref) && line && open && Number(line.remaining) > 0
-    if (otherText) { dropped -= 1; kept.add(row.ref) }
-    if (row.outcome === 'dropped' && !otherText) continue
-    lines[at] = { ...row, purchaseOrderLineId: line?.purchaseOrderLineId ?? row.purchaseOrderLineId, currentDate: line?.promisedDate || row.currentDate || null, outcome: 'needs_you', issue: 'several_orders', proposedDate: null, readAs: null, readings: null, parts: null, inferred: false }
+    const otherText = row.outcome === 'dropped' && row.issue === 'other_order_text'
+    if (holdAt.get(row.ref) === at) {
+      if (otherText) dropped -= 1
+      lines.push({ ...row, purchaseOrderLineId: line?.purchaseOrderLineId ?? row.purchaseOrderLineId, currentDate: line?.promisedDate || row.currentDate || null, outcome: 'needs_you', issue: 'several_orders', proposedDate: null, readAs: null, readings: null, parts: null, inferred: false })
+    } else if (otherText && (holdAt.has(row.ref) || reasonGiven.has(row.ref) || result.lines.some((other) => other.ref === row.ref && other.outcome === 'dropped' && other.issue !== 'other_order_text'))) {
+      // Left out: the line already has its row. Still counted as dropped.
+    } else if (otherText) {
+      reasonGiven.add(row.ref)
+      lines.push({ ...row, issue: line ? 'not_open' : 'unknown_line' })
+    } else if (row.outcome === 'dropped') lines.push(row)
   }
   const state = lines.some((row) => row.outcome === 'needs_you') ? 'needs_you' : result.state
   return supplierReplyCheckSchema.parse({ ...result, state, lines, dropped })

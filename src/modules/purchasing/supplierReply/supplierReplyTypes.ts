@@ -7,7 +7,7 @@ export type SupplierReplyState = "proposed" | "needs_you" | "nothing_to_record" 
 export type SupplierReplyReadingStatus = "read" | "ai_off" | "no_provider" | "over_cap" | "failed" | "invalid";
 export type SupplierReplyFlagKind = "quantity_change" | "price_change" | "cancellation" | "substitution" | "other_order";
 export type SupplierReplyDismissReason = "wrong_reading" | "supplier_will_confirm" | "other";
-export type SupplierReplyEmailOrderStatus = "this" | "read" | "closed" | "other_supplier" | "unknown" | "over_limit";
+export type SupplierReplyEmailOrderStatus = "this" | "read" | "closed" | "other_supplier" | "unknown" | "over_limit" | "open_card_kept";
 export type SupplierReplyLineIssue =
   | "quote_not_found" | "date_mismatch" | "ambiguous_numeric" | "vague" | "relative_unreadable"
   | "before_reply" | "too_far" | "unknown_line" | "not_open" | "unchanged" | "split_incomplete" | "several_dates"

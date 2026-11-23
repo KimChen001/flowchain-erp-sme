@@ -112,7 +112,10 @@ export const SUPPLIER_REPLY_EMAIL_ORDER_LIMIT = 5
 //   other_supplier  another supplier's order: not read
 //   unknown         no order the reader can open has this number: not read
 //   over_limit      past SUPPLIER_REPLY_EMAIL_ORDER_LIMIT: not read
-export const SUPPLIER_REPLY_EMAIL_ORDER_STATES = Object.freeze(['this', 'read', 'closed', 'other_supplier', 'unknown', 'over_limit'])
+//   open_card_kept  another order that already has an open card: the card is
+//                   kept, the email not read there (a paste never replaces
+//                   another order's card, as an emailed reply never does)
+export const SUPPLIER_REPLY_EMAIL_ORDER_STATES = Object.freeze(['this', 'read', 'closed', 'other_supplier', 'unknown', 'over_limit', 'open_card_kept'])
 // What became of one line of the reading.
 export const SUPPLIER_REPLY_LINE_OUTCOMES = Object.freeze(['proposed', 'needs_you', 'dropped', 'confirmed'])
 

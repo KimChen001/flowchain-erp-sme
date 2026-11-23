@@ -168,13 +168,20 @@ test('a count after an order label is no order number: 订单 7 天内, 订单3�
   assert.deepEqual(orderNumbersNamed('PO-202611-0021：\n订单 0003：12月9日发货。', 'PO-202611-0021', known), ['PO-202611-0021', 'PO-202611-0003'])
 })
 
-test('a unit after an order label is matched as a whole word: 天津, 个别, 件数 and 周四 are not counts (fourth review U01–U04)', () => {
+test('a unit after an order label is matched as a whole word: 天津, 个别, 件数 and 周四 are not counts (fourth review U01–U04); singulars and 周 are (fifth review)', () => {
   const A = 'PO-202611-0021'
   const B = 'PO-202611-0014'
-  for (const text of ['订单 0014 件数如下：', '订单0014个别品项延迟：', '订单 0014 天津仓发货：', '订单0014周四发货：']) {
+  for (const text of ['订单 0014 件数如下：', '订单0014个别品项延迟：', '订单 0014 天津仓发货：', '订单0014周四发货：', '订单0014周日发货：', '订单 0014 周末发货：']) {
     assert.deepEqual(orderNumbersNamed(`${A}：\n${text}`, A, [A, B]), [A, B], text)
   }
-  for (const text of ['订单 14 天内发货。', '订单 14 天后发货。', '订单14个品项。', '订单 14 件。', '订单 14 箱。', '订单 14 日内发货。', 'Order no. 14 days late.', 'order no. 14 weeks']) {
+  for (const text of ['订单 14 天内发货。', '订单 14 天后发货。', '订单14个品项。', '订单 14 件。', '订单 14 箱。', '订单 14 日内发货。', '订单 14 周内发货。', 'Order no. 14 days late.', 'order no. 14 weeks']) {
     assert.deepEqual(orderNumbersNamed(`${A}：\n${text}`, A, [A, B]), [A], text)
+  }
+  // With orders 1 and 2 on the supplier's list, a count is still no order,
+  // so the one-order email is not split (and no card goes on order 1 or 2).
+  const list = [B, 'PO-202611-0001', 'PO-202611-0002', 'PO-202611-0003']
+  for (const text of [`${B}: order no. 1 item ships on 9 Dec.`, `${B}: order no. 2 weeks late, ships on 9 Dec.`, `${B}: order no. 2 week delay, ships on 9 Dec.`, `${B}: order no. 1 day late.`, `${B}: order no. 1 piece left.`, `${B}: order no. 1 unit missing.`, `${B}：订单 2 周内发货。`, `${B}：订单3个品项12月9日发货。`]) {
+    assert.deepEqual(orderNumbersNamed(text, B, list), [B], text)
+    assert.equal(emailParts(text, B, list), null, text)
   }
 })

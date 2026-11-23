@@ -90,8 +90,9 @@ function tokensIn(source, prefix, known) {
   // (third #449 review: S07 dropped a correct date as closed order 0007's).
   // Whole words only: 天津 (Tianjin), 个别 (some), 件数 (quantities) and 周四
   // (Thursday) are not units, so 订单 0014 before them is still an order
-  // (fourth review U01–U04).
-  for (const match of source.matchAll(/(?:\border\s*(?:no\.?|number|#)|采购单号?|订单号?|单号)\s*[:#]?\s*(\d{1,6})(?![\d月日号年/.-])(?!\s*(?:天(?!津)|个(?!别)|件(?!数)|箱|日内|(?:days|items|pcs|pieces|units|weeks)\b))/gi)) add(match, null, match[1], match[1].length === length && match[1].startsWith('0'))
+  // (fourth review U01–U04); 周 is a unit when no weekday follows (订单 2 周内),
+  // and so are the singulars (order no. 1 item, 1 day, 1 piece; fifth review).
+  for (const match of source.matchAll(/(?:\border\s*(?:no\.?|number|#)|采购单号?|订单号?|单号)\s*[:#]?\s*(\d{1,6})(?![\d月日号年/.-])(?!\s*(?:天(?!津)|个(?!别)|件(?!数)|箱|日内|周(?![一二三四五六日天末])|(?:days?|items?|pcs|pieces?|units?|weeks?)\b))/gi)) add(match, null, match[1], match[1].length === length && match[1].startsWith('0'))
   // A bare sequence with leading zeros: 0013.
   for (const match of source.matchAll(/(?<![\w-])0\d{3,5}(?![\w-])/g)) add(match, null, match[0], false)
   return out.sort((a, b) => a.index - b.index)

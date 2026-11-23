@@ -351,8 +351,14 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
       targets.push({ order: other, snapshot: supplierReplyOrderSnapshot(other, otherSkus), skus: otherSkus })
     }
     const emailRead = targets.map((target) => upper(target.snapshot.number))
+    // Another order that already has an open card keeps it: a paste never
+    // replaces another order's card, as an emailed reply never does (#425).
+    // That order is not read, and the card lists it as kept.
+    const withOpenCard = new Set((await client.supplierReply.findMany({ where: { tenantId: actor.tenantId, purchaseOrderId: { in: targets.slice(1).map((target) => target.order.id) }, activeKey: { not: null } }, select: { purchaseOrderId: true } })).map((row) => row.purchaseOrderId))
+    for (const target of targets.slice(1)) if (withOpenCard.has(target.order.id)) notRead.push({ number: upper(target.snapshot.number), why: 'open_card_kept' })
+    const toRead = targets.filter((target, at) => at === 0 || !withOpenCard.has(target.order.id))
     const startedAt = Date.now()
-    const readings = await Promise.all(targets.map(async (target) => {
+    const readings = await Promise.all(toRead.map(async (target) => {
       const read = await readWithModel({ client, context, tenantId: actor.tenantId, snapshot: target.snapshot, cleaned, receivedOn, today, signal })
       const check = read.readingStatus === 'read' ? checkReplyReading({ order: target.snapshot, text: cleaned.text, receivedOn, reading: read.reading, emailRead, orderNumbers: known }) : null
       return { ...target, read, check, ms: Date.now() - startedAt, id: idFactory() }
@@ -369,7 +375,9 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
         for (const row of readings) {
           const state = row.check ? row.check.state : 'needs_you'
           const open = SUPPLIER_REPLY_OPEN_STATES.includes(state)
-          const takesOver = open && row.read.readingStatus === 'read'
+          // Only the order pasted on may replace its open card; on another
+          // order a card that opened meanwhile is kept, and this reply waits.
+          const takesOver = open && row.read.readingStatus === 'read' && row.order.id === order.id
           const previous = await tx.supplierReply.findMany({ where: { tenantId: actor.tenantId, purchaseOrderId: row.order.id, activeKey: { not: null } }, select: { id: true } })
           const superseded = takesOver ? previous.map((item) => item.id) : []
           if (superseded.length) await tx.supplierReply.updateMany({ where: { tenantId: actor.tenantId, id: { in: superseded } }, data: { state: 'superseded', activeKey: null, supersededById: row.id } })

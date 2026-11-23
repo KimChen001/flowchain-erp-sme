@@ -115,9 +115,11 @@ export const SUPPLIER_REPLY_COPY = {
   flag_substitution: ["Substitution", "替代品"],
   flag_other_order: ["Another order", "其他订单"],
 
-  // An email that names several orders: this card reads only its own part.
-  emailOrders: ["This email names {n} orders. FlowChain reads up to {limit} of them, each on its own order with one reading. This card reads only the part about {number}.", "这封邮件提到了 {n} 张订单。FlowChain 最多读取其中 {limit} 张，每张在各自订单上读取一次。本卡片只读取关于 {number} 的部分。"],
+  // An email that names several orders: this card shows only its own lines
+  // and fills in no dates (the final gate).
+  emailOrders: ["This email names {n} orders. FlowChain reads up to {limit} of them, each on its own order with one reading. This card shows only {number}'s lines and fills in no dates.", "这封邮件提到了 {n} 张订单。FlowChain 最多读取其中 {limit} 张，每张在各自订单上读取一次。本卡片只显示 {number} 的行，不自动填日期。"],
   emailOrder_read: ["{number}: read on its own order", "{number}：已在该订单上读取"],
+  emailOrder_open_card_kept: ["{number}: already has an open card, kept; not read there", "{number}：已有待处理的卡片，保留原卡片，未在该订单上读取"],
   emailOrder_closed: ["{number}: closed, not read", "{number}：已关闭，未读取"],
   emailOrder_other_supplier: ["{number}: another supplier's order, not read", "{number}：其他供应商的订单，未读取"],
   emailOrder_unknown: ["{number}: no such order, not read", "{number}：找不到该订单，未读取"],

@@ -325,7 +325,8 @@ test('an email naming several orders: read on each open order of its supplier by
     const first = iso(dayOffset(10))
     const second = iso(dayOffset(14))
     // Answered by the order in the prompt. On PO-E the model also puts PO-E2's
-    // date on its second line: the check drops it (another order's part).
+    // date on its second line. An email about several orders proposes
+    // nothing (the final gate): every line goes to the person.
     const answers = {
       'PO-202611-0013': { replyKind: 'dates', lines: [{ line: 'L1', date: first, quote: `the brackets ship on ${first}`, dateKind: 'stated' }, { line: 'L2', date: second, quote: `the springs ship on ${second}`, dateKind: 'stated' }], flags: [], reason: null },
       'PO-202611-0021': { replyKind: 'dates', lines: [{ line: 'L1', date: second, quote: `the springs ship on ${second}`, dateKind: 'stated' }], flags: [], reason: null },
@@ -346,14 +347,14 @@ test('an email naming several orders: read on each open order of its supplier by
     const card = (await service.pasteReply('PO-E', { text }, buyer)).reply
     assert.ok(supplierReplyCardSchema.safeParse(card).success)
     assert.equal(prompts.length, 2, 'read on the two open Acme orders only')
-    assert.deepEqual(card.lines.map((line) => [line.ref, line.outcome, line.issue, line.proposedDate]), [['L2', 'dropped', 'other_order_text', null], ['L1', 'proposed', null, first]])
+    assert.deepEqual([card.state, card.lines.map((line) => [line.ref, line.outcome, line.issue, line.proposedDate])], ['needs_you', [['L2', 'needs_you', 'several_orders', null], ['L1', 'needs_you', 'several_orders', null]]])
     assert.deepEqual(card.emailOrders, [
       { number: 'PO-202611-0013', status: 'this' }, { number: 'PO-202611-0021', status: 'read' },
       { number: 'PO-202611-0022', status: 'closed' }, { number: 'PO-202611-0023', status: 'other_supplier' }, { number: 'PO-202611-0099', status: 'unknown' },
     ])
-    // The other open order has its own card, its own part read.
+    // The other open order has its own card, held for the person too.
     const onE2 = (await service.listReplies('PO-E2', buyer)).replies
-    assert.deepEqual(onE2.map((one) => [one.state, one.lines.map((line) => [line.outcome, line.proposedDate]), one.emailOrders.slice(0, 2)]), [['proposed', [['proposed', second]], [{ number: 'PO-202611-0013', status: 'read' }, { number: 'PO-202611-0021', status: 'this' }]]])
+    assert.deepEqual(onE2.map((one) => [one.state, one.lines.map((line) => [line.outcome, line.proposedDate]), one.emailOrders.slice(0, 2)]), [['needs_you', [['needs_you', null]], [{ number: 'PO-202611-0013', status: 'read' }, { number: 'PO-202611-0021', status: 'this' }]]])
     // Nothing on the closed order or on the other supplier's.
     assert.equal(await prisma.supplierReply.count({ where: { tenantId: tenantE, purchaseOrderId: { in: ['PO-E3', 'PO-E4'] } } }), 0)
     // Each order read is one call on the meter.
@@ -363,6 +364,13 @@ test('an email naming several orders: read on each open order of its supplier by
     answers['PO-202611-0021'] = { replyKind: 'dates', lines: [{ line: 'L1', date: first, quote: `ship on ${first}`, dateKind: 'stated' }], flags: [], reason: null }
     const single = (await service.pasteReply('PO-E2', { text: `PO-202611-0021: we can now ship on ${first}.` }, buyer)).reply
     assert.deepEqual([prompts.length, single.state, 'emailOrders' in single], [3, 'proposed', false])
+    // Pasted on PO-E again: PO-E2 now has an open card, which is kept. The
+    // email is not read there, and PO-E's card lists it as kept.
+    const again = (await service.pasteReply('PO-E', { text }, buyer)).reply
+    assert.equal(prompts.length, 4, 'read on PO-E only')
+    assert.deepEqual(again.emailOrders.find((item) => item.number === 'PO-202611-0021'), { number: 'PO-202611-0021', status: 'open_card_kept' })
+    const keptOnE2 = (await service.listReplies('PO-E2', buyer)).replies
+    assert.deepEqual(keptOnE2.filter((one) => ['proposed', 'needs_you'].includes(one.state)).map((one) => [one.id, one.state]), [[single.id, 'proposed']])
   } finally {
     await prisma.$disconnect()
   }
