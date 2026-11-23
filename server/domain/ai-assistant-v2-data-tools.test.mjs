@@ -268,6 +268,8 @@ test('stock_projection also runs the weeks at the recorded shipping rate, apart 
   for (const [index, week] of result.atRecordedRate.entries()) {
     balance += week.incoming - 70
     assert.deepEqual([week.from, week.incoming, week.demand, week.endAvailable, week.short], [result.weeks[index].from, result.weeks[index].incoming, 70, balance, balance < 0])
+    // How many short, as a positive figure (2026-11-20: "-71 pcs" was copied).
+    assert.equal(week.shortBy, balance < 0 ? -balance : 0)
   }
   assert.equal(result.firstWeekShortAtRecordedRate, result.atRecordedRate.find((week) => week.short)?.from || null)
   const late = result.notPlacedInAWeek.incomingPastPromisedDate.reduce((sum, entry) => sum + entry.quantity, 0)
@@ -1050,4 +1052,25 @@ test('the reorder list and suggest_purchase_lines order up to the same level', a
     assert.equal(suggested.suggestedQuantity.value, own ? 175 : 122)
     assert.equal(suggested.lotSize, own ? 25 : null)
   }
+})
+
+// #431: a ranked summary beside the reorder list's page was tried twice and
+// dropped (mostUrgentNow by days of cover, then largestShortfallsNow by
+// shortfall): answers named its top 5 and stopped reading, and reorder-zh
+// fell from 1/2 to 0/5 and 0/3 on the 2026-11-21 live runs. The list gives
+// neither.
+test('reorder_list gives no ranked summary beside its page', async () => {
+  const scenario = aiSkillScenario()
+  const loaded = await loadAiSkillContext(scenario.ctx)
+  const today = (await readAiSkillFacts(loaded)).today
+  const rows = [['20000', 100, 112], ['20001', 53, 254], ['20002', 182, 247]].map(([sku, position, reorderPoint]) => ({ sku, itemName: `Item ${sku}`, unit: 'pcs', orderNow: true, orderByDate: today, position, reorderPoint, shortfall: reorderPoint - position, incoming: 0, demand: { averageDailyDemand: 5 }, supplier: { id: 'SUP-1', name: 'Supplier', leadTimeDays: 14 }, purchaseRequest: { quantity: reorderPoint - position + 20 } }))
+  const context = await loadAiSkillContext({ ...scenario.ctx, aiReadServices: { reorderList: { read: async () => ({ rows }) } } })
+  const list = (await runAiReadTool('reorder_list', { limit: 2 }, { facts: await readAiSkillFacts(context), context })).result
+  assert.equal(list.mostUrgentNow, undefined)
+  assert.equal(list.largestShortfallsNow, undefined)
+  // A page of the list's rows, by order-by day. The order within a day is the
+  // list's own (#445 puts the largest shortfall first), so it is not pinned.
+  assert.equal(list.rows.length, 2)
+  assert.ok(list.rows.every((row) => rows.some((entry) => entry.sku === row.sku)))
+  assert.ok(list.rows.every((row, index) => index === 0 || String(list.rows[index - 1].orderByDate) <= String(row.orderByDate)))
 })
