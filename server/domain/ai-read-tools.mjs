@@ -174,7 +174,10 @@ const RISK_STATUSES = new Set(['out_of_stock', 'below_safety_stock', 'below_reor
 const stockCounts = (facts, rows) => {
   const short = new Set(array(facts.inventory.atRisk))
   const count = (status) => rows.filter((row) => row.stockStatus === status).length
-  return { atRisk: rows.filter((row) => short.has(row.sku) || RISK_STATUSES.has(row.stockStatus)).length, shortAgainstSalesOrders: rows.filter((row) => short.has(row.sku)).length, outOfStock: count('out_of_stock'), belowSafetyStock: count('below_safety_stock'), belowReorderPoint: count('below_reorder_point') }
+  // belowSafetyStockWithIncoming: of those below safety stock, how many have
+  // stock incoming on purchase orders, read instead of counted (2026-11-22
+  // below-safety-count-zh: "其中 21 个已有在途采购订单" was flagged).
+  return { atRisk: rows.filter((row) => short.has(row.sku) || RISK_STATUSES.has(row.stockStatus)).length, shortAgainstSalesOrders: rows.filter((row) => short.has(row.sku)).length, outOfStock: count('out_of_stock'), belowSafetyStock: count('below_safety_stock'), belowSafetyStockWithIncoming: rows.filter((row) => row.stockStatus === 'below_safety_stock' && Number(row.incomingApprovedPo) > 0).length, belowReorderPoint: count('below_reorder_point') }
 }
 // Available to promise without what overdue purchase orders still owe: the
 // promise a customer can be given if late lines do not come (design audit
@@ -225,6 +228,9 @@ const stockPosition = defineAiTool({
         shortage: row.shortage, safetyStock: row.safetyStock, reorderPoint: row.reorderPoint, status: row.stockStatus,
         belowSafetyStock: row.safetyStock !== null && row.safetyStock !== undefined && row.available !== null && row.available !== undefined ? row.available < row.safetyStock : null,
         purchaseOrders: array(row.purchaseOrderIds).map((id) => orderNumberOf(facts, id)).filter(Boolean),
+        // How many orders those are, read instead of counted (2026-11-21
+        // hero-thresholds-zh: "有 2 张未结采购订单" was flagged).
+        purchaseOrderCount: array(row.purchaseOrderIds).map((id) => orderNumberOf(facts, id)).filter(Boolean).length,
         purchaseOrderDates: orderDatesOf(facts, row.purchaseOrderIds),
         salesOrders: array(row.salesOrderIds).map((id) => salesOrderNumberOf(facts, id)).filter(Boolean),
         orderMinimum: row.orderMinimum ? { quantity: row.orderMinimum.quantity ?? null } : null,
@@ -251,7 +257,9 @@ const listSalesOrders = defineAiTool({
     return {
       asOf: facts.asOf,
       note: 'Only open sales orders with demand not yet shipped or reserved.',
-      ...aiToolList(rows.map((row) => ({ orderNumber: row.number, customer: row.customer, promisedDate: row.promisedDate, lines: array(row.lines).map((line) => ({ sku: line.sku, notShippedOrReserved: line.open })), ref: aiToolRef('sales_order', row.id, row.number) })), args.limit),
+      // lineCount: the order's lines below, read instead of counted
+      // (2026-11-22 open-sales-unreserved-zh: "7 个物料行" was flagged).
+      ...aiToolList(rows.map((row) => ({ orderNumber: row.number, customer: row.customer, promisedDate: row.promisedDate, lineCount: array(row.lines).length, lines: array(row.lines).map((line) => ({ sku: line.sku, notShippedOrReserved: line.open })), ref: aiToolRef('sales_order', row.id, row.number) })), args.limit),
     }
   },
 })

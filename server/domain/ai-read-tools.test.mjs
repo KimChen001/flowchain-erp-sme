@@ -230,8 +230,22 @@ test('at risk covers short, out of stock, below safety stock and below the reord
     shortAgainstSalesOrders: all.filter((row) => facts.inventory.atRisk.includes(row.sku)).length,
     outOfStock: all.filter((row) => row.stockStatus === 'out_of_stock').length,
     belowSafetyStock: all.filter((row) => row.stockStatus === 'below_safety_stock').length,
+    belowSafetyStockWithIncoming: all.filter((row) => row.stockStatus === 'below_safety_stock' && row.incomingApprovedPo > 0).length,
     belowReorderPoint: all.filter((row) => row.stockStatus === 'below_reorder_point').length,
   })
+  // 2026-11-22 below-safety-count-zh ("其中 21 个已有在途采购订单") and
+  // hero-thresholds-zh ("2 张未结采购订单"): counts read, not counted. One
+  // below safety stock without anything incoming is left out of the count.
+  const dry = all.find((row) => row.stockStatus === 'below_safety_stock' && !(row.incomingApprovedPo > 0)) || calm
+  dry.incomingApprovedPo = 0
+  const recount = (await runAiReadTool('stock_position', { only: 'below_safety_stock', limit: 50 }, { facts })).result
+  assert.equal(recount.counts.belowSafetyStockWithIncoming, all.filter((row) => row.stockStatus === 'below_safety_stock' && row.incomingApprovedPo > 0).length)
+  assert.ok(recount.counts.belowSafetyStockWithIncoming < recount.counts.belowSafetyStock)
+  assert.ok(recount.rows.every((row) => row.purchaseOrderCount === row.purchaseOrders.length))
+  // 2026-11-22 open-sales-unreserved-zh ("7 个物料行"): an order's lines, counted.
+  const salesOrders = [{ id: 'SO-1', number: 'SO-1', customer: 'Customer 1', promisedDate: '2026-11-20', lines: Array.from({ length: 7 }, (_, index) => ({ sku: `S-${index}`, open: 1 + (index % 2) })) }]
+  const sales = (await runAiReadTool('list_sales_orders', {}, { facts: { ...facts, salesOrders } })).result
+  assert.deepEqual([sales.rows[0].lineCount, sales.rows[0].lines.length], [7, 7])
 })
 
 // 2026-11-21 question set: "Which items are below their safety stock?" read
