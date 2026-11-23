@@ -293,3 +293,62 @@ export function emailOrdersToRead({ named, pastedOn = null, orders, supplier = n
   }
   return { read, notRead }
 }
+
+// Another order's number the email writes in a form the numbering above does
+// not see, on an email read as about one order (the one-order W02-type gap,
+// third #449 review W02, W03, W07, W08, W57, W58, W59; coordinator, 11/23):
+// "PO No. 202611-0014:", 订单号：202611-0014, "Order No. 202611-0014",
+// "PO#: 202611-0014", "PO Number: 202611-0014", other dashes
+// (PO‐202611‐0014), a zero for the O (P0-202611-0014), PO号：0014. Read as one
+// order, such an email gives that order's dates to this one, so the check
+// then proposes nothing (supplier-reply-reading.mjs, otherOrderNumberGate).
+// Returns the number as written, or null.
+//
+// It counts when it looks like an order number of this workspace:
+//   - a month and a sequence (YYYYMM, a dash, slash, dot or space, then
+//     3–6 digits), unless the number is glued to another document's code
+//     (INV-202611-0014, SO202611-0014) or labelled as another document
+//     (Invoice No. 202611-0014, 发票号 202611-0014) with no order word in
+//     that label;
+//   - this order's prefix (or P0 for PO) and a short sequence, not a count
+//     or a date (PO号：0014, PO 14; not PO 3 items, PO 12月5日).
+// The order the reply is read on, in any of these forms, does not count.
+const OTHER_DASHES = /[‐-―−﹘﹣]/g
+const ORDER_WORD = /(?:^|[^\p{L}])(?:p\.?\s*[o0]\.?|orders?|purchase\s+orders?)(?![\p{L}])|订单|采购单|单号|po号/iu
+const OTHER_DOCUMENT_WORD = /(?:^|[^\p{L}])(?:invoices?|inv|bills?|receipts?|delivery\s+notes?|dn|dispatch|shipments?|tracking|awb|waybills?|b\/l|bol|quotes?|quotations?|contracts?)(?![\p{L}])|发票|收据|送货单|发货单|运单|提单|报价|合同/iu
+const COUNT_OR_DATE_AFTER = /^\s*(?:[月日号年天个件箱周]|(?:days?|items?|pcs|pieces?|units?|weeks?|lines?|boxes|cartons?|pallets?)(?![\p{L}]))/iu
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+export function otherOrderNumberWritten(text, number) {
+  const own = parsed(number)
+  if (!own) return null
+  const source = String(text ?? '').normalize('NFKC').replace(OTHER_DASHES, '-')
+  // PO → P.O., P O, P0.
+  const prefix = own.prefix.split('').map((char) => (char === 'O' ? '[O0]' : escapeRegExp(char))).join('\\.?\\s*') + '\\.?'
+  const ownPrefix = new RegExp(`^${prefix}$`, 'i')
+  // A month and a sequence.
+  for (const match of source.matchAll(/(?<!\p{N})((?:19|20)\d{2})(0[1-9]|1[0-2])(?:\s*[-_./]\s*|\s+)(\d{3,6})(?!\p{N})/gu)) {
+    if (match[1] + match[2] === own.month && Number(match[3]) === own.seq) continue
+    const before = source.slice(0, match.index)
+    // A code glued to it (Latin letters, then at most a dash) that is not
+    // ours or a label word (No.202611-0014): another document's.
+    const glued = /([A-Za-z][A-Za-z0-9.]*)[-_]?$/.exec(before)
+    if (glued && !ownPrefix.test(glued[1]) && !/^(?:no|nr|num|number|order)\.?$/i.test(glued[1])) continue
+    // The label before it, back to a digit or a break in the sentence.
+    const label = before.split(/[\d\n,;!?。，；！？(（]/u).pop()
+    if (!ORDER_WORD.test(label) && OTHER_DOCUMENT_WORD.test(label)) continue
+    return match[0]
+  }
+  // This order's prefix as written plainly (PO, po, P0; not P.O., a box
+  // number) and a short sequence, not inside a web or mail address
+  // (p04.com, Enron pilot).
+  const plain = own.prefix === 'PO' ? '(?:[Pp][Oo]|P0)' : `(?:${escapeRegExp(own.prefix)})`
+  const short = new RegExp(`(?<![\\p{L}\\p{N}./:@_-])${plain}(?:\\s*(?:[Nn][Oo]|[Nn][Rr]|[Nn]umber|NUMBER|[Nn]um)\\.?)?\\s*[-_#:.号]*\\s*(\\d{1,6})(?!\\p{N}|\\s*[-_./]\\s*\\d|\\.[\\p{L}\\p{N}]|@)`, 'gu')
+  for (const match of source.matchAll(short)) {
+    const seq = match[1]
+    if (Number(seq) === own.seq) continue
+    if (seq.length === 6 && /^(?:19|20)\d{2}(?:0[1-9]|1[0-2])$/.test(seq)) continue
+    if (COUNT_OR_DATE_AFTER.test(source.slice(match.index + match[0].length))) continue
+    return match[0]
+  }
+  return null
+}

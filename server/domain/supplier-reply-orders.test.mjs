@@ -2,7 +2,7 @@
 // the text each order owns, and which named orders are read.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { emailOrdersToRead, emailParts, orderNumberPrefix, orderNumbersNamed } from './supplier-reply-orders.mjs'
+import { emailOrdersToRead, emailParts, orderNumberPrefix, orderNumbersNamed, otherOrderNumberWritten } from './supplier-reply-orders.mjs'
 
 const A = 'PO-202611-0012'
 const B = 'PO-202611-0013'
@@ -184,4 +184,26 @@ test('a unit after an order label is matched as a whole word: 天津, 个别, �
     assert.deepEqual(orderNumbersNamed(text, B, list), [B], text)
     assert.equal(emailParts(text, B, list), null, text)
   }
+})
+
+test('another order\'s number in a form the numbering does not see is found; this order, another document\'s number, a count or a date is not (W02-type gap)', () => {
+  const on = 'PO-202611-0021'
+  // Another order: the third review's one-order emails, and more of the same.
+  for (const text of [
+    'PO No. 202611-0014:', '订单号：202611-0014', 'PO‐202611‐0014:', 'Order No. 202611-0014:', 'PO#: 202611-0014', 'PO Number: 202611-0014',
+    'P0-202611-0014', 'PO号：0014', 'PO 14 ships on 9 Dec.', 'PO202611-0014', '202611-0014: ships on 9 Dec.', 'No.202611-0014', '订单号202611-0014',
+    'Invoice for PO No. 202611-0014', 'P.O. 202611-0014', 'PO-202610-0014', 'ＰＯ号：００１４',
+  ]) assert.ok(otherOrderNumberWritten(text, on), text)
+  // Not another order.
+  for (const text of [
+    // This order, written any of these ways.
+    'PO-202611-0021', 'PO No. 202611-0021', 'PO 21', 'P0-202611-0021', '订单号：202611-0021', 'PO号：0021',
+    // Another document's number: glued to its code, or labelled as it.
+    'INV-202611-0014', 'SO202611-0014', 'Invoice No. 202611-0014', '发票号 202611-0014', 'PO-202611-0021 invoice no. 202611-0014', 'Tracking 1Z202611-0014',
+    // A count, a date, a box, an address, the supplier's own number.
+    'PO 3 items', 'PO 12月5日', 'P.O. Box 1234', 'P.O. 834, Lombard, IL', 'ships on 2026-11-28', '20261128', 'PO 202611', 'our ref 4471', '订单3天后发货',
+    'http://p04.com/t.d?OEQjfmY', 'insync-online.p04.com', 'mail po14@example.com', 'HOUSEHOLD_2_074 ships on 3 December.', 'Please call +44 20 7946 0958',
+  ]) assert.equal(otherOrderNumberWritten(text, on), null, text)
+  // Only for a number in the numbering format.
+  assert.equal(otherOrderNumberWritten('PO No. 202611-0014', 'ACME-17'), null)
 })

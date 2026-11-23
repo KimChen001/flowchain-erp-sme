@@ -99,6 +99,7 @@ export const SUPPLIER_REPLY_COPY = {
   issue_no_order_part: ["the email names several orders and this text is not about this order alone: check which order it is for", "邮件提到了几张订单，这段文字不只关于本订单：请确认它属于哪张订单"],
   issue_several_orders: ["this email is about several orders, so no date is filled in: check the line against the whole email and enter the date yourself", "这封邮件涉及几张订单，系统不自动填日期：请对照整封邮件确认这一行，自己填写日期"],
   issue_correction_across_orders: ["the supplier corrects in this email which order some lines are for: check each line against the whole email", "供应商在这封邮件里更正了某些行属于哪张订单：请对照整封邮件逐行确认"],
+  issue_other_order_number: ["this email also gives what looks like another order's number, so no date is filled in: check which order each line is for and enter the date yourself", "这封邮件里还写了一个像是另一张订单的单号，系统不自动填日期：请确认每一行属于哪张订单，自己填写日期"],
   issue_not_open: ["nothing left to receive on this line", "该行已无待收数量"],
   issue_unchanged: ["same as the current date", "与当前交期相同"],
   issue_split_incomplete: ["the parts do not cover what is still open", "分批数量未覆盖剩余待收数量"],

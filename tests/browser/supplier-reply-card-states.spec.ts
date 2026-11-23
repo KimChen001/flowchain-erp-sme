@@ -114,6 +114,36 @@ test.describe("the supplier reply card's states", () => {
     await view.screenshot({ path: test.info().outputPath("several-orders-card.png") });
   });
 
+  test("an email that also writes another order's number in an unseen form proposes nothing: each line shows its quote and why, in English and Chinese", async ({ page, request }) => {
+    const auth = await signIn(page, request);
+    await useLanguage(page, "en-US");
+    const orderId = await anIssuedOrder(request, auth);
+    // The one-order path's gate (W02-type gap): every line held as
+    // other_order_number, with the quote kept and no date.
+    const held = (over: Record<string, unknown>) => line({ outcome: "needs_you", issue: "other_order_number", proposedDate: null, readAs: null, readings: null, parts: null, ...over });
+    const gated = card(orderId, {
+      state: "needs_you",
+      text: "PO-TEST-1:\nBrackets ship on 28 November.\nPO No. 202611-0014:\nHinges ship on 9 December.",
+      lines: [held({ quote: "Brackets ship on 28 November." }), held({ ref: "L2", purchaseOrderLineId: "pol-2", sku: "SKU-2210", itemName: "Hinge", quote: "Hinges ship on 9 December." })],
+      formLines: [formLine("pol-1", "SKU-1040"), formLine("pol-2", "SKU-2210")],
+    });
+    await stubReplies(page, () => [gated]);
+    await page.goto(`/app/procurement/orders/${encodeURIComponent(orderId)}`);
+    const view = page.getByTestId("supplier-reply-card").first();
+    await expect(view).toHaveAttribute("data-state", "needs_you");
+    await expect(view).toContainText("this email also gives what looks like another order's number, so no date is filled in");
+    await expect(view).toContainText("Hinges ship on 9 December.");
+    await expect(view.getByTestId("supplier-reply-read-as")).toHaveCount(0);
+    await expect(view.getByTestId("supplier-reply-readings")).toHaveCount(0);
+    await view.screenshot({ path: test.info().outputPath("other-order-number-card.png") });
+    await useLanguage(page, "zh-CN");
+    await page.reload();
+    const zh = page.getByTestId("supplier-reply-card").first();
+    await expect(zh).toContainText("这封邮件里还写了一个像是另一张订单的单号，系统不自动填日期");
+    await expect(zh).toContainText("Hinges ship on 9 December.");
+    await zh.screenshot({ path: test.info().outputPath("other-order-number-card-zh.png") });
+  });
+
   test("a stale card and a reply no longer open say so, and keep saying it after the reload", async ({ page, request }) => {
     const auth = await signIn(page, request);
     await useLanguage(page, "en-US");

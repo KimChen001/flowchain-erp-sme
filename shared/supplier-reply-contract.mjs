@@ -101,7 +101,12 @@ export const SUPPLIER_REPLY_DISMISS_REASONS = Object.freeze(['wrong_reading', 's
 //                        or read on more than one order): nothing is
 //                        proposed, every line goes to the person with only
 //                        its quote (the final gate)
-export const SUPPLIER_REPLY_LINE_ISSUES = Object.freeze(['quote_not_found', 'date_mismatch', 'ambiguous_numeric', 'vague', 'relative_unreadable', 'before_reply', 'too_far', 'unknown_line', 'not_open', 'unchanged', 'split_incomplete', 'several_dates', 'refused', 'addressed_to_system', 'line_mismatch', 'ambiguous_weekday', 'other_order_text', 'no_order_part', 'correction_across_orders', 'several_orders'])
+//   other_order_number   an email read as about this order alone also writes
+//                        another order's number in a form the numbering
+//                        does not see ("PO No. 202611-0014:", PO号：0014):
+//                        nothing is proposed, every line goes to the person
+//                        with only its quote (the one-order path's gate)
+export const SUPPLIER_REPLY_LINE_ISSUES = Object.freeze(['quote_not_found', 'date_mismatch', 'ambiguous_numeric', 'vague', 'relative_unreadable', 'before_reply', 'too_far', 'unknown_line', 'not_open', 'unchanged', 'split_incomplete', 'several_dates', 'refused', 'addressed_to_system', 'line_mismatch', 'ambiguous_weekday', 'other_order_text', 'no_order_part', 'correction_across_orders', 'several_orders', 'other_order_number'])
 // An email that names several orders (supplier-reply-orders.mjs) is read on
 // at most this many of them, the one it was pasted on first.
 export const SUPPLIER_REPLY_EMAIL_ORDER_LIMIT = 5
