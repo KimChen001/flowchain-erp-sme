@@ -5,7 +5,7 @@ import { AI_SKILL_OTHER_TENANT, AI_SKILL_TENANT, aiSkillActor, aiSkillScenario }
 import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { AI_READ_TOOLS } from './ai-read-tools.mjs'
-import { AI_ASSISTANT_V2_TOOLS, namesCoverPeriod } from './ai-assistant-v2-data-tools.mjs'
+import { AI_ASSISTANT_V2_TOOLS, estimatedTotalOf, namesCoverPeriod } from './ai-assistant-v2-data-tools.mjs'
 import { AI_READ_TOOL_COLUMNS, aiReadToolDefinitions, aiReadToolRefs, aiReadToolsFor, runAiReadTool } from './ai-read-tool-runner.mjs'
 import { runTodayPriorities } from './ai-skill-today-priorities.mjs'
 import { buildReorderList } from './reorder-list.mjs'
@@ -196,11 +196,28 @@ test('suggest_purchase_lines raises the gap to the minimum order and fills suppl
   assert.deepEqual(row.estimatedUnitPrice, { value: 95, currency: 'USD', source: 'reference_price' })
   // The line's value, read instead of multiplied: 100 × 95.
   assert.deepEqual(row.estimatedValue, { value: 9500, currency: 'USD' })
+  // The rows' values added up, read instead of added (one row here).
+  assert.deepEqual(result.estimatedTotal, { value: 9500, currency: 'USD', lines: 1 })
   assert.equal(row.covered, null)
   assert.deepEqual(row.ref, { type: 'item', id: 'ITEM-001', label: 'LDM-001' })
   // Without the submitted request the gap is above the minimum.
   const cancelled = await v2({ change: (data) => { highReorderPoint(data); data.purchaseRequests[0].status = 'cancelled' } })
   assert.deepEqual((await cancelled.run('suggest_purchase_lines')).result.rows[0].suggestedQuantity, { value: 102, source: 'reorder_gap' })
+})
+
+// 2026-11-21/22: the form's value (£887, £1,555, £615), added up by the model,
+// was flagged. The total adds only rows with a quantity, and is given only
+// when every such row has its value in one currency: never a part sum.
+test('suggest_purchase_lines adds up its rows\' values only when every row to order has one, in one currency', () => {
+  const row = (quantity, value, currency = 'GBP') => ({ suggestedQuantity: { value: quantity }, estimatedValue: value === null ? null : { value, currency } })
+  assert.deepEqual(estimatedTotalOf([row(570, 282.15), row(503, 213.78), row(316, 119.37)]), { value: 615.3, currency: 'GBP', lines: 3 })
+  // A row with nothing to order (covered) is no part of it.
+  assert.deepEqual(estimatedTotalOf([row(100, 638), row(null, null), row(0, null)]), { value: 638, currency: 'GBP', lines: 1 })
+  // Prices hidden, a row without a price, or two currencies: no total.
+  assert.equal(estimatedTotalOf([row(100, null), row(50, null)]), null)
+  assert.equal(estimatedTotalOf([row(100, 638), row(50, null)]), null)
+  assert.equal(estimatedTotalOf([row(100, 638), row(50, 120, 'USD')]), null)
+  assert.equal(estimatedTotalOf([]), null)
 })
 
 // LDM-001 ships 50 a day on 18 days of September: 900 over the 90-day window,
@@ -622,6 +639,9 @@ test('suggest_purchase_lines hides prices and suppliers from roles that may not 
   const shown = (await viewer.run('suggest_purchase_lines')).result
   assert.equal(shown.pricesHidden, true)
   assert.equal(shown.rows[0].estimatedUnitPrice, null)
+  // No value, and no total field at all.
+  assert.equal(shown.rows[0].estimatedValue, null)
+  assert.equal('estimatedTotal' in shown, false)
   assert.equal(shown.rows[0].supplier.id, 'SUP-001')
   // Operations reads stock and, since they raise requests (design audit C4,
   // owner decision 2026-11-17), purchase requests: still no supplier, price
@@ -630,7 +650,8 @@ test('suggest_purchase_lines hides prices and suppliers from roles that may not 
   const stock = (await operations.run('suggest_purchase_lines')).result
   assert.equal(stock.suppliersHidden, true)
   assert.equal(stock.purchaseRequestsRead, true)
-  assert.ok(stock.rows.length > 0 && stock.rows.every((row) => row.supplier === null && row.supplierChoices.length === 0 && row.estimatedUnitPrice === null))
+  assert.ok(stock.rows.length > 0 && stock.rows.every((row) => row.supplier === null && row.supplierChoices.length === 0 && row.estimatedUnitPrice === null && row.estimatedValue === null))
+  assert.equal('estimatedTotal' in stock, false)
   assert.doesNotMatch(JSON.stringify(stock), /PO-0\d\d|Acme/)
   // Nobody gets a contact's email address.
   const withEmail = await v2({ change: (data) => { highReorderPoint(data); data.suppliers[0].email = 'orders@acme.example'; data.suppliers[0].contactName = 'Ada' } })

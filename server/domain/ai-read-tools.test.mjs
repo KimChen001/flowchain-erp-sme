@@ -5,7 +5,7 @@ import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { validateAiToolArgs, aiToolList, AI_TOOL_LIMITS } from './ai-read-tool-contract.mjs'
 import { AI_READ_TOOLS, aiStockSku } from './ai-read-tools.mjs'
-import { AI_READ_SERVICE_TOOLS } from './ai-read-service-tools.mjs'
+import { AI_READ_SERVICE_TOOLS, lastsDays } from './ai-read-service-tools.mjs'
 import { aiReadToolDefinitions, aiReadToolRefs, aiReadToolsFor, runAiReadTool } from './ai-read-tool-runner.mjs'
 import { buildSupplierInsights, createSupplierInsightsReadService } from './supplier-insights.mjs'
 
@@ -230,8 +230,22 @@ test('at risk covers short, out of stock, below safety stock and below the reord
     shortAgainstSalesOrders: all.filter((row) => facts.inventory.atRisk.includes(row.sku)).length,
     outOfStock: all.filter((row) => row.stockStatus === 'out_of_stock').length,
     belowSafetyStock: all.filter((row) => row.stockStatus === 'below_safety_stock').length,
+    belowSafetyStockWithIncoming: all.filter((row) => row.stockStatus === 'below_safety_stock' && row.incomingApprovedPo > 0).length,
     belowReorderPoint: all.filter((row) => row.stockStatus === 'below_reorder_point').length,
   })
+  // 2026-11-22 below-safety-count-zh ("其中 21 个已有在途采购订单") and
+  // hero-thresholds-zh ("2 张未结采购订单"): counts read, not counted. One
+  // below safety stock without anything incoming is left out of the count.
+  const dry = all.find((row) => row.stockStatus === 'below_safety_stock' && !(row.incomingApprovedPo > 0)) || calm
+  dry.incomingApprovedPo = 0
+  const recount = (await runAiReadTool('stock_position', { only: 'below_safety_stock', limit: 50 }, { facts })).result
+  assert.equal(recount.counts.belowSafetyStockWithIncoming, all.filter((row) => row.stockStatus === 'below_safety_stock' && row.incomingApprovedPo > 0).length)
+  assert.ok(recount.counts.belowSafetyStockWithIncoming < recount.counts.belowSafetyStock)
+  assert.ok(recount.rows.every((row) => row.purchaseOrderCount === row.purchaseOrders.length))
+  // 2026-11-22 open-sales-unreserved-zh ("7 个物料行"): an order's lines, counted.
+  const salesOrders = [{ id: 'SO-1', number: 'SO-1', customer: 'Customer 1', promisedDate: '2026-11-20', lines: Array.from({ length: 7 }, (_, index) => ({ sku: `S-${index}`, open: 1 + (index % 2) })) }]
+  const sales = (await runAiReadTool('list_sales_orders', {}, { facts: { ...facts, salesOrders } })).result
+  assert.deepEqual([sales.rows[0].lineCount, sales.rows[0].lines.length], [7, 7])
 })
 
 // 2026-11-21 question set: "Which items are below their safety stock?" read
@@ -546,6 +560,27 @@ test('the reorder list gives the model its daily demand to one decimal', async (
   const context = await loadAiSkillContext({ ...scenario.ctx, aiReadServices: { reorderList } })
   const row = (await runAiReadTool('reorder_list', {}, { facts: await readAiSkillFacts(context), context })).result.rows[0]
   assert.equal(row.averageDailyDemand, 7.2)
+})
+
+// 2026-11-21 switch-to-zh: "约 12 天" for 259 ÷ 20.7, worked out by the model,
+// was flagged twice. It is now read from the reorder list's row.
+test('the reorder list says how many days the available stock lasts at its daily demand', async () => {
+  assert.equal(lastsDays(259, 20.7), 12.5)
+  // At the rate as the row shows it (one decimal): 259 ÷ 20.7, not ÷ 20.71.
+  assert.equal(lastsDays(259, 20.71), 12.5)
+  assert.equal(lastsDays(-5, 20.7), 0)
+  // No demand (no history, none shipped, or under 0.05 a day) or a figure
+  // that is not one: no days, never Infinity or NaN.
+  for (const [stock, rate] of [[259, null], [259, undefined], [259, 0], [259, 0.04], [259, Number.NaN], [259, 'abc'], [null, 20.7], [Number.NaN, 20.7], [Number.POSITIVE_INFINITY, 20.7], ['abc', 20.7]]) assert.equal(lastsDays(stock, rate), null, `${stock} ÷ ${rate}`)
+  const scenario = aiSkillScenario()
+  const reorderRow = (sku, demand) => ({ sku, itemName: 'Item', orderNow: true, orderByDate: '2026-11-08', onHand: 280, reserved: 21, demand, supplier: { id: 'SUP-1', name: 'Supplier One' } })
+  const reorderList = { read: async () => ({ rows: [reorderRow('SKU-1', { averageDailyDemand: 20.71 }), reorderRow('SKU-2', { averageDailyDemand: null }), reorderRow('SKU-3', { averageDailyDemand: 0 }), reorderRow('SKU-4', null)] }) }
+  const context = await loadAiSkillContext({ ...scenario.ctx, aiReadServices: { reorderList } })
+  const rows = (await runAiReadTool('reorder_list', {}, { facts: await readAiSkillFacts(context), context })).result.rows
+  assert.deepEqual([rows[0].availableToday, rows[0].averageDailyDemand, rows[0].availableLastsDays], [259, 20.7, 12.5])
+  // Without enough shipment history, or with none shipped: no days.
+  assert.deepEqual(rows.slice(1).map((row) => row.availableLastsDays), [null, null, null])
+  assert.doesNotMatch(JSON.stringify(rows), /Infinity|NaN/)
 })
 
 // 2026-11-09 on Flash (UCI scene): "available to promise for 85123A is 408

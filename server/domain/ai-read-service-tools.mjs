@@ -83,6 +83,14 @@ const searchRecords = defineAiTool({
 // named by their number, and items by their SKU.
 const NAMED_RECORDS = new Set(['supplier', 'customer', 'warehouse'])
 
+// How many days a stock lasts at a daily rate, as the row shows the rate (one
+// decimal): one decimal, 0 for none left, null without a rate.
+export function lastsDays(stock, dailyRate) {
+  const rate = Math.round(Number(dailyRate) * 10) / 10
+  if (stock === null || stock === undefined || !Number.isFinite(Number(stock)) || dailyRate === null || dailyRate === undefined || !(rate > 0)) return null
+  return Math.round((Math.max(0, Number(stock)) / rate) * 10) / 10
+}
+
 // A row's suggested reorder point with what it rests on, in words the
 // assistant can repeat; reason says why there is none.
 const suggestionFacts = (suggestion) => ({
@@ -158,8 +166,11 @@ const reorderList = defineAiTool({
       supplier: text(row.supplier?.name) || null,
       // availableToday is the stock that judgement uses, given so an answer
       // can say it (2026-11-09 on Flash: "48 pcs available" in a reorder
-      // answer was flagged, as no result held it).
-      ...(() => { const stock = stockRowOf(facts, row.sku); const safety = stock?.safetyStock ?? null; const available = Number.isFinite(Number(row.onHand)) ? Number(row.onHand) - (Number(row.reserved) || 0) : null; return { safetyStock: safety, availableToday: available, belowSafetyStock: safety !== null && available !== null ? available < safety : null } })(),
+      // answer was flagged, as no result held it). availableLastsDays is how
+      // many days it lasts at averageDailyDemand, one decimal, so an answer
+      // reads it instead of dividing (2026-11-21 switch-to-zh: "约 12 天" for
+      // 259 ÷ 20.7, worked out by the model, was flagged twice).
+      ...(() => { const stock = stockRowOf(facts, row.sku); const safety = stock?.safetyStock ?? null; const available = Number.isFinite(Number(row.onHand)) ? Number(row.onHand) - (Number(row.reserved) || 0) : null; return { safetyStock: safety, availableToday: available, belowSafetyStock: safety !== null && available !== null ? available < safety : null, availableLastsDays: lastsDays(available, row.demand?.averageDailyDemand) } })(),
       leadTimeDays: row.leadTimeDays ?? row.supplier?.leadTimeDays ?? null,
       // When an order placed today would arrive (the request's need-by date),
       // beside orderByDate, the last day to order: on 2026-11-04 an answer
