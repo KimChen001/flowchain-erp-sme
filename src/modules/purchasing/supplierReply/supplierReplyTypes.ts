@@ -12,7 +12,7 @@ export type SupplierReplyLineIssue =
   | "quote_not_found" | "date_mismatch" | "ambiguous_numeric" | "vague" | "relative_unreadable"
   | "before_reply" | "too_far" | "unknown_line" | "not_open" | "unchanged" | "split_incomplete" | "several_dates"
   | "refused" | "addressed_to_system" | "line_mismatch" | "ambiguous_weekday" | "other_order_text" | "no_order_part"
-  | "correction_across_orders" | "several_orders";
+  | "correction_across_orders" | "several_orders" | "other_order_number";
 
 export type SupplierReplyLine = {
   ref: string | null;

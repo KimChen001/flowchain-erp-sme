@@ -2,7 +2,7 @@
 // the text each order owns, and which named orders are read.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { emailOrdersToRead, emailParts, orderNumberPrefix, orderNumbersNamed } from './supplier-reply-orders.mjs'
+import { emailOrdersToRead, emailParts, orderNumberPrefix, orderNumbersNamed, otherOrderNumberWritten } from './supplier-reply-orders.mjs'
 
 const A = 'PO-202611-0012'
 const B = 'PO-202611-0013'
@@ -184,4 +184,69 @@ test('a unit after an order label is matched as a whole word: 天津, 个别, �
     assert.deepEqual(orderNumbersNamed(text, B, list), [B], text)
     assert.equal(emailParts(text, B, list), null, text)
   }
+})
+
+test('another order\'s number in a form the numbering does not see is found; this order, another document\'s number, a count or a date is not (W02-type gap)', () => {
+  const on = 'PO-202611-0021'
+  // Another order: the third review's one-order emails, and more of the same.
+  for (const text of [
+    'PO No. 202611-0014:', '订单号：202611-0014', 'PO‐202611‐0014:', 'Order No. 202611-0014:', 'PO#: 202611-0014', 'PO Number: 202611-0014',
+    'P0-202611-0014', 'PO号：0014', 'PO 14 ships on 9 Dec.', 'PO202611-0014', '202611-0014: ships on 9 Dec.', 'No.202611-0014', '订单号202611-0014',
+    'Invoice for PO No. 202611-0014', 'P.O. 202611-0014', 'PO-202610-0014', 'ＰＯ号：００１４',
+    // The #461 review's misses: year and month apart, no separator after
+    // the prefix, a 1–2 digit sequence after the prefix, P.O., P/O, POs, an
+    // HTML space, markdown.
+    'PO-2026-11-0014', 'PO 2026/11/0014', 'PO 2026 11 0014', '2026-11-0014:', 'PO2026110014', 'PO 2026110014', 'PO 202611-14', 'PO-202611-14',
+    'P.O. 14', 'P/O 14', 'P.O. #14', 'POs 21 & 14', 'POs 0021, 0014', '<b>PO&nbsp;14</b>', 'PO&nbsp;202611-0014', '_PO 14_', '_PO 202611-14_',
+    '(PO 202611-0014)', '**PO 202611 0014**', 'PO 14:',
+  ]) assert.ok(otherOrderNumberWritten(text, on), text)
+  // Not another order.
+  for (const text of [
+    // This order, written any of these ways.
+    'PO-202611-0021', 'PO No. 202611-0021', 'PO 21', 'P0-202611-0021', '订单号：202611-0021', 'PO号：0021',
+    // Another document's number: glued to its code, or labelled as it.
+    'INV-202611-0014', 'SO202611-0014', 'Invoice No. 202611-0014', '发票号 202611-0014', 'PO-202611-0021 invoice no. 202611-0014', 'Tracking 1Z202611-0014',
+    // A count, a date, a box, an address, the supplier's own number.
+    'PO 3 items', 'PO 12月5日', 'P.O. Box 1234', 'P.O. 834, Lombard, IL 60148-0834', 'ships on 2026-11-28', '20261128', 'PO 202611', 'our ref 4471', '订单3天后发货',
+    'http://p04.com/t.d?OEQjfmY', 'insync-online.p04.com', 'mail po14@example.com', 'HOUSEHOLD_2_074 ships on 3 December.', 'Please call +44 20 7946 0958',
+    // This order in the forms the review added.
+    'PO 202611-21', 'PO 2026-11-0021', 'PO 2026/11/0021', 'PO2026110021', 'P/O 21', 'POs 21', '<b>PO&nbsp;21</b>',
+    // The review's false alarms: a number word with 单号 is another
+    // document's (送货单号…), more document words, the supplier's own order.
+    '送货单号：202611-0102', '发货单号 202611-0102', '运单号 202611-0102', '物流单号 202611-0102', '提单号 202611-0102', '报价单号 202611-0007',
+    '生产单号 202611-0007', '批号 202611-0007', '装箱单 202611-0102', '出货单 202611-0102', '我司销售单 202611-0033', '我方订单号 202611-0033',
+    'Delivery 202611-0102 attached.', 'Packing list 202611-0102', 'PL 202611-0102', 'PI 202611-0007', 'Proforma 202611-0007', 'Lot 202611-0007', 'Batch no. 202611-0007',
+    'Job 202611-0007', 'RMA 202611-0007 closed.', 'ASN 202611-0007 sent.', 'Container 202611-0007', 'Credit note 202611-0007', 'CN 202611-0007', 'Certificate 202611-0007',
+    'COA 202611-0007', 'Drawing 201905-001 rev B.', 'P/N 201905-001', 'Part 202011-0045', 'Sales order 202611-0033', 'Our S/O 202611-0033', 'Our SO 202611-0033',
+    'Our order no. 202611-0033 refers.',
+    // After a short number: a share, an amount, an ordinal, a month, more
+    // units and measure words; a year; a part code.
+    'PO 30% deposit received.', 'PO 1,200 pcs.', 'Your PO: 500 sets.', 'PO 2nd shipment.', 'PO 1st batch.', 'PO 18 Nov received.', 'PO 1 of 2.', 'PO 2 shipments.',
+    'PO 5000 USD.', 'PO 20 rolls.', 'PO 10 kg.', 'PO 4 pairs.', 'PO 3款产品均已备好。', 'PO 2柜。', 'PO 5托。', 'PO 3批出货。', 'PO 20卷。', 'PO 2026 pricing holds.', 'PO14-B bracket in stock.',
+    // Dates, phones, prices.
+    'PO 2026-11-14 received.', 'Revised ETD 2026-11-14.', 'Sent 2026-11-18 10:30.', 'Shanghai 201203 021-5080 1234', 'Total USD 202611.500.', 'Tel 021-2026 1100.',
+  ]) assert.equal(otherOrderNumberWritten(text, on), null, text)
+  // Only for a number in the numbering format.
+  assert.equal(otherOrderNumberWritten('PO No. 202611-0014', 'ACME-17'), null)
+})
+
+test('the order-number patterns stay quick on long runs of wide spaces and long words (#463 review: up to 2 s before)', async () => {
+  const { checkReplyReading, cleanSupplierReply } = await import('./supplier-reply-reading.mjs')
+  const on = 'PO-202611-0021'
+  const known = ['PO-202611-0014', 'PO-202610-0014', 'PO-202611-0030']
+  const em = '\u2003'
+  const order = { number: on, status: 'issued', lines: [{ ref: 'L1', purchaseOrderLineId: 'L1', sku: 'HOUSEHOLD_2_074', supplierSku: null, itemName: 'Item 074', remaining: 10, unit: 'pcs', promisedDate: '2026-11-25' }] }
+  const reading = { replyKind: 'dates', lines: [{ line: 'L1', date: '2026-12-03', quote: 'HOUSEHOLD_2_074 ships on 3 December.', dateKind: 'stated' }], flags: [], reason: null }
+  for (const raw of [`P${em.repeat(7900)}x`, `PO${em.repeat(7900)}x`, `订单${em.repeat(7900)}x`, `PO${'\u3000'.repeat(7900)}x`, `PO${'\u00a0'.repeat(7900)}x`, `${'a'.repeat(3000)} ${'invoice 202611-0014 '.repeat(240)}`, `PO${'\t'.repeat(7900)}x`]) {
+    const text = cleanSupplierReply(raw).text
+    const started = Date.now()
+    otherOrderNumberWritten(text, on)
+    orderNumbersNamed(text, on, known)
+    emailParts(text, on, known)
+    checkReplyReading({ order, text, receivedOn: '2026-11-18', reading, orderNumbers: known })
+    assert.ok(Date.now() - started < 100, `${raw.slice(0, 12)}…: ${Date.now() - started} ms`)
+  }
+  // Wide spaces are spaces: the number is found across them as across one.
+  assert.ok(otherOrderNumberWritten(`PO${em}No.${'\u3000'}202611-0014:`, on))
+  assert.deepEqual(orderNumbersNamed(`${on} and PO-202611-0014`, on).length, 2)
 })

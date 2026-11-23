@@ -12,7 +12,7 @@
 // when code computes it from its quote and the reply date; our own quoted
 // chase is removed before reading; invisible characters are stripped.
 import { PROMPT_INJECTION, aiInjectionDetected } from './ai-injection-guard.mjs'
-import { emailParts } from './supplier-reply-orders.mjs'
+import { emailParts, otherOrderNumberWritten } from './supplier-reply-orders.mjs'
 import {
   SUPPLIER_REPLY_LIMITS, SUPPLIER_REPLY_PROMPT_VERSION, supplierReplyCheckSchema, supplierReplyReadingSchema,
 } from '../../shared/supplier-reply-contract.mjs'
@@ -1049,13 +1049,15 @@ function quotePlace(parts, { order, quote, whole }) {
 // them, emailRead is the list. With one order named, nothing changes.
 //
 // On the several-order path the final gate runs last (severalOrdersFinalGate
-// below): nothing is proposed there, every line goes to the person. The
-// one-order path is never gated.
+// below): nothing is proposed there, every line goes to the person. On the
+// one-order path, an email that also writes another order's number in a form
+// the numbering does not see is gated the same way (otherOrderNumberGate).
 export function checkReplyReading(args) {
-  return severalOrdersFinalGate(checkLines(args), args)
+  const checked = checkLines(args)
+  return onSeveralOrderPath(args) ? severalOrdersFinalGate(checked, args) : otherOrderNumberGate(checked, args)
 }
 
-// The check before the final gate, for the gate's own tests: the gate only
+// The check before the final gates, for the gates' own tests: a gate only
 // turns lines into questions for the person.
 export function checkReplyReadingBeforeGate(args) {
   return checkLines(args)
@@ -1178,6 +1180,14 @@ function checkLines({ order, text: reply, receivedOn, reading, emailRead = [], o
   return supplierReplyCheckSchema.parse({ state, replyKind: reading?.replyKind ?? null, lines: out.slice(0, SUPPLIER_REPLY_LIMITS.lines * 2), flags: flags.slice(0, SUPPLIER_REPLY_LIMITS.flags), reason, dropped })
 }
 
+// The several-order path: the email splits into parts, or is read on more
+// than one order.
+function onSeveralOrderPath({ order, text: reply, emailRead = [], orderNumbers = null }) {
+  const list = Array.isArray(orderNumbers) && orderNumbers.length > 0
+  const candidates = array(list ? orderNumbers : emailRead).map((number) => String(number ?? '').trim().toUpperCase())
+  return Boolean(emailParts(reply, order?.number, candidates)) || new Set(array(emailRead).map((number) => String(number ?? '').trim().toUpperCase())).size >= 2
+}
+
 // The final gate (fourth #449 review; coordinator, 11/22). On the
 // several-order path (the email split into parts, or read on more than one
 // order) nothing is proposed: four reviews each found new ways to write an
@@ -1187,10 +1197,7 @@ function checkLines({ order, text: reply, receivedOn, reading, emailRead = [], o
 // pick, no split dates, nothing confirmed, and nothing dropped as another
 // order's text. Lines dropped for other reasons (a quote not in the reply,
 // a line not on the order, a line with nothing left open) stay dropped.
-function severalOrdersFinalGate(result, { order, text: reply, emailRead = [], orderNumbers = null }) {
-  const list = Array.isArray(orderNumbers) && orderNumbers.length > 0
-  const candidates = array(list ? orderNumbers : emailRead).map((number) => String(number ?? '').trim().toUpperCase())
-  if (!emailParts(reply, order?.number, candidates) && new Set(array(emailRead).map((number) => String(number ?? '').trim().toUpperCase())).size < 2) return result
+function severalOrdersFinalGate(result, { order }) {
   const byRef = new Map(array(order?.lines).map((line) => [line.ref, line]))
   const open = SUPPLIER_REPLY_ORDER_STATES.includes(text(order?.status))
   // One row per line (fifth review): the line's row that was not dropped,
@@ -1224,4 +1231,25 @@ function severalOrdersFinalGate(result, { order, text: reply, emailRead = [], or
   }
   const state = lines.some((row) => row.outcome === 'needs_you') ? 'needs_you' : result.state
   return supplierReplyCheckSchema.parse({ ...result, state, lines, dropped })
+}
+
+// The one-order path's gate (the W02-type gap of the third #449 review;
+// coordinator, 11/23). An email read as about this order alone that also
+// writes another order's number in a form the numbering does not see ("PO
+// No. 202611-0014:", 订单号：202611-0014, PO号：0014; otherOrderNumberWritten)
+// may hold that order's dates, and nothing tells which of its lines are
+// this order's. So nothing is proposed: every line that was proposed,
+// confirmed or for the person goes to the person as other_order_number with
+// only its quote (no date, no day to pick, no split dates). Lines dropped
+// stay dropped. Like the several-order gate, it only adds holds.
+function otherOrderNumberGate(result, { order, text: reply }) {
+  if (!otherOrderNumberWritten(reply, order?.number)) return result
+  const byRef = new Map(array(order?.lines).map((line) => [line.ref, line]))
+  const lines = result.lines.map((row) => {
+    if (row.outcome === 'dropped') return row
+    const line = byRef.get(row.ref)
+    return { ...row, purchaseOrderLineId: line?.purchaseOrderLineId ?? row.purchaseOrderLineId, currentDate: line?.promisedDate || row.currentDate || null, outcome: 'needs_you', issue: 'other_order_number', proposedDate: null, readAs: null, readings: null, parts: null, inferred: false }
+  })
+  const state = lines.some((row) => row.outcome === 'needs_you') ? 'needs_you' : result.state
+  return supplierReplyCheckSchema.parse({ ...result, state, lines })
 }

@@ -34,22 +34,26 @@ function argsFor(kase, on, lines, mode) {
 const check = (kase, on, lines, mode) => checkReplyReading(argsFor(kase, on, lines, mode))
 const wrongIn = (result, kase) => result.lines.filter((line) => line.outcome === 'proposed' && (kase.bad || []).some(([ref, date]) => ref === line.ref && date === line.proposedDate)).map((line) => `${line.ref}@${line.proposedDate}`)
 
-// Known gaps on the one-order paste, which the gate does not touch (it reads
-// as on main; coordinator, 11/22): another order's number in a form the
-// numbering does not see (W02 "PO No. 202611-0014:", W03 订单号：202611-0014,
-// W07 a U+2010 dash, W08 "Order No.", W58 "PO#:", W59 "PO Number:"), and an
-// email that names only A read on F (W57, as when pasted on the wrong order).
-// Wrong on main too; followed up apart.
-const ONE_ORDER_GAPS = ['W02', 'W03', 'W07', 'W08', 'W57', 'W58', 'W59']
-test('third review probes: no date is ever proposed on an order or line it is not for (53 of 60 emails, three ways of reading)', () => {
+test('third review probes: no date is ever proposed on an order or line it is not for (60 of 60 emails, three ways of reading)', () => {
   assert.equal(W.length, 60)
-  for (const kase of W.filter((one) => !ONE_ORDER_GAPS.includes(one.id.split(' ')[0]))) {
+  for (const kase of W) {
     for (const mode of MODES) assert.deepEqual(wrongIn(check(kase, kase.on, kase.lines, mode), kase), [], `${kase.id} [${mode}]`)
   }
 })
-test('third review probes: the one-order paste still misreads another order written in a form it does not see (W02, W03, W07, W08, W57, W58, W59)', { todo: 'known gap on the one-order path, as on main; followed up apart' }, () => {
+// The one-order gaps the final gate did not touch (coordinator, 11/22):
+// another order's number in a form the numbering does not see (W02 "PO No.
+// 202611-0014:", W03 订单号：202611-0014, W07 a U+2010 dash, W08 "Order No.",
+// W58 "PO#:", W59 "PO Number:"), and an email that names only A read on F
+// (W57, as when pasted on the wrong order). The one-order path's gate now
+// holds every line of them as other_order_number, in all three ways.
+const ONE_ORDER_GAPS = ['W02', 'W03', 'W07', 'W08', 'W57', 'W58', 'W59']
+test('third review probes: the one-order emails that write another order\'s number in an unseen form hold every line (W02, W03, W07, W08, W57, W58, W59)', () => {
   for (const kase of W.filter((one) => ONE_ORDER_GAPS.includes(one.id.split(' ')[0]))) {
-    for (const mode of MODES) assert.deepEqual(wrongIn(check(kase, kase.on, kase.lines, mode), kase), [], `${kase.id} [${mode}]`)
+    for (const mode of MODES) {
+      const result = check(kase, kase.on, kase.lines, mode)
+      assert.deepEqual(result.lines.map((line) => [line.ref, line.outcome, line.issue, line.proposedDate]), kase.lines.map((line) => [line.line, 'needs_you', 'other_order_number', null]), `${kase.id} [${mode}]`)
+      assert.equal(result.state, 'needs_you', `${kase.id} [${mode}]`)
+    }
   }
 })
 
@@ -62,8 +66,10 @@ function onlyAddsHolds(before, after) {
   return before.lines.every((row, at) => {
     const next = after.lines[at]
     if (JSON.stringify(row) === JSON.stringify(next)) return true
-    const held = next.ref === row.ref && next.quote === row.quote && next.outcome === 'needs_you' && next.issue === 'several_orders' && next.proposedDate === null && next.readAs === null && next.readings === null && next.parts === null
-    return held && (['proposed', 'confirmed', 'needs_you'].includes(row.outcome) || (row.outcome === 'dropped' && row.issue === 'other_order_text'))
+    // several_orders on the several-order path; other_order_number on the
+    // one-order path's gate (W02-type emails).
+    const held = next.ref === row.ref && next.quote === row.quote && next.outcome === 'needs_you' && ['several_orders', 'other_order_number'].includes(next.issue) && next.proposedDate === null && next.readAs === null && next.readings === null && next.parts === null
+    return held && (['proposed', 'confirmed', 'needs_you'].includes(row.outcome) || (row.outcome === 'dropped' && row.issue === 'other_order_text' && next.issue === 'several_orders'))
   }) && (after.state === before.state || after.state === 'needs_you')
 }
 test('third review probes: the final gate only adds holds (60 + 42 emails, three ways of reading)', () => {
