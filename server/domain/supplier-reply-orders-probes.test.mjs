@@ -145,11 +145,11 @@ test('review probes: no date is ever proposed on an order it is not for (64 emai
 // (coordinator, 11/22). By the part rules (no_order_part): R03–R10, R16, R17,
 // R22 name B in passing, inside A's part or outside any part; R19 and X02 come
 // after a passing mention, which ends the part (held on 6fa2d753 too). By the
-// final gate (several_orders_unclear), as every email here is about several
-// orders and names one in passing: R01, R02, R14, R18, R20, W20, W21, X04.
+// final gate (several_orders_unclear): R01, whose "(Same as B last week.)"
+// points at another order.
 // Dropped would lose the date, and never happens.
 const HELD_BY_PARTS = ['R03', 'R04', 'R05', 'R06', 'R07', 'R08', 'R09', 'R10', 'R16', 'R17', 'R19', 'R22', 'X02']
-const HELD_BY_GATE = ['R01', 'R02', 'R14', 'R18', 'R20', 'W20', 'W21', 'X04']
+const HELD_BY_GATE = ['R01']
 test(`review probes: every correct date is proposed or held for the person, never dropped (${[...HELD_BY_PARTS, ...HELD_BY_GATE].filter((id) => id.startsWith('R')).length} of 22 correct replies held)`, () => {
   for (const kase of cases.filter((one) => one.good)) {
     const lines = check(kase).lines

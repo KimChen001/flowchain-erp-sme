@@ -234,8 +234,8 @@ test('third review probes: the final gate only adds holds (60 + 42 emails, three
 
 // Every correct line, read on its own order: proposed (or confirmed), or
 // held for the person; never dropped and never another date. The counts are
-// reported in the PR: 42 proposed and 43 held as the paste runs it (and with
-// eF), 41 and 44 in e0, where no supplier list tells numbers apart.
+// reported in the PR: 48 proposed and 37 held as the paste runs it (and with
+// eF), 47 and 38 in e0, where no supplier list tells numbers apart.
 function tally(mode) {
   const got = { proposed: 0, held: [], other: [] }
   for (const kase of R) {

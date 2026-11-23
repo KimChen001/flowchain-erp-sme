@@ -2,7 +2,7 @@
 // the text each order owns, and which named orders are read.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { emailOrdersToRead, emailParts, orderNumberPrefix, orderNumbersNamed } from './supplier-reply-orders.mjs'
+import { emailOrdersToRead, emailParts, orderNumberPrefix, orderNumbersNamed, severalOrdersGate } from './supplier-reply-orders.mjs'
 
 const A = 'PO-202611-0012'
 const B = 'PO-202611-0013'
@@ -166,4 +166,28 @@ test('a count after an order label is no order number: 订单 7 天内, 订单3�
   }
   // A number that is an order's still is.
   assert.deepEqual(orderNumbersNamed('PO-202611-0021：\n订单 0003：12月9日发货。', 'PO-202611-0021', known), ['PO-202611-0021', 'PO-202611-0003'])
+})
+
+test('a number the supplier calls its own never splits a one-order email (third review S01, S02, S10)', () => {
+  const A = 'PO-202611-0021'
+  for (const text of [`Your PO ${A}, our order no. 0457: HOUSEHOLD_2_074 ships on 3 December.`, `贵司订单 ${A}，我司订单号 0457：\nHOUSEHOLD_2_074 12月3日发货。`, `贵司 ${A}（我方订单 PO 4471）：\nHOUSEHOLD_2_074 12月3日发货。`]) {
+    assert.equal(emailParts(text, A, []), null, text)
+  }
+  // One in this workspace's numbering that is not told still splits it.
+  assert.notEqual(emailParts(`Your PO ${A}: HOUSEHOLD_2_074 ships on 3 December.\nPO-0457: HOUSEHOLD_2_110 ships on 9 December.`, A, []), null)
+})
+
+test('the final gate: a known order named in passing, in a sentence of its own, leaves the email clean; an order by its place with no number does not', () => {
+  const A = 'PO-202610-0028'
+  const B = 'PO-202610-0030'
+  const clean = `Hi Daniel,\n\n${A}: the balance of 220 pcs ships on 25 November.\nYour other order for the same holders, ${B}, will follow on 4 December.\n\nRegards,\nPriya`
+  assert.deepEqual(severalOrdersGate(clean, A, { known: [A, B], orderList: true, hasDate: (s) => /\d+\s+(?:November|December)/.test(s) }).hold, false)
+  for (const held of [
+    `${A}: the balance ships on 25 November.\nThe other order will follow on 4 December.`,
+    `${A}: the balance ships on 25 November.\nSame as ${B}, the rest follows on 4 December.`,
+    `${A}: the balance ships on 25 November.\nPO No. 202610-0030: the rest follows on 4 December.`,
+    `${A}: the balance ships on 25 November.\nFrom: Daniel\n${B}: please confirm 1 December.`,
+  ]) assert.equal(severalOrdersGate(held, A, { known: [A, B], orderList: true, hasDate: (s) => /\d+\s+(?:November|December)/.test(s) }).hold, true, held)
+  // Without the supplier's list, a number written another way cannot be told.
+  assert.equal(severalOrdersGate(`${A}: ships on 25 November.\nPO 30: ships on 4 December.`, A, { known: [A], orderList: false }).hold, true)
 })

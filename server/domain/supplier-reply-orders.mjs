@@ -72,12 +72,16 @@ function tokensIn(source, prefix, known) {
   const length = NUMBERED.exec(String(known[0] ?? '').trim())?.[3].length || 4
   const stop = '(?=\\d{1,2}\\s*[月日号]|\\D|$)'
   const out = []
+  // A number the supplier calls its own ("our order no. 0457", 我司订单号
+  // 0457, 我方订单 PO 4471) is not in this workspace's numbering, whatever its
+  // shape (third #449 review, S01, S02, S10: such a reply was split and held).
+  const suppliersOwn = (start) => /(?:\bour\b|\bmy\b|我方|我司|本司|我们)[^\n,，。;；:：]{0,14}$/iu.test(source.slice(Math.max(0, start - 24), start))
   const add = (match, month, seq, ours, exact = null) => {
     const start = match.index
     const end = start + match[0].length
     if (out.some((row) => start < row.end && end > row.index)) return
     const candidates = exact ? [] : orders.filter((row) => row.seq === Number(seq) && (!month || row.month === month))
-    out.push({ index: start, end, text: match[0], ours, number: exact || (candidates.length === 1 ? candidates[0].number : null) })
+    out.push({ index: start, end, text: match[0], ours: ours && !(exact === null && suppliersOwn(start)), number: exact || (candidates.length === 1 ? candidates[0].number : null) })
   }
   for (const match of source.matchAll(new RegExp(`\\b${prefix}-(\\d{6})-(\\d{${length}})${stop}`, 'gi'))) add(match, match[1], match[2], true, match[0].toUpperCase())
   // Written another way: spaces or other dashes, another sequence length.
@@ -335,7 +339,8 @@ export function severalOrdersGate(text, number, { known = [], orderList = false,
   const risks = []
   if (others.length) risks.push('other_order_number')
   if (unchecked) risks.push('number_unchecked')
-  if (BY_PLACE_WIDE.test(source) || BY_PLACE.test(source)) risks.push('order_by_place')
+  // An order by its place, in a sentence that names no number to say which.
+  if (sentencesOf(source).some((sentence) => (BY_PLACE_WIDE.test(sentence) || BY_PLACE.test(sentence)) && !tokensIn(sentence, prefix, all).length && !numbersInText(sentence, prefix, number, known).length)) risks.push('order_by_place')
   if (numbers.some((row) => !row.own && POINTS_AT.test(source.slice(Math.max(0, row.index - 24), row.index)))) risks.push('points_at_other_order')
   if (QUOTED_HEADER.test(source) || WROTE.test(source)) risks.push('quoted_mail')
   if (correction) risks.push('correction')
@@ -378,7 +383,7 @@ function cleanShape(source, prefix, number, all, numbers, hasDate) {
     if (numbers.some((row) => row.index < at && row.end > at)) return false
     const tokens = tokensIn(sentence, prefix, all)
     const extra = numbers.filter((row) => row.index >= start && row.end <= at && !tokens.some((token) => row.index - start < token.end && row.end - start > token.index))
-    const marked = BY_PLACE_WIDE.test(sentence) || BY_PLACE.test(sentence) || QUOTED_HEADER.test(sentence) || WROTE.test(sentence)
+    const quoted = QUOTED_HEADER.test(sentence) || WROTE.test(sentence)
     if (tokens.length || extra.length) {
       const [token] = tokens
       const before = token ? sentence.slice(0, token.index) : ''
@@ -391,13 +396,23 @@ function cleanShape(source, prefix, number, all, numbers, hasDate) {
         continue
       }
       const pointsAt = POINTS_AT.test(source.slice(Math.max(0, start + (token?.index || 0) - 24), start + (token?.index || 0)))
+      if (!(tokens.length === 1 && !extra.length && token.number && !quoted && !pointsAt && !CORRECTION.test(before))) return false
       const header = HEADER_AFTER.test(after) || LINE_ENDS_WITH_COLON.test(sentence)
-      const leads = LEADING.test(before) || ((LEADING_BEFORE_COLON.test(before) || GREETING.test(before)) && /^\s*[:：]/.test(after))
-      if (!(tokens.length === 1 && !extra.length && token.number && !marked && !pointsAt && !NOT_ITS_OWN.test(before) && !CORRECTION.test(before) && leads)) return false
-      if (token.number === String(number).toUpperCase()) named = true
-      current = header ? token.number : null
+      const leads = !NOT_ITS_OWN.test(before) && (LEADING.test(before) || ((LEADING_BEFORE_COLON.test(before) || GREETING.test(before)) && /^\s*[:：]/.test(after)))
+      if (leads) {
+        if (token.number === String(number).toUpperCase()) named = true
+        current = header ? token.number : null
+      } else {
+        // A known order named in passing, in a sentence of its own ("Your
+        // other order, PO-…, will follow on 4 Dec"): the part rules give that
+        // sentence to no single order, so the person decides its lines; it
+        // ends the part, and the email may still be clean.
+        current = null
+      }
       headerOnly = HEADER.test(`${before}\u0000${after}`)
     } else {
+      // An order by its place counts where no number says which it is.
+      const marked = quoted || BY_PLACE_WIDE.test(sentence) || BY_PLACE.test(sentence)
       if (marked || (current === null && hasDate(sentence))) return false
       headerOnly = false
     }
