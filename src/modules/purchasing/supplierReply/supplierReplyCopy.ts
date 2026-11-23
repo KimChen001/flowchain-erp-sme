@@ -81,6 +81,7 @@ export const SUPPLIER_REPLY_COPY = {
   severalDates: ["The sentence names two dates. Which is the new one?", "这句话提到两个日期，哪个是新的交期？"],
   vagueChoices: ["No exact day was given. It could mean:", "回复没有给出确切日期，可能指："],
   weekdayChoices: ["\"next\" with a weekday can mean this week or next:", "“next + 星期几” 可能指本周或下周："],
+  noOrderPartChoice: ["This text may not be about this order. If it is, the day is:", "这段文字可能不是关于本订单的。如果是，交期为："],
   vagueSaid: ["The supplier said: \"{quote}\"", "供应商说：“{quote}”"],
 
   // Why a line is not proposed (SUPPLIER_REPLY_LINE_ISSUES).
@@ -94,6 +95,10 @@ export const SUPPLIER_REPLY_COPY = {
   issue_unknown_line: ["not a line of this order", "不是本订单的行"],
   issue_ambiguous_weekday: ["\"next\" with a weekday can mean this week or next: pick the day", "英文 “next + 星期几” 可能指本周或下周：请选择日期"],
   issue_line_mismatch: ["the reply names another line's item code or name here", "回复此处写的是另一行的物料编码或名称"],
+  issue_other_order_text: ["this text is about another order in the same email: nothing is recorded from it here", "这段文字说的是同一封邮件里的另一张订单：这里不记录"],
+  issue_no_order_part: ["the email names several orders and this text is not about this order alone: check which order it is for", "邮件提到了几张订单，这段文字不只关于本订单：请确认它属于哪张订单"],
+  issue_several_orders: ["this email is about several orders, so no date is filled in: check the line against the whole email and enter the date yourself", "这封邮件涉及几张订单，系统不自动填日期：请对照整封邮件确认这一行，自己填写日期"],
+  issue_correction_across_orders: ["the supplier corrects in this email which order some lines are for: check each line against the whole email", "供应商在这封邮件里更正了某些行属于哪张订单：请对照整封邮件逐行确认"],
   issue_not_open: ["nothing left to receive on this line", "该行已无待收数量"],
   issue_unchanged: ["same as the current date", "与当前交期相同"],
   issue_split_incomplete: ["the parts do not cover what is still open", "分批数量未覆盖剩余待收数量"],
@@ -109,6 +114,16 @@ export const SUPPLIER_REPLY_COPY = {
   flag_cancellation: ["Cancellation", "取消"],
   flag_substitution: ["Substitution", "替代品"],
   flag_other_order: ["Another order", "其他订单"],
+
+  // An email that names several orders: this card shows only its own lines
+  // and fills in no dates (the final gate).
+  emailOrders: ["This email names {n} orders. FlowChain reads up to {limit} of them, each on its own order with one reading. This card shows only {number}'s lines and fills in no dates.", "这封邮件提到了 {n} 张订单。FlowChain 最多读取其中 {limit} 张，每张在各自订单上读取一次。本卡片只显示 {number} 的行，不自动填日期。"],
+  emailOrder_read: ["{number}: read on its own order", "{number}：已在该订单上读取"],
+  emailOrder_open_card_kept: ["{number}: already has an open card, kept; not read there", "{number}：已有待处理的卡片，保留原卡片，未在该订单上读取"],
+  emailOrder_closed: ["{number}: closed, not read", "{number}：已关闭，未读取"],
+  emailOrder_other_supplier: ["{number}: another supplier's order, not read", "{number}：其他供应商的订单，未读取"],
+  emailOrder_unknown: ["{number}: no such order, not read", "{number}：找不到该订单，未读取"],
+  emailOrder_over_limit: ["{number}: more than {limit} orders in one email, not read", "{number}：一封邮件超过 {limit} 张订单，未读取"],
 
   // Buttons.
   record: ["Record new dates", "记录新交期"],

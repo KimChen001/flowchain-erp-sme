@@ -12,6 +12,7 @@
 // when code computes it from its quote and the reply date; our own quoted
 // chase is removed before reading; invisible characters are stripped.
 import { PROMPT_INJECTION, aiInjectionDetected } from './ai-injection-guard.mjs'
+import { emailParts } from './supplier-reply-orders.mjs'
 import {
   SUPPLIER_REPLY_LIMITS, SUPPLIER_REPLY_PROMPT_VERSION, supplierReplyCheckSchema, supplierReplyReadingSchema,
 } from '../../shared/supplier-reply-contract.mjs'
@@ -996,10 +997,71 @@ export function lineNamedElsewhere(order, quote, ref, { date = null, receivedOn 
   return false
 }
 
+// Where a quote stands in an email that names several orders (emailParts),
+// for this order:
+//   own       in this order's part, and nowhere else in the email
+//   repeated  its words stand more than once in the email, one of them in
+//             this order's part, shared or of no order: which one the reading
+//             meant cannot be told
+//   shared    in a sentence that names this order and another
+//   none      in text that belongs to no order (a greeting, a general line,
+//             an order pointed to by its place or by a number not known), or
+//             across this order's part and such text
+//   other     in another order's part only
+//   across    over two parts or more, into another order's part
+function quotePlace(parts, { order, quote, whole }) {
+  const form = quoteForm(quote)
+  const own = String(order?.number ?? '').trim().toUpperCase()
+  let copies = 0
+  for (let at = whole.indexOf(form); form && at >= 0; at = whole.indexOf(form, at + 1)) copies += 1
+  const places = parts.runs.filter((run) => quoteForm(run.text).includes(form))
+  const mine = (run) => run.owners.includes(own) || !run.owners.length
+  if (copies > 1 && places.some(mine)) return 'repeated'
+  if (places.some((run) => run.owners.length === 1 && run.owners[0] === own)) return 'own'
+  if (places.some((run) => run.owners.includes(own))) return 'shared'
+  if (places.some((run) => !run.owners.length)) return 'none'
+  if (places.length) return 'other'
+  for (let start = 0; start < parts.runs.length; start += 1) {
+    let joined = ''
+    for (let end = start; end < parts.runs.length && mine(parts.runs[end]); end += 1) {
+      joined += parts.runs[end].text
+      if (quoteForm(joined).includes(form)) return 'none'
+    }
+  }
+  return 'across'
+}
+
 // The reading checked against the reply and the order (supplierReplyOrderSchema):
 // each line proposed, for the person, dropped or confirmed, the flags whose
 // quotes are in the reply, and the card's state.
-export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
+//
+// An email that names several orders (supplier-reply-orders.mjs) is read on
+// each of them: a value counts for this order only from this order's part.
+// A quote from another order's part, or across into one, is dropped
+// (other_order_text). One from text of no single order (shared, of no order,
+// or words that stand more than once in the email) goes to the person
+// (no_order_part), the day offered when the quote stands once and reads
+// cleanly. emailRead: the numbers of the orders the email is read on
+// (emailOrdersToRead). orderNumbers: the supplier's order numbers the paste
+// matched the email's numbers against; an order number written another way
+// counts only when it matches exactly one of them, as it did for the paste
+// (#449 review probe W27: "PO 14" meant last month's order 14). Without
+// them, emailRead is the list. With one order named, nothing changes.
+//
+// On the several-order path the final gate runs last (severalOrdersFinalGate
+// below): nothing is proposed there, every line goes to the person. The
+// one-order path is never gated.
+export function checkReplyReading(args) {
+  return severalOrdersFinalGate(checkLines(args), args)
+}
+
+// The check before the final gate, for the gate's own tests: the gate only
+// turns lines into questions for the person.
+export function checkReplyReadingBeforeGate(args) {
+  return checkLines(args)
+}
+
+function checkLines({ order, text: reply, receivedOn, reading, emailRead = [], orderNumbers = null }) {
   const open = SUPPLIER_REPLY_ORDER_STATES.includes(text(order?.status))
   const byRef = new Map(array(order?.lines).map((line) => [line.ref, line]))
   const openLines = array(order?.lines).filter((line) => Number(line.remaining) > 0).length
@@ -1010,10 +1072,14 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
     const at = part ? whole.indexOf(part) : -1
     return at >= 0 && spans.some(([start, end]) => at < end && at + part.length > start)
   }
+  const emailSplit = emailParts(reply, order?.number, array(Array.isArray(orderNumbers) && orderNumbers.length ? orderNumbers : emailRead).map((number) => String(number ?? '').trim().toUpperCase()))
+  const placeOf = (quote) => (emailSplit ? quotePlace(emailSplit, { order, quote, whole }) : 'own')
   let dropped = 0
   const flags = []
   for (const flag of array(reading?.flags)) {
     if (!quoteFound(reply, flag.quote) || addressed(flag.quote)) { dropped += 1; continue }
+    // A change another order's part reports is that order's, not this one's.
+    if (emailSplit && flag.kind !== 'other_order' && ['other', 'across'].includes(placeOf(flag.quote))) { dropped += 1; continue }
     let orderNumber = null
     if (flag.kind === 'other_order') {
       const named = [...String(flag.quote).matchAll(ORDER_NUMBER)].map((m) => m[1]).filter((number) => number !== order?.number)
@@ -1026,14 +1092,20 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
   // The supplier says the rest of this line will not come: a partial quantity
   // is then all that is coming, not a part waiting for a date (2026-11-19
   // eval: "only 300 of the 360, ship on 27 November" is a proposal, with the
-  // flag; a flag about another line, or without such words, is not).
+  // flag; a flag about another line, or without such words, is not). In an
+  // email about several orders only a flag from this order's own part says
+  // so: one from a sentence shared with another order is shown, but never
+  // makes a part of a line complete (#449 review probes W28, W29, W34).
   const namesLine = (quote, line) => [line.sku, line.supplierSku, line.itemName].map(text).filter((value) => value.length >= 3).some((value) => quoteForm(quote).includes(quoteForm(value)))
-  const shortfallFor = (line) => flags.some((flag) => ['quantity_change', 'cancellation'].includes(flag.kind) && SHORTFALL_WORDS.test(quoteForm(flag.quote)) && (openLines === 1 || namesLine(flag.quote, line)))
+  const shortfallFor = (line) => flags.some((flag) => ['quantity_change', 'cancellation'].includes(flag.kind) && SHORTFALL_WORDS.test(quoteForm(flag.quote)) && (!emailSplit || placeOf(flag.quote) === 'own') && (openLines === 1 || namesLine(flag.quote, line)))
   const out = []
   const groups = new Map()
   for (const entry of array(reading?.lines)) {
     if (!quoteFound(reply, entry.quote)) { dropped += 1; out.push(lineRow({ ref: entry.line, issue: 'quote_not_found', dateKind: entry.dateKind })); continue }
     if (addressed(entry.quote)) { dropped += 1; out.push(lineRow({ ref: entry.line, issue: 'addressed_to_system', quote: entry.quote, dateKind: entry.dateKind })); continue }
+    // In an email that corrects which order earlier text is for, which part
+    // is which cannot be trusted: nothing is dropped as another order's.
+    if (emailSplit && !emailSplit.correction && ['other', 'across'].includes(placeOf(entry.quote))) { dropped += 1; out.push(lineRow({ ref: entry.line, issue: 'other_order_text', quote: entry.quote, dateKind: entry.dateKind })); continue }
     const line = byRef.get(entry.line)
     if (!line) { dropped += 1; out.push(lineRow({ ref: entry.line, issue: 'unknown_line', quote: entry.quote, dateKind: entry.dateKind })); continue }
     if (!groups.has(entry.line)) groups.set(entry.line, [])
@@ -1044,6 +1116,20 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
     const line = byRef.get(ref)
     const base = { ref, purchaseOrderLineId: line.purchaseOrderLineId, currentDate: line.promisedDate || null, quote: entries[0].quote, dateKind: entries[0].dateKind }
     if (!open || !(Number(line.remaining) > 0)) { out.push(lineRow({ ...base, issue: 'not_open' })); continue }
+    // The email corrects which order earlier text is for ("Sorry, that line
+    // is for PO-B, not PO-A."): every line goes to the person, no day offered
+    // (#449 review probes W23, W24).
+    if (emailSplit?.correction) { out.push(lineRow({ ...base, outcome: 'needs_you', issue: 'correction_across_orders' })); continue }
+    // Text of no single order in an email about several: the person decides
+    // which order it is for, the day offered when it reads cleanly.
+    const outside = emailSplit ? entries.map((entry) => ({ entry, place: placeOf(entry.quote) })).find((row) => row.place !== 'own') : null
+    if (outside) {
+      // A quote whose words stand more than once is offered no day: its
+      // sentence cannot be told.
+      const day = outside.place === 'repeated' ? null : resolveDate(outside.entry, receivedOn, line.promisedDate || null, reply)
+      out.push(lineRow({ ...base, outcome: 'needs_you', issue: 'no_order_part', quote: outside.entry.quote, dateKind: outside.entry.dateKind, readings: !day ? null : day.issue ? (day.readings || null) : [day.date] }))
+      continue
+    }
     // The reply names this date by another line's code or name: the person
     // decides which line it is for, rather than code moving it.
     const misnamed = entries.find((entry) => lineNamedElsewhere(order, entry.quote, ref, { date: entry.date, receivedOn }))
@@ -1090,4 +1176,52 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading }) {
     : untimed || out.some((row) => row.outcome === 'needs_you' || ['quote_not_found', 'unknown_line'].includes(row.issue)) ? 'needs_you'
       : 'nothing_to_record'
   return supplierReplyCheckSchema.parse({ state, replyKind: reading?.replyKind ?? null, lines: out.slice(0, SUPPLIER_REPLY_LIMITS.lines * 2), flags: flags.slice(0, SUPPLIER_REPLY_LIMITS.flags), reason, dropped })
+}
+
+// The final gate (fourth #449 review; coordinator, 11/22). On the
+// several-order path (the email split into parts, or read on more than one
+// order) nothing is proposed: four reviews each found new ways to write an
+// email that the part rules read wrong, so a wrong-order date is ruled out
+// by construction instead. Every line of every order goes to the person as
+// several_orders with only its quote: no date the model read, no day to
+// pick, no split dates, nothing confirmed, and nothing dropped as another
+// order's text. Lines dropped for other reasons (a quote not in the reply,
+// a line not on the order, a line with nothing left open) stay dropped.
+function severalOrdersFinalGate(result, { order, text: reply, emailRead = [], orderNumbers = null }) {
+  const list = Array.isArray(orderNumbers) && orderNumbers.length > 0
+  const candidates = array(list ? orderNumbers : emailRead).map((number) => String(number ?? '').trim().toUpperCase())
+  if (!emailParts(reply, order?.number, candidates) && new Set(array(emailRead).map((number) => String(number ?? '').trim().toUpperCase())).size < 2) return result
+  const byRef = new Map(array(order?.lines).map((line) => [line.ref, line]))
+  const open = SUPPLIER_REPLY_ORDER_STATES.includes(text(order?.status))
+  // One row per line (fifth review): the line's row that was not dropped,
+  // else its first quote dropped as another order's text, is held. Any other
+  // quote dropped as another order's text for that line is left out, so the
+  // card never says "nothing is recorded here" beside the question. One for
+  // a line that is not on the order, or has nothing left open, is dropped
+  // for that reason instead.
+  const isOpen = (line) => Boolean(line) && open && Number(line.remaining) > 0
+  const holdAt = new Map()
+  for (const [at, row] of result.lines.entries()) {
+    const chosen = holdAt.get(row.ref)
+    if (row.outcome !== 'dropped') { if (chosen === undefined || result.lines[chosen].outcome === 'dropped') holdAt.set(row.ref, at) }
+    else if (row.issue === 'other_order_text' && isOpen(byRef.get(row.ref)) && chosen === undefined) holdAt.set(row.ref, at)
+  }
+  const lines = []
+  const reasonGiven = new Set()
+  let dropped = result.dropped
+  for (const [at, row] of result.lines.entries()) {
+    const line = byRef.get(row.ref)
+    const otherText = row.outcome === 'dropped' && row.issue === 'other_order_text'
+    if (holdAt.get(row.ref) === at) {
+      if (otherText) dropped -= 1
+      lines.push({ ...row, purchaseOrderLineId: line?.purchaseOrderLineId ?? row.purchaseOrderLineId, currentDate: line?.promisedDate || row.currentDate || null, outcome: 'needs_you', issue: 'several_orders', proposedDate: null, readAs: null, readings: null, parts: null, inferred: false })
+    } else if (otherText && (holdAt.has(row.ref) || reasonGiven.has(row.ref) || result.lines.some((other) => other.ref === row.ref && other.outcome === 'dropped' && other.issue !== 'other_order_text'))) {
+      // Left out: the line already has its row. Still counted as dropped.
+    } else if (otherText) {
+      reasonGiven.add(row.ref)
+      lines.push({ ...row, issue: line ? 'not_open' : 'unknown_line' })
+    } else if (row.outcome === 'dropped') lines.push(row)
+  }
+  const state = lines.some((row) => row.outcome === 'needs_you') ? 'needs_you' : result.state
+  return supplierReplyCheckSchema.parse({ ...result, state, lines, dropped })
 }

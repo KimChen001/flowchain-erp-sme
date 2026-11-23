@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
   SUPPLIER_REPLY_CONTRACT_VERSION, SUPPLIER_REPLY_DISMISS_REASONS, SUPPLIER_REPLY_FLAG_KINDS, SUPPLIER_REPLY_LIMITS,
-  SUPPLIER_REPLY_ERROR_CODES, SUPPLIER_REPLY_LINE_ISSUES, SUPPLIER_REPLY_READING_STATUSES, SUPPLIER_REPLY_ROUTES, supplierReplyCardSchema,
+  SUPPLIER_REPLY_EMAIL_ORDER_STATES, SUPPLIER_REPLY_ERROR_CODES, SUPPLIER_REPLY_LINE_ISSUES, SUPPLIER_REPLY_READING_STATUSES, SUPPLIER_REPLY_ROUTES, supplierReplyCardSchema,
 } from '../../shared/supplier-reply-contract.mjs'
 import {
   SUPPLIER_REPLY_NOTE_LIMIT, SUPPLIER_REPLY_PASTE_LIMIT, SUPPLIER_REPLY_TEXT_LIMIT, dismissReady, featuredReplies, formStart, isOutage, lineNow, markQuotes, needsManualForm,
@@ -42,6 +42,17 @@ test('the fixtures are cards the contract accepts', () => {
   // What may be pasted: twice the cleaned reply, as supplierReplyPasteRequestSchema takes it.
   assert.equal(SUPPLIER_REPLY_PASTE_LIMIT, SUPPLIER_REPLY_LIMITS.text * 2)
   assert.equal(SUPPLIER_REPLY_NOTE_LIMIT, SUPPLIER_REPLY_LIMITS.note)
+})
+
+test('a card from an email about several orders lists them; one from a single-order email has no list', () => {
+  const several = cardFixture({ emailOrders: [{ number: 'PO-202611-0012', status: 'this' }, { number: 'PO-202611-0013', status: 'read' }, { number: 'PO-202611-0019', status: 'closed' }] })
+  assert.ok(supplierReplyCardSchema.safeParse(several).success)
+  assert.equal(supplierReplyCardSchema.safeParse(cardFixture({ emailOrders: [{ number: 'PO-202611-0013', status: 'open' }] })).success, false)
+  assert.equal('emailOrders' in supplierReplyCardSchema.parse(cardFixture()), false)
+  // The card says which part it read and lists the others (SupplierReplyCard.tsx).
+  const source = readFileSync(new URL('../../src/modules/purchasing/supplierReply/SupplierReplyCard.tsx', import.meta.url), 'utf8')
+  assert.match(source, /data-testid="supplier-reply-email-orders"/)
+  assert.match(source, /emailOrder_\$\{item\.status\}/)
 })
 
 test('the supplier\'s sentences are marked on the reply, across line breaks', () => {
@@ -98,6 +109,9 @@ test('one click picks only a 03/12 reading or one of two dates in a sentence; a 
   // A vague line may offer the one or two days its words could mean (二十八号, "on Friday").
   assert.deepEqual(pickableReadings({ issue: 'vague', readings: ['2026-11-28'] }), ['2026-11-28'])
   assert.deepEqual(pickableReadings({ issue: 'vague', readings }), readings)
+  // An email about several orders: a day from text of no single order is offered.
+  assert.deepEqual(pickableReadings({ issue: 'no_order_part', readings: ['2026-12-02'] }), ['2026-12-02'])
+  assert.equal(pickableReadings({ issue: 'other_order_text', readings: ['2026-12-02'] }), null)
   assert.equal(pickableReadings({ issue: 'vague', readings: null }), null)
 })
 
@@ -166,6 +180,11 @@ test('every code the card shows has English and Chinese words', () => {
   for (const kind of SUPPLIER_REPLY_FLAG_KINDS) assert.ok(`flag_${kind}` in SUPPLIER_REPLY_COPY, kind)
   for (const reason of SUPPLIER_REPLY_DISMISS_REASONS) assert.ok(`dismiss_${reason}` in SUPPLIER_REPLY_COPY, reason)
   for (const status of SUPPLIER_REPLY_READING_STATUSES.filter((value) => value !== 'read')) assert.ok(`outage_${status}` in SUPPLIER_REPLY_COPY, status)
+  for (const status of SUPPLIER_REPLY_EMAIL_ORDER_STATES.filter((value) => value !== 'this')) assert.ok(`emailOrder_${status}` in SUPPLIER_REPLY_COPY, status)
+  assert.equal(supplierReplyText('en-US', 'emailOrders', { n: 3, number: 'PO-202611-0012', limit: 5 }), 'This email names 3 orders. FlowChain reads up to 5 of them, each on its own order with one reading. This card shows only PO-202611-0012\'s lines and fills in no dates.')
+  assert.equal(supplierReplyText('zh-CN', 'emailOrders', { n: 3, number: 'PO-202611-0012', limit: 5 }), '这封邮件提到了 3 张订单。FlowChain 最多读取其中 5 张，每张在各自订单上读取一次。本卡片只显示 PO-202611-0012 的行，不自动填日期。')
+  assert.equal(supplierReplyText('zh-CN', 'emailOrder_open_card_kept', { number: 'PO-202611-0021' }), 'PO-202611-0021：已有待处理的卡片，保留原卡片，未在该订单上读取')
+  assert.equal(supplierReplyText('zh-CN', 'emailOrder_over_limit', { number: 'PO-202611-0019', limit: 5 }), 'PO-202611-0019：一封邮件超过 5 张订单，未读取')
   assert.equal(supplierReplyText('en-US', 'readAs', { phrase: 'next Friday', date: 'Nov 27, 2026', from: 'Nov 17, 2026' }), '"next Friday" read as Nov 27, 2026, from the reply date Nov 17, 2026')
   assert.equal(supplierReplyText('zh-CN', 'left', { qty: '60 件' }), '剩余 60 件')
   // A day read from the reply, not stated as the delivery day (line.inferred).

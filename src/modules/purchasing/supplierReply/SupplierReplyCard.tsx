@@ -9,6 +9,7 @@ import { unitLabel } from "../../../i18n/unitLabels";
 import { apiJson } from "../../../lib/api-client";
 import { formatCalendarDay, formatQuantity, instantDayInTimeZone } from "../../../lib/format";
 import { procurementErrorCode, procurementErrorText } from "../../procurement/procurementErrors";
+import { SUPPLIER_REPLY_EMAIL_ORDER_LIMIT } from "../../../../shared/supplier-reply-contract.mjs";
 import { SUPPLIER_REPLY_ERROR_TEXT, supplierReplyText, type SupplierReplyCopyKey } from "./supplierReplyCopy";
 import { SupplierReplyStockLine } from "./SupplierReplyStockLine";
 import { SUPPLIER_REPLY_NOTE_LIMIT, dismissReady, formStart, isOpenReply, isOutage, lineNow, markQuotes, needsManualForm, openQuestions, pickableReadings, proposalRecord, recordKey, recordLines, replyErrorKind } from "./supplierReplyLogic";
@@ -129,7 +130,7 @@ export function SupplierReplyCard({ card, onChanged, onRefused, notice = null, m
     if (!readings) return null;
     return (
       <div className="mt-1 flex flex-wrap items-center gap-1.5" data-testid="supplier-reply-readings">
-        <span className="w-full">{t(line.issue === "several_dates" ? "severalDates" : line.issue === "vague" ? "vagueChoices" : line.issue === "ambiguous_weekday" ? "weekdayChoices" : "ambiguous")}</span>
+        <span className="w-full">{t(line.issue === "several_dates" ? "severalDates" : line.issue === "vague" ? "vagueChoices" : line.issue === "ambiguous_weekday" ? "weekdayChoices" : line.issue === "no_order_part" ? "noOrderPartChoice" : "ambiguous")}</span>
         {readings.map((reading) => <button key={reading} type="button" disabled={!card.canDecide} className={readingClass(values[lineId] === reading)} aria-pressed={values[lineId] === reading} onClick={() => { setValues({ ...values, [lineId]: reading }); setSkipped(new Set([...skipped].filter((id) => id !== lineId))); }}>{t("useReading", { date: day(reading) })}</button>)}
       </div>
     );
@@ -152,6 +153,16 @@ export function SupplierReplyCard({ card, onChanged, onRefused, notice = null, m
       <div className="mt-0.5" style={{ color: A.sub }} data-testid="supplier-reply-meta">{[card.purchaseOrderNumber, card.supplierName, t("received", { date: day(card.receivedOn) }), t(card.source === "email" ? "emailed" : "pasted")].filter(Boolean).join(" · ")}</div>
 
       {card.instructionsIgnored ? <p className="mt-2 rounded-md bg-amber-50 px-2 py-1 text-amber-800" role="note" data-testid="supplier-reply-instructions-ignored">{t("instructionsIgnored")}</p> : null}
+
+      {/* An email about several orders: this card reads only its own part. */}
+      {card.emailOrders?.length ? (
+        <div className="mt-2 rounded-md bg-slate-50 px-2 py-1" role="note" data-testid="supplier-reply-email-orders">
+          <div>{t("emailOrders", { n: card.emailOrders.length, number: card.purchaseOrderNumber, limit: SUPPLIER_REPLY_EMAIL_ORDER_LIMIT })}</div>
+          <ul className="ml-4 list-disc" style={{ color: A.sub }}>
+            {card.emailOrders.filter((item) => item.status !== "this").map((item) => <li key={item.number} data-status={item.status}>{t(`emailOrder_${item.status}` as SupplierReplyCopyKey, { number: item.number, limit: SUPPLIER_REPLY_EMAIL_ORDER_LIMIT })}</li>)}
+          </ul>
+        </div>
+      ) : null}
 
       {/* What the card says the reply is. */}
       {open && isOutage(card) ? <p className="mt-2 rounded-md bg-slate-50 px-2 py-1" data-testid="supplier-reply-outage">{t(`outage_${card.readingStatus}` as SupplierReplyCopyKey)}</p> : null}
