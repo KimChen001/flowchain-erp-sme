@@ -134,16 +134,6 @@ const listPurchaseOrders = defineAiTool({
   },
 })
 
-// An order's lines added up: ordered, received and remaining, when every line
-// gives them in one unit; null otherwise (lines in different units do not add).
-export function lineTotals(lines) {
-  const rows = array(lines)
-  const units = new Set(rows.map((line) => text(line.unit)))
-  const sum = (key) => rows.reduce((total, line) => total + Number(line[key]), 0)
-  if (!rows.length || units.size !== 1 || !rows.every((line) => ['ordered', 'received', 'remaining'].every((key) => line[key] !== null && line[key] !== undefined && Number.isFinite(Number(line[key]))))) return null
-  return { lines: rows.length, ordered: sum('ordered'), received: sum('received'), remaining: sum('remaining'), unit: [...units][0] || null }
-}
-
 const getPurchaseOrder = defineAiTool({
   name: 'get_purchase_order',
   description: 'One purchase order by its number: status, supplier, its lines to receive (openLines) and done (closedLines) with quantities, unit price when your role sees prices and promised dates, its receipts and invoice differences.',
@@ -162,10 +152,6 @@ const getPurchaseOrder = defineAiTool({
     return {
       asOf: facts.asOf,
       order: { ...orderRow(row), itemNames: itemNamesOf(facts, row.skus), createdDate: row.createdDate || null },
-      // The order's lines added up, when they share a unit, so an answer
-      // reads the order's quantity instead of adding it up (2026-11-22
-      // open-order-zh: "480 件" for the lines' sum was flagged).
-      quantityTotals: lineTotals([...array(row.openLines), ...array(row.closedLines)]),
       openLines: array(row.openLines).map(lineOf),
       closedLines: array(row.closedLines).map(lineOf),
       receipts: receipts.filter((entry) => !seen.has(entry.id) && seen.add(entry.id)).map((entry) => ({ documentNumber: entry.documentNumber, arrived: entry.arrivedDay, postingStatus: entry.postingStatus, ...(entry.accepted !== undefined ? { accepted: entry.accepted } : {}), rejected: entry.rejected, unit: entry.unit, ...(entry.reversed ? { reversed: true } : {}), ref: aiToolRef('receiving_doc', entry.id, entry.documentNumber) })),
