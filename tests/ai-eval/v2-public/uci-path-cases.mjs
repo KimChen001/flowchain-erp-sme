@@ -6,6 +6,9 @@
 // interfaceLanguage }). Every figure comes from uciFacts.
 
 // last: the last whole calendar month before the seed day ({ key, en, zh }).
+// A member the seed lacks, with a role that cannot see margins (--setup adds them).
+export const MARGIN_BLIND_USER = 'eval-buyer@flowchain.local'
+
 export function buildUciPathCases(facts, { last }) {
   const cases = []
   const add = (row) => cases.push(row)
@@ -15,8 +18,13 @@ export function buildUciPathCases(facts, { last }) {
   const suggestion = facts.reorder.find((row) => row.sku === cake.sku)
   const margin = facts.month(last.key).grossMarginPercent
 
-  // A role that cannot see margins gets the hidden reply, and no margin.
-  add({ id: 'buyer-margin-en', kind: 'roles', language: 'en-US', asUser: 'daniel@example.com', turns: [`What was our gross margin in ${last.en}?`],
+  // A role that cannot see margins gets the hidden reply, and no margin. The
+  // walkthrough's buyer (daniel@example.com) has the manager's role
+  // (createSceneBuyer in scripts/public-data/seed.mjs) and may see margins,
+  // so the case is asked by a member with the buyer role (procurement
+  // specialist: no customer invoices, no amounts), whom --setup invites
+  // (#421 review). Without --setup it is left out, like a case that writes.
+  add({ id: 'buyer-margin-en', asUser: MARGIN_BLIND_USER, setup: { member: { email: MARGIN_BLIND_USER, role: 'buyer' } }, kind: 'roles', language: 'en-US', turns: [`What was our gross margin in ${last.en}?`],
     expect: {
       matches: [{ label: 'the hidden reply', pattern: String.raw`Your role can(?:'|’)?t see|Your role cannot see` }],
       ...(margin === null ? {} : { numbersAbsent: [{ label: 'margin %', value: margin, tolerance: 0.5 }] }),

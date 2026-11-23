@@ -14,6 +14,7 @@ import { buildUciMoneyCases } from './uci-money-cases.mjs'
 import { buildUciPathCases } from './uci-path-cases.mjs'
 import { buildUciRecordsCases } from './uci-records-cases.mjs'
 import { buildUciReplyCases } from './uci-reply-cases.mjs'
+import { buildUciSmeCases } from './uci-sme-cases.mjs'
 
 const round = (value, places = 2) => Math.round(value * 10 ** places) / 10 ** places
 const EN_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
@@ -161,7 +162,15 @@ export function buildUciCases(facts) {
   add({ id: 'second-month-units-zh', kind: 'sales', language: 'zh-CN', turns: [`${second.sku} 在 ${last.zh}卖了多少件？`], expect: { numbers: [{ label: '销量', value: lastMonth.unitsOf(second.sku) }] } })
   add({ id: 'month-revenue-en', kind: 'sales', language: 'en-US', turns: [`What were our total sales in ${last.en}?`], expect: { numbers: [money(lastMonth.revenue, 'sales')] } })
   add({ id: 'month-compare-zh', kind: 'sales', language: 'zh-CN', turns: [`${last.zh}的销售额和 ${before.zh.replace(/^\d+ 年 /, '')}比怎么样？`],
-    expect: { numbers: [money(lastMonth.revenue, `${last.key} 销售额`), money(monthBefore.revenue, `${before.key} 销售额`), { label: '增长 %', value: round((100 * (lastMonth.revenue - monthBefore.revenue)) / monthBefore.revenue, 1), tolerance: 0.5 }] } })
+    // A fall is said as "下降 12.1%" as often as "-12.1%"; the words then
+    // have to say it fell (2026-11-20: "下降约 12.1%" failed on the sign).
+    expect: (() => {
+      const change = round((100 * (lastMonth.revenue - monthBefore.revenue)) / monthBefore.revenue, 1)
+      return {
+        numbers: [money(lastMonth.revenue, `${last.key} 销售额`), money(monthBefore.revenue, `${before.key} 销售额`), { label: '变化 %', anyOf: [change, Math.abs(change)], tolerance: 0.5 }],
+        matches: [change < 0 ? { label: '说下降', pattern: '下降|减少|下滑|少了|降低|低于', textOnly: true } : { label: '说增长', pattern: '增长|增加|上升|多了|高于', textOnly: true }],
+      }
+    })() })
   add({ id: 'top-customers-en', kind: 'sales', language: 'en-US', turns: [`Who were our top 3 customers by sales in ${last.en}?`],
     expect: { mentions: lastMonth.customers.slice(0, 3).map((row) => ({ label: row.name, any: [row.id] })), numbers: [money(topCustomer.revenue, 'top customer sales')] } })
   add({ id: 'top-customer-zh', kind: 'sales', language: 'zh-CN', turns: [`${before.zh}买得最多的客户是谁？`],
@@ -226,9 +235,11 @@ export function buildUciCases(facts) {
   // not left to its place in the list. The money cases and margin-en are
   // asked by the manager, who sees amounts and margins; the path cases name
   // their own user. The records cases (design audit C12) come last and name
-  // their user too. The supplier reply cases (#363 §4.10) follow them, each
-  // naming its user.
-  return [...cases, ...buildUciConversationCases(facts), ...buildUciConstraintCases(facts), ...buildUciMoneyCases(facts, { last }), ...actions, ...buildUciPathCases(facts, { last }), ...buildUciRecordsCases(facts, { manager: UCI_MANAGER }), ...buildUciReplyCases(facts, { manager: UCI_MANAGER })]
+  // their user too. The supplier reply cases (#363 §4.10) follow them, then
+  // the SME buyer questions written by us (2026-11-20), each naming its user.
+  const replies = buildUciReplyCases(facts, { manager: UCI_MANAGER })
+  const supplierReply = replies.find((row) => row.setup?.supplierReply)?.setup.supplierReply
+  return [...cases, ...buildUciConversationCases(facts), ...buildUciConstraintCases(facts), ...buildUciMoneyCases(facts, { last }), ...actions, ...buildUciPathCases(facts, { last }), ...buildUciRecordsCases(facts, { manager: UCI_MANAGER }), ...replies, ...buildUciSmeCases(facts, { manager: UCI_MANAGER, buyer: UCI_BUYER, supplierReply })]
     .map((row) => (row.asUser || !(MANAGER_KINDS.has(row.kind) || row.id === 'margin-en') ? row : { ...row, asUser: UCI_MANAGER }))
     .map((row) => (UCI_LOOKUPS.has(row.id) ? { ...row, expect: { ...row.expect, brief: true } } : row))
     .map((row) => (UCI_REQUIRED_TOOLS[row.id] ? { ...row, expect: { ...row.expect, calls: UCI_REQUIRED_TOOLS[row.id] } } : row))
