@@ -202,7 +202,7 @@ export function SupplierReplyCard({ card, onChanged, onRefused, notice = null, m
                   <div key={lineId} className="rounded-md bg-amber-50/60 p-2" data-testid="supplier-reply-question" data-line={lineId}>
                     <div className="font-medium">{lineName(line)} <span className="font-normal" style={{ color: A.sub }}>· {t("left", { qty: qty(line.remaining, line.unit) })}</span></div>
                     <div style={{ color: A.sub }}>{t("now")}: {nowCell(line)}</div>
-                    {line.issue && !pickableReadings(line) ? <div className="text-amber-800">{t(`issue_${line.issue}` as SupplierReplyCopyKey)}</div> : null}
+                    {line.issue && !pickableReadings(line) ? <div className="text-amber-800 first-letter:uppercase" data-testid="supplier-reply-line-issue">{t(`issue_${line.issue}` as SupplierReplyCopyKey)}</div> : null}
                     {line.quote ? <div className="italic" style={{ color: A.gray1 }}>{t("vagueSaid", { quote: line.quote })}</div> : null}
                     {readingButtons(line, lineId)}
                     {lineExtras(line)}
@@ -241,7 +241,7 @@ export function SupplierReplyCard({ card, onChanged, onRefused, notice = null, m
                 <div key={lineId} className="rounded-md bg-slate-50 p-2" data-testid="supplier-reply-form-line" data-line={lineId}>
                   <div className="font-medium">{lineName(formLine)} <span className="font-normal" style={{ color: A.sub }}>· {t("left", { qty: qty(formLine.remaining, formLine.unit) })}</span></div>
                   <div style={{ color: A.sub }}>{t("now")}: {nowCell({ purchaseOrderLineId: lineId, currentDate: line ? line.currentDate : formLine.currentDate, overdueDays: formLine.overdueDays })}</div>
-                  {line?.issue && line.outcome === "needs_you" && !pickableReadings(line) ? <div className="text-amber-800">{t(`issue_${line.issue}` as SupplierReplyCopyKey)}</div> : null}
+                  {line?.issue && line.outcome === "needs_you" && !pickableReadings(line) ? <div className="text-amber-800 first-letter:uppercase" data-testid="supplier-reply-line-issue">{t(`issue_${line.issue}` as SupplierReplyCopyKey)}</div> : null}
                   {line?.quote ? <div className="italic" style={{ color: A.gray1 }} data-testid="supplier-reply-form-quote">{t("vagueSaid", { quote: line.quote })}</div> : null}
                   {line ? readingButtons(line, lineId) : null}
                   {lineExtras(line)}
