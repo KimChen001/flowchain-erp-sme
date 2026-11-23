@@ -4,6 +4,10 @@
 const PUBLIC_API_ROUTES = new Set([
   "POST /api/workspace/invitations/accept",
   "POST /api/workspace/invitations/inspect",
+  // A forwarder with a workspace integration token, never a session: the
+  // route checks the token itself and answers 404 unless the server enables
+  // it (supplier-reply-ingest.routes.mjs).
+  "POST /api/integrations/supplier-replies",
 ]);
 
 export function apiAccessDenial({ method, pathname, identity }) {
