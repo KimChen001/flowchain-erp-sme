@@ -197,14 +197,23 @@ const stockPosition = defineAiTool({
     limit: limitParam,
   },
   available: (facts) => Boolean(facts.inventory),
-  run(args, { facts }) {
+  async run(args, { facts, context }) {
     const all = array(facts.inventory.rows)
     let rows = all
+    // One item asked for: its recorded daily demand too, the shipped rate
+    // the reorder list plans on (2026-11-20 question set: "the average daily
+    // demand for 22423" got "the stock records don't hold one"). Loaded on
+    // use: the assistant v2 tools import this module.
+    let demand = null
     if (args.sku) {
       const found = aiStockSku(facts, args.sku)
       if (found.error) return found
       rows = rows.filter((row) => fold(row.sku) === fold(found.sku))
       if (!rows.length) return { asOf: facts.asOf, sku: found.sku, noStockOrOrders: true }
+      if (rows.length === 1 && context?.prisma && context.actor) {
+        const { recordedDemandOfSku } = await import('./ai-assistant-v2-data-tools.mjs')
+        demand = await recordedDemandOfSku(context, facts, rows[0].sku).catch(() => null)
+      }
     }
     if (args.only === 'at_risk') rows = rows.filter((row) => array(facts.inventory.atRisk).includes(row.sku) || RISK_STATUSES.has(row.stockStatus))
     // The rows counts.belowSafetyStock counts, so the list and its count
@@ -218,6 +227,7 @@ const stockPosition = defineAiTool({
       asOf: facts.asOf,
       basis: STOCK_BASIS,
       counts: stockCounts(facts, all),
+      ...(demand ? { recordedDemand: demand } : {}),
       ...aiToolList(rows.map((row) => ({
         sku: row.sku, itemName: row.itemName, unit: row.unit, onHand: row.onHand, reserved: row.reserved, available: row.available,
         openSalesDemand: row.openSalesDemand, incomingOnPurchaseOrders: row.incomingApprovedPo, availableToPromise: row.availableToPromise,

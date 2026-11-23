@@ -94,14 +94,88 @@ const listShipments = defineAiTool({
         lines: lines.map((line) => ({ sku: text(line.sku), quantity: number(line.postedQuantity), unit: text(line.unit) || null })),
         ref: aiToolRef('sales_order', row.salesOrder?.id || '', text(row.salesOrder?.orderNumber) || ''),
       }))
+    // How many shipments and sales orders shipped each month of the window,
+    // over every shipment, not the rows read (2026-11-20 question set: "how
+    // many sales orders did we ship in October?" got "200 rows shown of
+    // 3,380+, no total per month"). For a reader of every warehouse, without
+    // a SKU; reversed shipments are not counted.
+    // A reader with a warehouse list counts too when the list holds every
+    // warehouse of the workspace, checked now against the current warehouses
+    // (one added later makes it partial again; 2026-11-21 live run: the
+    // walkthrough users have one scope row each, so byMonth never came, and
+    // "can't give a count" was the answer). Such a reader counts only the
+    // shipments with a line from a warehouse in its list, as the rows above
+    // show them; one with no warehouse is left out. The warehouses are read
+    // only when a count is asked for.
+    const counting = !salesOrderId && !args.sku
+    const everyWarehouse = counting && (!scope || await scopeHoldsEveryWarehouse(prisma, tenantId, scope))
+    const byMonth = everyWarehouse ? await shipmentsByMonth(prisma, tenantId, { from, today: text(facts.today), timeZone: facts.timezone, scope }) : null
     return {
       ...(salesOrderId ? { order: text(args.order) } : { days, from: addCalendarDays(from, 1), to: text(facts.today) }),
       ...(args.sku ? { sku: args.sku } : {}),
+      // A count that could not be read says so, never just goes missing.
+      ...(byMonth?.months ? { byMonth: byMonth.months } : byMonth?.unavailable ? { byMonthUnavailable: byMonth.unavailable } : {}),
       ...(found.length > SHIPMENTS_READ ? { partial: { limit: SHIPMENTS_READ } } : {}),
       ...aiToolList(rows, args.limit),
     }
   },
 })
+
+// Whether a set of warehouse ids holds every warehouse of the workspace.
+async function scopeHoldsEveryWarehouse(prisma, tenantId, scope) {
+  if (typeof prisma?.warehouse?.findMany !== 'function') return false
+  const warehouses = await prisma.warehouse.findMany({ where: { tenantId }, select: { id: true } }).catch(() => null)
+  return Array.isArray(warehouses) && warehouses.length > 0 && warehouses.every((row) => scope.has(text(row.id)))
+}
+
+// Posted shipments per calendar month of the workspace's time zone, from the
+// day after `from` to today: { months: [{ month, shipments, salesOrders }] }
+// oldest first, with from and to on a month the window covers only part of
+// (#433 review: with 30 days, "2026-10" held only 22–31 Oct and said nothing
+// of it), or { unavailable: 'read_failed' | 'too_many_shipments' }. Two small
+// fields a shipment; the scope is a filter in the query, so no line or
+// allocation is loaded (#433 recheck).
+const SHIPMENT_MONTHS_READ = 50000
+async function shipmentsByMonth(prisma, tenantId, { from, today, timeZone, scope = null }) {
+  const start = addCalendarDays(from, 1)
+  const rows = await prisma.shipmentDocument.findMany({
+    // A day early, so a shipment posted late on the first day in a zone
+    // ahead of UTC is read; the day check below keeps the window.
+    where: {
+      tenantId, postingStatus: 'posted', postedAt: { gte: new Date(`${addCalendarDays(start, -1)}T00:00:00Z`) },
+      ...(scope ? { lines: { some: { allocations: { some: { warehouseId: { in: [...scope] } } } } } } : {}),
+    },
+    select: { postedAt: true, salesOrderId: true },
+    take: SHIPMENT_MONTHS_READ + 1,
+  }).catch(() => null)
+  if (!Array.isArray(rows)) return { unavailable: 'read_failed' }
+  if (rows.length > SHIPMENT_MONTHS_READ) return { unavailable: 'too_many_shipments' }
+  let localDay
+  try {
+    const format = new Intl.DateTimeFormat('en-CA', { timeZone: text(timeZone) || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' })
+    localDay = (value) => (value instanceof Date || value ? format.format(new Date(value)) : null)
+  } catch {
+    localDay = (value) => day(value)
+  }
+  const months = new Map()
+  for (const row of rows) {
+    const shipped = localDay(row.postedAt)
+    if (!shipped || shipped < start || (today && shipped > today)) continue
+    const month = shipped.slice(0, 7)
+    if (!months.has(month)) months.set(month, { shipments: 0, orders: new Set() })
+    const entry = months.get(month)
+    entry.shipments += 1
+    if (text(row.salesOrderId)) entry.orders.add(text(row.salesOrderId))
+  }
+  const lastDayOf = (month) => { const [year, number] = month.split('-').map(Number); return `${month}-${String(new Date(Date.UTC(year, number, 0)).getUTCDate()).padStart(2, '0')}` }
+  return {
+    months: [...months].sort(([a], [b]) => a.localeCompare(b)).map(([month, entry]) => {
+      const monthFrom = start > `${month}-01` ? start : null
+      const monthTo = today && today < lastDayOf(month) ? today : null
+      return { month, shipments: entry.shipments, salesOrders: entry.orders.size, ...(monthFrom || monthTo ? { partial: true, from: monthFrom || `${month}-01`, to: monthTo || lastDayOf(month) } : {}) }
+    }),
+  }
+}
 
 // The audit log's names for each kind of record, as its writers spell them,
 // and the permission that reads the record itself.

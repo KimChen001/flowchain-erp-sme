@@ -1172,6 +1172,19 @@ function orderPlanResult(result, { facts, records, items, args }) {
   }
 }
 
+// One SKU's recorded daily demand, by the reorder list's rule, for
+// stock_position (ai-read-tools.mjs). null when its item cannot be read.
+export async function recordedDemandOfSku(context, facts, sku) {
+  const row = stockRow(facts, sku)
+  const item = row?.itemId && context?.prisma ? (await storedItems(context, [text(row.itemId)])).get(text(row.itemId)) : null
+  if (!item) return null
+  const demand = await recordedDemand(context, facts, [item])
+  if (demand.scoped) return { averageDailyDemand: null, windowDays: DEMAND_WINDOW_DAYS, reason: 'warehouse_scope' }
+  const history = demand.byItem.get(text(item.id))
+  const rate = history?.averageDailyDemand ?? null
+  return { averageDailyDemand: rate1(rate), windowDays: DEMAND_WINDOW_DAYS, shipmentDays: history?.shipmentDays ?? 0, ...(rate === null ? { reason: 'not_enough_shipment_history' } : {}) }
+}
+
 // The stock projection with the demand the reorder list plans on (2026-11-07:
 // on public data, where every sales order has shipped, it showed no demand
 // for an item shipping 17 a day). weeks keep the open sales orders in the week
