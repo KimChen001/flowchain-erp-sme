@@ -274,10 +274,11 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
       ? (await client.purchaseOrder.findMany({ where: { tenantId: actor.tenantId, supplierId: text(order.supplierId) }, select: { number: true }, take: 500 })).map((row) => text(row.number)).filter(Boolean)
       : []
     const named = orderNumbersNamed(cleaned.text, snapshot.number, known)
-    if (named.length >= 2) return pasteSeveral({ client, actor, access, context, order, snapshot, skus, cleaned, input, receivedOn, today, named, signal })
+    if (named.length >= 2) return pasteSeveral({ client, actor, access, context, order, snapshot, skus, cleaned, input, receivedOn, today, named, known, signal })
     const startedAt = Date.now()
     const read = await readWithModel({ client, context, tenantId: actor.tenantId, snapshot, cleaned, receivedOn, today, signal })
-    const check = read.readingStatus === 'read' ? checkReplyReading({ order: snapshot, text: cleaned.text, receivedOn, reading: read.reading }) : null
+    // The check tells the email's numbers from the same supplier orders.
+    const check = read.readingStatus === 'read' ? checkReplyReading({ order: snapshot, text: cleaned.text, receivedOn, reading: read.reading, orderNumbers: known }) : null
     const state = check ? check.state : 'needs_you'
     const id = idFactory()
     const open = SUPPLIER_REPLY_OPEN_STATES.includes(state)
@@ -328,7 +329,7 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
   // order read, each its order's card as a single paste makes it (the same
   // supersede rule per order), each keeping the email's orders (usage.email)
   // for the card's notice. The others are listed, not read.
-  async function pasteSeveral({ client, actor, access, context, order, snapshot, skus, cleaned, input, receivedOn, today, named, signal }) {
+  async function pasteSeveral({ client, actor, access, context, order, snapshot, skus, cleaned, input, receivedOn, today, named, known = [], signal }) {
     const upper = (value) => text(value).toUpperCase()
     const others = named.filter((number) => number !== upper(snapshot.number))
     const found = await client.purchaseOrder.findMany({ where: { tenantId: actor.tenantId, number: { in: others } }, select: { id: true, number: true, status: true, supplierId: true } })
@@ -351,7 +352,7 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
     const startedAt = Date.now()
     const readings = await Promise.all(targets.map(async (target) => {
       const read = await readWithModel({ client, context, tenantId: actor.tenantId, snapshot: target.snapshot, cleaned, receivedOn, today, signal })
-      const check = read.readingStatus === 'read' ? checkReplyReading({ order: target.snapshot, text: cleaned.text, receivedOn, reading: read.reading, emailRead }) : null
+      const check = read.readingStatus === 'read' ? checkReplyReading({ order: target.snapshot, text: cleaned.text, receivedOn, reading: read.reading, emailRead, orderNumbers: known }) : null
       return { ...target, read, check, ms: Date.now() - startedAt, id: idFactory() }
     }))
     const email = {

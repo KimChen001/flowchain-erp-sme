@@ -1042,9 +1042,12 @@ function quotePlace(parts, { order, quote, whole }) {
 // or words that stand more than once in the email) goes to the person
 // (no_order_part), the day offered when the quote stands once and reads
 // cleanly. emailRead: the numbers of the orders the email is read on
-// (emailOrdersToRead); an order number written another way counts when it
-// matches one of them. With one order named, nothing changes.
-export function checkReplyReading({ order, text: reply, receivedOn, reading, emailRead = [] }) {
+// (emailOrdersToRead). orderNumbers: the supplier's order numbers the paste
+// matched the email's numbers against; an order number written another way
+// counts only when it matches exactly one of them, as it did for the paste
+// (#449 review probe W27: "PO 14" meant last month's order 14). Without
+// them, emailRead is the list. With one order named, nothing changes.
+export function checkReplyReading({ order, text: reply, receivedOn, reading, emailRead = [], orderNumbers = null }) {
   const open = SUPPLIER_REPLY_ORDER_STATES.includes(text(order?.status))
   const byRef = new Map(array(order?.lines).map((line) => [line.ref, line]))
   const openLines = array(order?.lines).filter((line) => Number(line.remaining) > 0).length
@@ -1055,7 +1058,7 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading, ema
     const at = part ? whole.indexOf(part) : -1
     return at >= 0 && spans.some(([start, end]) => at < end && at + part.length > start)
   }
-  const emailSplit = emailParts(reply, order?.number, array(emailRead).map((number) => String(number ?? '').trim().toUpperCase()))
+  const emailSplit = emailParts(reply, order?.number, array(Array.isArray(orderNumbers) && orderNumbers.length ? orderNumbers : emailRead).map((number) => String(number ?? '').trim().toUpperCase()))
   const placeOf = (quote) => (emailSplit ? quotePlace(emailSplit, { order, quote, whole }) : 'own')
   let dropped = 0
   const flags = []

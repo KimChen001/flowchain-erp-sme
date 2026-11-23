@@ -1145,9 +1145,15 @@ test('several orders: a date said of one listed order, or of part of them, is ne
 test('an email naming one order, or orders outside the numbering, is read exactly as before', () => {
   const quote = 'the brackets ship on 4 December.'
   const lines = reading([{ line: 'L1', date: '2026-12-04', quote, dateKind: 'stated' }])
-  for (const reply of [`Hi, PO-202611-0012: ${quote} Thanks`, `Hi, PO-202611-0013: ${quote} Thanks`, `Hi, PO-0012 and PO-0013: ${quote}`, `Hi, ${quote}`]) {
+  for (const reply of [`Hi, PO-202611-0012: ${quote} Thanks`, `Hi, PO-202611-0013: ${quote} Thanks`, `Hi, ${quote}`, `Hi, PO-202611-0012: ${quote} Our order no. 4471.`]) {
     assert.deepEqual(outcomes(check(reply, lines)), [['L1', 'proposed', null, '2026-12-04']], reply)
   }
+  // A number in the order's own numbering that matches no known order (PO-0013
+  // here) is another order the email cannot tell: the email is split, never
+  // read as one, and a date said with it goes to the person (#449 review of
+  // d0691a5a, rule 5). The supplier's own number above (order no. 4471)
+  // leaves the email as it was.
+  assert.deepEqual(outcomes(check(`Hi, PO-0012 and PO-0013: ${quote}`, lines)), [['L1', 'needs_you', 'no_order_part', null]])
   // An order outside the numbering is never split, whatever the email names.
   const legacy = { ...order, number: 'PO-12' }
   assert.deepEqual(outcomes(check(`PO-202611-0013: ${quote}\nPO-202611-0014: the hinges ship on 8 December.`, lines, { order: legacy })), [['L1', 'proposed', null, '2026-12-04']])

@@ -1,4 +1,4 @@
-// The #449 review probes of de3e6fe0 (64 emails about several orders, from
+// The first #449 review's probes of de3e6fe0 (64 emails about several orders, from
 // emailParts through checkReplyReading with hand-made readings; written by
 // an independent review, 11/22) and its known-number duplicate check, kept
 // as tests. No model.
@@ -126,10 +126,12 @@ test('review probes: no date is ever proposed on an order it is not for (64 emai
 })
 
 // What a correct date comes out as. Held for the person is the accepted cost
-// of the safer parts (coordinator, 11/22); dropped would lose it, and never
-// happens.
-const HELD = ['R03', 'R04', 'R05', 'R06', 'R07', 'R08', 'R09', 'R10', 'R12', 'R15', 'R16', 'R17', 'R21', 'R22']
-test(`review probes: every correct date is proposed or held for the person, never dropped (${HELD.length} of 22 correct replies held)`, () => {
+// of the safer parts (coordinator, 11/22): R03–R10, R16, R17, R22 name B in
+// passing, inside A's part or outside any part; R19 and X02 come after a
+// passing mention, which ends the part (held on 6fa2d753 too). Dropped would
+// lose the date, and never happens.
+const HELD = ['R03', 'R04', 'R05', 'R06', 'R07', 'R08', 'R09', 'R10', 'R16', 'R17', 'R19', 'R22', 'X02']
+test(`review probes: every correct date is proposed or held for the person, never dropped (${HELD.filter((id) => id.startsWith('R')).length} of 22 correct replies held)`, () => {
   for (const kase of cases.filter((one) => one.good)) {
     const lines = check(kase).lines
     for (const [ref, date] of kase.good) {

@@ -15,19 +15,12 @@
 //
 // The parts, sentence by sentence (a line break, 。！？；; or . ! ? before a
 // space ends a sentence):
-//   - only a header or a sentence that starts with the number opens an
-//     order's part, and the sentences after it continue the part. A header
-//     is the number with at most one word before it and a colon after it
-//     ("PO-…:", "For PO-…:", "关于订单 PO-…："); a sentence starts with the
-//     number when nothing but a list mark and one word naming it (Order,
-//     PO, 订单, 关于订单) stands before it ("PO-… ships on 4 Dec", "订单
-//     PO-… 的交期如下：");
-//   - a sentence that names one order further in ("With the PO-… goods, …",
-//     "… (re PO-…)", "Same as PO-…", "your other order, PO-…, follows on
-//     4 Dec") claims that sentence only. Inside another order's part, the
-//     part's heading counts as a number: the sentence belongs to both
-//     orders together (shared), and the part goes on after it. Outside any
-//     part, which order it is about cannot be told: it belongs to no order;
+//   - a sentence that starts with one order's number (after at most two
+//     words: "For PO-…", "关于订单 PO-…", "PO-…:") starts that order's part,
+//     and the sentences after it continue the part;
+//   - a sentence that names one order further in ("… (re PO-…)", "your other
+//     order, PO-…, follows on 4 Dec") is that order's, but the part ends
+//     with it;
 //   - a sentence that names two or more orders belongs to all of them
 //     together (shared), and the part ends with it;
 //   - a sentence with an unresolved order number, or one that points to an
@@ -53,7 +46,10 @@ const parsed = (number) => {
 
 // The order-number-like tokens in a text, in the numbering of `prefix`, each
 // with the known order it means (number) or null when it means none or more
-// than one.
+// than one. `ours`: the token is written in this workspace's numbering (the
+// prefix, or a label with a sequence of its length and a leading zero:
+// 订单 0021), not a bare sequence or a number of the supplier's own (我方订单
+// 4471, Order #4471, 订单号 88231).
 function tokensIn(source, prefix, known) {
   // Each known order once: the order read on may be in the list again (the
   // paste's emailRead holds it), and a variant must not match it twice
@@ -64,23 +60,23 @@ function tokensIn(source, prefix, known) {
   const length = NUMBERED.exec(String(known[0] ?? '').trim())?.[3].length || 4
   const stop = '(?=\\d{1,2}\\s*[月日号]|\\D|$)'
   const out = []
-  const add = (match, month, seq, exact = null) => {
+  const add = (match, month, seq, ours, exact = null) => {
     const start = match.index
     const end = start + match[0].length
     if (out.some((row) => start < row.end && end > row.index)) return
     const candidates = exact ? [] : orders.filter((row) => row.seq === Number(seq) && (!month || row.month === month))
-    out.push({ index: start, end, text: match[0], number: exact || (candidates.length === 1 ? candidates[0].number : null) })
+    out.push({ index: start, end, text: match[0], ours, number: exact || (candidates.length === 1 ? candidates[0].number : null) })
   }
-  for (const match of source.matchAll(new RegExp(`\\b${prefix}-(\\d{6})-(\\d{${length}})${stop}`, 'gi'))) add(match, match[1], match[2], match[0].toUpperCase())
+  for (const match of source.matchAll(new RegExp(`\\b${prefix}-(\\d{6})-(\\d{${length}})${stop}`, 'gi'))) add(match, match[1], match[2], true, match[0].toUpperCase())
   // Written another way: spaces or other dashes, another sequence length.
-  for (const match of source.matchAll(new RegExp(`\\b${prefix}\\s*[-–—_]?\\s*(\\d{6})\\s*[-–—_ ]\\s*(\\d{1,6}?)${stop}`, 'gi'))) add(match, match[1], match[2])
+  for (const match of source.matchAll(new RegExp(`\\b${prefix}\\s*[-–—_]?\\s*(\\d{6})\\s*[-–—_ ]\\s*(\\d{1,6}?)${stop}`, 'gi'))) add(match, match[1], match[2], true)
   // A short form: PO 13, PO-0013, PO#13.
-  for (const match of source.matchAll(new RegExp(`\\b${prefix}\\s*[-#.:]?\\s*(\\d{1,6}?)${stop}`, 'gi'))) add(match, null, match[1])
+  for (const match of source.matchAll(new RegExp(`\\b${prefix}\\s*[-#.:]?\\s*(\\d{1,6}?)${stop}`, 'gi'))) add(match, null, match[1], true)
   // A label and a number: order no. 13, order #13, 订单号 0013, 订单 0013.
   // Not a date written after it (订单12月5日发货).
-  for (const match of source.matchAll(/(?:\border\s*(?:no\.?|number|#)|采购单号?|订单号?|单号)\s*[:#]?\s*(\d{1,6})(?![\d月日号年/.-])/gi)) add(match, null, match[1])
+  for (const match of source.matchAll(/(?:\border\s*(?:no\.?|number|#)|采购单号?|订单号?|单号)\s*[:#]?\s*(\d{1,6})(?![\d月日号年/.-])/gi)) add(match, null, match[1], match[1].length === length && match[1].startsWith('0'))
   // A bare sequence with leading zeros: 0013.
-  for (const match of source.matchAll(/(?<![\w-])0\d{3,5}(?![\w-])/g)) add(match, null, match[0])
+  for (const match of source.matchAll(/(?<![\w-])0\d{3,5}(?![\w-])/g)) add(match, null, match[0], false)
   return out.sort((a, b) => a.index - b.index)
 }
 
@@ -119,15 +115,25 @@ function sentencesOf(source) {
   return out
 }
 
-// What may stand before a number that opens a part (see the head of this
-// file): a list mark or list number, and one word naming the number; or,
-// when a colon follows the number (a header), any one word. Two words, or
-// one that is not a label ("With the PO-… goods", "跟 PO-… 的货", "Same as
-// PO-…", "re PO-…"), only name the order in passing (#449 review probes).
-const STARTS_WITH_NUMBER = /^\s*(?:[-*•·>]+\s*)?(?:\d{1,2}[.)]\s+)?(?:(?:purchase\s+)?order|po|(?:关于)?(?:采购)?订单号?|(?:关于)?采购单号?|单号)?\s*[:#]?\s*$/iu
-const HEADER_WORD = /^\s*(?:[-*•·>]+\s*)?(?:\d{1,2}[.)]\s+)?(?:[\p{L}]+[:.]?\s*)?#?\s*$/u
-// Whether the order-number token `token` opens a part in `sentence`.
-const opensPart = (sentence, token) => STARTS_WITH_NUMBER.test(sentence.slice(0, token.index)) || (HEADER_WORD.test(sentence.slice(0, token.index)) && /^\s*[:：]/.test(sentence.slice(token.end)))
+// What may stand before a number that starts a part: a list mark or list
+// number ("-", "–", "|", "[", "【", "(", "1.", "(1)", "2、"), and at most
+// two words ("For", "Re:", "As for", "关于订单", "Hi Daniel,"); three words
+// when a colon follows the number ("Ship date for PO-…:").
+const LIST_MARK = '(?:[-*•·>|–—\\[【(（]+\\s*)?(?:[(（]?\\d{1,2}[.)、）]\\s*)?'
+const LEADING = new RegExp(`^\\s*${LIST_MARK}(?:[\\p{L}]+[\\s:,.、，]*){0,2}$`, 'u')
+const LEADING_BEFORE_COLON = new RegExp(`^\\s*${LIST_MARK}(?:[\\p{L}]+[\\s:,.、，]*){0,3}$`, 'u')
+// Words before a number that say the sentence is not that order's own: the
+// goods go with it, or it is left out ("With the PO-… goods", "跟 PO-… 的货
+// 一起", "Except PO-…", "Not PO-…"). The number is then named in passing.
+const NOT_ITS_OWN = /^[\s\p{P}]*(?:(?:(?:together|along)\s+)?with|except|excluding|apart\s+from|other\s+than|not|but\s+not|like)(?![\p{L}])|^[\s\p{P}]*(?:跟|和|与|随|连同|除了|除|不含|不包括)/iu
+// A sentence that only points to another order and says nothing else
+// ("Same as PO-….", "re PO-…", "see PO-…", "参照 PO-…。"): it ends the part it
+// is in and opens none (#449 review probes W12, W33).
+const POINTER_WORDS = /^[\s\p{P}]*(?:same\s+(?:as|for)|see(?:\s+also)?|re|cf\.?|ditto|as\s+per|参照|参见|见|同上)\s*$/iu
+const NOTHING_ELSE = /^[\s.,;。，；)）\]】]*$/u
+// A line that introduces quoted text of ours without a mail client's marker
+// ("Kim wrote:"): nothing after it is the supplier's (review probe W25).
+const QUOTE_INTRO = /(?:\bwrote|写道)\s*[:：]\s*$/iu
 // A header: the number with at most one label word and a colon, nothing after.
 const HEADER = /^\s*(?:[-*•·>]+\s*)?(?:[\p{L}]+[:.]?\s*)?#?\s*\u0000\s*:\s*$/u
 // An order pointed to by its place, not its number.
@@ -143,12 +149,11 @@ export function emailParts(text, number, known = []) {
   const source = String(text ?? '').normalize('NFKC')
   const all = [number, ...known]
   const named = orderNumbersNamed(source, number, known)
-  // One order named, and a part headed by an order number this email cannot
-  // tell ("订单 0021：" when 0021 is no known order): the email is about two
-  // orders, so it is split too (#449 review probe W23). A bare sequence
-  // (0021, or a phone number) heads nothing.
-  const unknownHeading = () => sentencesOf(source).some((sentence) => tokensIn(sentence, prefix, all).some((token) => !token.number && !/^\d/.test(token.text) && opensPart(sentence, token)))
-  if (named.length < 2 && !(named.length === 1 && unknownHeading())) return null
+  // One order named, and a number in this workspace's numbering that is not
+  // told (it means no known order, or more than one): the email is about
+  // another order too, and is never read as one (#449 review probes W23,
+  // W27). A bare sequence or the supplier's own number leaves it as before.
+  if (named.length < 2 && !(named.length === 1 && tokensIn(source, prefix, all).some((token) => !token.number && token.ours))) return null
   const runs = []
   const add = (sentence, owners) => {
     const last = runs[runs.length - 1]
@@ -158,7 +163,16 @@ export function emailParts(text, number, known = []) {
   let current = null
   let headerOnly = false
   let lineStart = true
+  let quoted = false
   for (const sentence of sentencesOf(source)) {
+    if (quoted || QUOTE_INTRO.test(sentence.trim())) {
+      // Our quoted text: no order's, to the end.
+      quoted = true
+      current = null
+      headerOnly = false
+      add(sentence, [])
+      continue
+    }
     if (!sentence.trim()) {
       // An empty line ends the part (not the line break that ends a
       // sentence's own line, and not after a header).
@@ -176,17 +190,26 @@ export function emailParts(text, number, known = []) {
       add(sentence, [])
     } else if (numbers.length === 1) {
       const first = tokens[0]
-      if (opensPart(sentence, first)) {
-        // A header, or a sentence that starts with the number: its part opens.
+      const before = sentence.slice(0, first.index)
+      const after = sentence.slice(first.end)
+      if (POINTER_WORDS.test(before) && NOTHING_ELSE.test(after)) {
+        // Only points to another order: the part ends, none opens.
+        current = null
+        headerOnly = false
+        add(sentence, [])
+      } else if (!NOT_ITS_OWN.test(before) && (LEADING.test(before) || (LEADING_BEFORE_COLON.test(before) && /^\s*[:：]/.test(after)))) {
+        // The number leads: its part starts here.
         add(sentence, numbers)
         current = numbers[0]
-        headerOnly = tokens.length === 1 && HEADER.test(`${sentence.slice(0, first.index)}\u0000${sentence.slice(first.end)}`)
+        headerOnly = tokens.length === 1 && HEADER.test(`${before}\u0000${after}`)
       } else {
-        // Named in passing. Inside an order's part, the part's heading counts
+        // Named in passing. Inside an order's part the part's heading counts
         // as a number: the sentence is both orders' (blind batch 5, case 12),
-        // or the part's own when it names that order, and the part goes on.
-        // Outside any part it is no single order's.
+        // or the part's own when it names that order. Outside any part it is
+        // no single order's. Either way the part ends here: no part goes on
+        // past another order's number (#449 review of d0691a5a).
         add(sentence, current === null ? [] : current === numbers[0] ? [current] : [current, numbers[0]].sort())
+        current = null
         headerOnly = false
       }
     } else if (numbers.length > 1) {
