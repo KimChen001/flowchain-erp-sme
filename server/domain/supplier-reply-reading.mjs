@@ -1075,9 +1075,12 @@ export function checkReplyReading({ order, text: reply, receivedOn, reading, ema
   // The supplier says the rest of this line will not come: a partial quantity
   // is then all that is coming, not a part waiting for a date (2026-11-19
   // eval: "only 300 of the 360, ship on 27 November" is a proposal, with the
-  // flag; a flag about another line, or without such words, is not).
+  // flag; a flag about another line, or without such words, is not). In an
+  // email about several orders only a flag from this order's own part says
+  // so: one from a sentence shared with another order is shown, but never
+  // makes a part of a line complete (#449 review probes W28, W29, W34).
   const namesLine = (quote, line) => [line.sku, line.supplierSku, line.itemName].map(text).filter((value) => value.length >= 3).some((value) => quoteForm(quote).includes(quoteForm(value)))
-  const shortfallFor = (line) => flags.some((flag) => ['quantity_change', 'cancellation'].includes(flag.kind) && SHORTFALL_WORDS.test(quoteForm(flag.quote)) && (openLines === 1 || namesLine(flag.quote, line)))
+  const shortfallFor = (line) => flags.some((flag) => ['quantity_change', 'cancellation'].includes(flag.kind) && SHORTFALL_WORDS.test(quoteForm(flag.quote)) && (!emailSplit || placeOf(flag.quote) === 'own') && (openLines === 1 || namesLine(flag.quote, line)))
   const out = []
   const groups = new Map()
   for (const entry of array(reading?.lines)) {

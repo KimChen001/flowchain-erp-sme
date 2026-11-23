@@ -15,12 +15,19 @@
 //
 // The parts, sentence by sentence (a line break, 。！？；; or . ! ? before a
 // space ends a sentence):
-//   - a sentence that starts with one order's number (after at most two
-//     words: "For PO-…", "关于订单 PO-…", "PO-…:") starts that order's part,
-//     and the sentences after it continue the part;
-//   - a sentence that names one order further in ("… (re PO-…)", "your other
-//     order, PO-…, follows on 4 Dec") is that order's, but the part ends
-//     with it;
+//   - only a header or a sentence that starts with the number opens an
+//     order's part, and the sentences after it continue the part. A header
+//     is the number with at most one word before it and a colon after it
+//     ("PO-…:", "For PO-…:", "关于订单 PO-…："); a sentence starts with the
+//     number when nothing but a list mark and one word naming it (Order,
+//     PO, 订单, 关于订单) stands before it ("PO-… ships on 4 Dec", "订单
+//     PO-… 的交期如下：");
+//   - a sentence that names one order further in ("With the PO-… goods, …",
+//     "… (re PO-…)", "Same as PO-…", "your other order, PO-…, follows on
+//     4 Dec") claims that sentence only. Inside another order's part, the
+//     part's heading counts as a number: the sentence belongs to both
+//     orders together (shared), and the part goes on after it. Outside any
+//     part, which order it is about cannot be told: it belongs to no order;
 //   - a sentence that names two or more orders belongs to all of them
 //     together (shared), and the part ends with it;
 //   - a sentence with an unresolved order number, or one that points to an
@@ -48,7 +55,10 @@ const parsed = (number) => {
 // with the known order it means (number) or null when it means none or more
 // than one.
 function tokensIn(source, prefix, known) {
-  const orders = known.map(parsed).filter((row) => row && row.prefix === prefix)
+  // Each known order once: the order read on may be in the list again (the
+  // paste's emailRead holds it), and a variant must not match it twice
+  // (#449 review probes W25, W35, W37).
+  const orders = [...new Map(known.map(parsed).filter((row) => row && row.prefix === prefix).map((row) => [row.number, row])).values()]
   // The sequence has the length of the order read on (known[0]): a number
   // written straight before a date (PO-202611-001212月4日) stops there.
   const length = NUMBERED.exec(String(known[0] ?? '').trim())?.[3].length || 4
@@ -109,9 +119,15 @@ function sentencesOf(source) {
   return out
 }
 
-// What may stand before a number that starts a part: a list mark, and at
-// most two words ("For", "Re:", "关于订单", "Hi Daniel,").
-const LEADING = /^\s*(?:[-*•·>]+\s*)?(?:\d{1,2}[.)]\s+)?(?:[\p{L}]+[\s:,.、，]*){0,2}$/u
+// What may stand before a number that opens a part (see the head of this
+// file): a list mark or list number, and one word naming the number; or,
+// when a colon follows the number (a header), any one word. Two words, or
+// one that is not a label ("With the PO-… goods", "跟 PO-… 的货", "Same as
+// PO-…", "re PO-…"), only name the order in passing (#449 review probes).
+const STARTS_WITH_NUMBER = /^\s*(?:[-*•·>]+\s*)?(?:\d{1,2}[.)]\s+)?(?:(?:purchase\s+)?order|po|(?:关于)?(?:采购)?订单号?|(?:关于)?采购单号?|单号)?\s*[:#]?\s*$/iu
+const HEADER_WORD = /^\s*(?:[-*•·>]+\s*)?(?:\d{1,2}[.)]\s+)?(?:[\p{L}]+[:.]?\s*)?#?\s*$/u
+// Whether the order-number token `token` opens a part in `sentence`.
+const opensPart = (sentence, token) => STARTS_WITH_NUMBER.test(sentence.slice(0, token.index)) || (HEADER_WORD.test(sentence.slice(0, token.index)) && /^\s*[:：]/.test(sentence.slice(token.end)))
 // A header: the number with at most one label word and a colon, nothing after.
 const HEADER = /^\s*(?:[-*•·>]+\s*)?(?:[\p{L}]+[:.]?\s*)?#?\s*\u0000\s*:\s*$/u
 // An order pointed to by its place, not its number.
@@ -127,7 +143,12 @@ export function emailParts(text, number, known = []) {
   const source = String(text ?? '').normalize('NFKC')
   const all = [number, ...known]
   const named = orderNumbersNamed(source, number, known)
-  if (named.length < 2) return null
+  // One order named, and a part headed by an order number this email cannot
+  // tell ("订单 0021：" when 0021 is no known order): the email is about two
+  // orders, so it is split too (#449 review probe W23). A bare sequence
+  // (0021, or a phone number) heads nothing.
+  const unknownHeading = () => sentencesOf(source).some((sentence) => tokensIn(sentence, prefix, all).some((token) => !token.number && !/^\d/.test(token.text) && opensPart(sentence, token)))
+  if (named.length < 2 && !(named.length === 1 && unknownHeading())) return null
   const runs = []
   const add = (sentence, owners) => {
     const last = runs[runs.length - 1]
@@ -155,14 +176,19 @@ export function emailParts(text, number, known = []) {
       add(sentence, [])
     } else if (numbers.length === 1) {
       const first = tokens[0]
-      const leads = LEADING.test(sentence.slice(0, first.index))
-      // Another order named in passing inside an order's part: the part's
-      // heading counts as a number, so the sentence names two orders and
-      // belongs to both (blind batch 5, case 12).
-      const passing = !leads && current !== null && current !== numbers[0]
-      add(sentence, passing ? [current, numbers[0]].sort() : numbers)
-      current = leads ? numbers[0] : null
-      headerOnly = leads && tokens.length === 1 && HEADER.test(sentence.slice(0, first.index) + '\u0000' + sentence.slice(first.end))
+      if (opensPart(sentence, first)) {
+        // A header, or a sentence that starts with the number: its part opens.
+        add(sentence, numbers)
+        current = numbers[0]
+        headerOnly = tokens.length === 1 && HEADER.test(`${sentence.slice(0, first.index)}\u0000${sentence.slice(first.end)}`)
+      } else {
+        // Named in passing. Inside an order's part, the part's heading counts
+        // as a number: the sentence is both orders' (blind batch 5, case 12),
+        // or the part's own when it names that order, and the part goes on.
+        // Outside any part it is no single order's.
+        add(sentence, current === null ? [] : current === numbers[0] ? [current] : [current, numbers[0]].sort())
+        headerOnly = false
+      }
     } else if (numbers.length > 1) {
       current = null
       headerOnly = false

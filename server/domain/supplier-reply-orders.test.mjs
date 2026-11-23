@@ -41,8 +41,12 @@ test('a paragraph or a line per order: each order owns its text until the next o
   assert.deepEqual(runsOf(`${A} - brackets: 4 Dec\n${B} - springs: 10 Dec\n${C} - hinges: 12 Dec`), [
     [A, `${A} - brackets: 4 Dec`], [B, `${B} - springs: 10 Dec`], [C, `${C} - hinges: 12 Dec`],
   ])
-  // Two orders in one line, a sentence each.
-  assert.deepEqual(runsOf(`For ${A} the brackets ship 4 Dec; for ${B} the springs ship 10 Dec.`), [[A, `For ${A} the brackets ship 4 Dec;`], [B, `for ${B} the springs ship 10 Dec.`]])
+  // Two orders in one line, a sentence each, each starting with its number.
+  assert.deepEqual(runsOf(`${A}: the brackets ship 4 Dec; ${B}: the springs ship 10 Dec.`), [[A, `${A}: the brackets ship 4 Dec;`], [B, `${B}: the springs ship 10 Dec.`]])
+  // "For" is no label word: each clause names its order in passing, outside
+  // any part, so both are no single order's and go to the person. A known
+  // cost of the stricter rule (#449 review probes W10–W13, W31, W32).
+  assert.deepEqual(runsOf(`For ${A} the brackets ship 4 Dec; for ${B} the springs ship 10 Dec.`), [['-', `For ${A} the brackets ship 4 Dec; for ${B} the springs ship 10 Dec.`]])
   // Chinese: 。and ； end sentences.
   assert.deepEqual(runsOf(`您好：\n${A}（六款）：整张单12月1日发货；\n${B}：84347 改到12月7日，其余还是11月30日。\n陈经理`), folded([
     ['-', '您好：'], [A, `${A}（六款）：整张单12月1日发货；`], [B, `${B}：84347 改到12月7日，其余还是11月30日。 陈经理`],
@@ -109,18 +113,24 @@ test('an order number written another way counts when it matches one known order
   assert.equal(emailParts(`${A}: brackets ship on 4 December.\n0013: hinges ship on 9 December.`, A), null)
 })
 
-test('a number named further into a sentence claims that sentence only, or shares it with the order whose part it is in; an order pointed to by its place belongs to none', () => {
-  // Outside any order's part (after a blank line), the sentence is the named order's.
-  assert.deepEqual(runsOf(`${A}: hinges ship on 4 December.\n\nYour other order for the same items, ${B}, follows on 9 December.\nRegards`), [
-    [A, `${A}: hinges ship on 4 December.`], [B, `Your other order for the same items, ${B}, follows on 9 December.`], ['-', 'Regards'],
-  ])
+test('a number named further into a sentence never opens a part: inside a part the sentence is both orders\', outside any part no single order\'s; an order pointed to by its place belongs to none', () => {
   // Inside another order's part, the part's heading counts as a number: the
-  // sentence names two orders and belongs to both (blind batch 5, case 12).
+  // sentence names two orders and belongs to both, and the part goes on
+  // (blind batch 5, case 12; review probes W06, W07, W12, W33).
   assert.deepEqual(runsOf(`${B}: brackets ship on 9 December.\nThanks, Pat (re ${A})\nAll ship on 9 December.`), [
-    [B, `${B}: brackets ship on 9 December.`], [`${A}+${B}`, `Thanks, Pat (re ${A})`], ['-', 'All ship on 9 December.'],
+    [B, `${B}: brackets ship on 9 December.`], [`${A}+${B}`, `Thanks, Pat (re ${A})`], [B, 'All ship on 9 December.'],
   ])
+  // Known cost: this sentence is B's own date, but code cannot tell it from
+  // case 12 (A's items going "with the B goods"), so on B it goes to the
+  // person instead of being proposed. Accepted (coordinator, 11/22).
   assert.deepEqual(runsOf(`${A}: hinges ship on 4 December.\nYour other order for the same items, ${B}, follows on 9 December.\nRegards`), [
-    [A, `${A}: hinges ship on 4 December.`], [`${A}+${B}`, `Your other order for the same items, ${B}, follows on 9 December.`], ['-', 'Regards'],
+    [A, `${A}: hinges ship on 4 December.`], [`${A}+${B}`, `Your other order for the same items, ${B}, follows on 9 December.`], [A, 'Regards'],
+  ])
+  // Outside any part (after a blank line), which order the sentence is about
+  // cannot be told: no single order's, so the person decides (review probes
+  // W09, W17, W31, W32). The same known cost as above.
+  assert.deepEqual(runsOf(`${A}: hinges ship on 4 December.\n\nYour other order for the same items, ${B}, follows on 9 December.\nRegards`), [
+    [A, `${A}: hinges ship on 4 December.`], ['-', `Your other order for the same items, ${B}, follows on 9 December. Regards`],
   ])
   // A sentence that starts with the number continues: "It" is that order's.
   assert.deepEqual(runsOf(`${A} ships on 1 December. ${B} is delayed. It will ship on 9 December.`), [[A, `${A} ships on 1 December.`], [B, `${B} is delayed. It will ship on 9 December.`]])
@@ -136,8 +146,9 @@ test('a header is the number with at most one label word and a colon; a short st
   assert.deepEqual(runsOf(`${A}：已取消。\n\n铰链12月9日发货。\n\n${B}：支架12月4日发货。`), folded([
     [A, `${A}：已取消。`], ['-', '铰链12月9日发货。'], [B, `${B}：支架12月4日发货。`],
   ]))
-  // More than one label word is no header either.
-  assert.deepEqual(runsOf(`Regarding purchase order ${A}:\n\nBrackets ship on 4 December.\n\n${B}: hinges ship on 9 December.`).map(([owners]) => owners), [A, '-', B])
+  // More than one label word is no header either: the line names its order
+  // in passing, outside any part, and is no single order's.
+  assert.deepEqual(runsOf(`Regarding purchase order ${A}:\n\nBrackets ship on 4 December.\n\n${B}: hinges ship on 9 December.`).map(([owners]) => owners), ['-', B])
   // One label word, or none, with a colon and nothing after it: a header.
   for (const header of [`${A}:`, `Order ${A}:`, `Re: ${A}:`, `订单 ${A}：`]) {
     assert.deepEqual(runsOf(`${header}\n\nBrackets ship on 4 December.\n\n${B}: hinges ship on 9 December.`).map(([owners]) => owners), [A, B], header)
