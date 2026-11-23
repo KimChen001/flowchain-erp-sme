@@ -91,6 +91,8 @@ test('one click picks only a 03/12 reading or one of two dates in a sentence; a 
   const readings = ['2026-12-03', '2027-03-12']
   assert.deepEqual(pickableReadings({ issue: 'ambiguous_numeric', readings }), readings)
   assert.deepEqual(pickableReadings({ issue: 'several_dates', readings }), readings)
+  // "next Friday" early in a week: both Fridays, one click each.
+  assert.deepEqual(pickableReadings({ issue: 'ambiguous_weekday', readings }), readings)
   assert.equal(pickableReadings({ issue: 'date_mismatch', readings }), null)
   assert.equal(pickableReadings({ issue: 'ambiguous_numeric', readings: null }), null)
   // A vague line may offer the one or two days its words could mean (二十八号, "on Friday").

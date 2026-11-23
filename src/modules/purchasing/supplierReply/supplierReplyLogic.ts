@@ -84,7 +84,7 @@ export function recordLines(card: SupplierReplyCardData, values: Record<string, 
 // not the supplier's), so the person types the day.
 // A vague line may offer the one or two days its words could mean
 // (二十八号, "on Friday", a hedged "starting 3 Dec"), as choices.
-const PICKABLE = new Set(["ambiguous_numeric", "several_dates"]);
+const PICKABLE = new Set(["ambiguous_numeric", "ambiguous_weekday", "several_dates"]);
 export function pickableReadings(line: { issue: string | null; readings: string[] | null }) {
   const readings = line.readings || [];
   if (PICKABLE.has(String(line.issue)) && readings.length === 2) return readings;

@@ -129,7 +129,7 @@ export function SupplierReplyCard({ card, onChanged, onRefused, notice = null, m
     if (!readings) return null;
     return (
       <div className="mt-1 flex flex-wrap items-center gap-1.5" data-testid="supplier-reply-readings">
-        <span className="w-full">{t(line.issue === "several_dates" ? "severalDates" : line.issue === "vague" ? "vagueChoices" : "ambiguous")}</span>
+        <span className="w-full">{t(line.issue === "several_dates" ? "severalDates" : line.issue === "vague" ? "vagueChoices" : line.issue === "ambiguous_weekday" ? "weekdayChoices" : "ambiguous")}</span>
         {readings.map((reading) => <button key={reading} type="button" disabled={!card.canDecide} className={readingClass(values[lineId] === reading)} aria-pressed={values[lineId] === reading} onClick={() => { setValues({ ...values, [lineId]: reading }); setSkipped(new Set([...skipped].filter((id) => id !== lineId))); }}>{t("useReading", { date: day(reading) })}</button>)}
       </div>
     );
