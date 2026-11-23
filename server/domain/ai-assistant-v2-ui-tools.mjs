@@ -1539,10 +1539,23 @@ const suggestFollowups = defineUiTool({
     // sent as their own words, so a quantity in it would reach a form as one
     // the user typed (design audit 2026-11-15, L5-21).
     const sources = ctx?.results instanceof Map ? [...ctx.results.values()].map((entry) => entry.output) : []
+    // A record a chip names must be one this conversation or the workspace
+    // holds: an example from the instructions ("Draft a request for
+    // SKU-123") is not one (2026-11-19 question set: late-table-en offered
+    // SKU-123). Records read in earlier answers and the workspace's own SKUs
+    // and order numbers count.
+    const known = new Set([
+      ...[...array(ctx?.facts?.inventory?.rows), ...array(ctx?.facts?.inventory?.masterOnly)].map((row) => row?.sku),
+      ...array(ctx?.facts?.purchaseOrders?.index).flatMap((row) => [row?.orderNumber, row?.id]),
+    ].map((value) => String(value ?? '').trim().toLowerCase()).filter(Boolean))
+    const wider = [...sources, ...array(ctx?.earlierResults)]
     for (const question of questions) {
       try {
         const unread = checkAiModelFirstGrounding({ answer: { title: '', answer: question, records: [] }, results: sources, question: ctx?.userText || '', facts: ctx?.facts || null }).problems.filter((row) => row.kind === 'number')
         if (unread.length) return fail('ungrounded_figure', `A follow-up may use only figures the records or the user gave; "${unread[0].value}" in "${question.slice(0, 40)}" is neither. Leave the figure out.`)
+        const unknown = checkAiModelFirstGrounding({ answer: { title: '', answer: question, records: [] }, results: wider, question: ctx?.userText || '', conversation: ctx?.conversation || '', facts: ctx?.facts || null }).problems
+          .filter((row) => row.kind === 'record' && !known.has(String(row.value).trim().toLowerCase()))
+        if (unknown.length) return fail('ungrounded_record', `A follow-up may name only records from this conversation or the workspace; "${unknown[0].value}" in "${question.slice(0, 40)}" is neither. Name a record from the results, or leave it out.`)
       } catch { /* a check that fails leaves the chips as they are */ }
     }
     return part('followups', { questions }, [])
