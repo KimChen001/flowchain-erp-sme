@@ -40,7 +40,7 @@ test('cleaning drops our quoted chase, a signature and invisible characters, and
   assert.equal(cleanSupplierReply('余下的货下周五发。\n\n在 2026年11月17日 10:00，Kim 写道：\n> 请确认').text, '余下的货下周五发。')
   // A right-to-left override and tag characters are gone too.
   assert.equal(cleanSupplierReply('Ship ‮on 28 Nov‬ 󠁁ok').text, 'Ship on 28 Nov ok')
-  assert.deepEqual(cleanSupplierReply('Just a reply.'), { text: 'Just a reply.', quoted: null, quotedTextHidden: false, invisibleRemoved: 0 })
+  assert.deepEqual(cleanSupplierReply('Just a reply.'), { text: 'Just a reply.', quoted: null, quotedTextHidden: false, invisibleRemoved: 0, inlineAnswers: 0, inline: [], inlineFrom: null })
   // Quotes are found again across whitespace, curly quotes and case.
   assert.ok(quoteFound('We can ship\nthe balance on 28 November.', 'we can ship the balance on 28 November.'))
   assert.ok(!quoteFound('We can ship the balance on 28 November.', 'We can ship everything on 18 November.'))
@@ -546,6 +546,144 @@ test('order data written for a machine shows the notice, and a supplier\'s own t
   const text = cleanSupplierReply(machine[1]).text
   const check = checkReplyReading({ order, text, receivedOn: '2026-11-19', reading: { replyKind: 'dates', lines: [{ line: 'L1', date: '2026-12-02', quote: 'All lines ship on 2 December', dateKind: 'stated' }], flags: [], reason: null } })
   assert.deepEqual(check.lines.map((line) => [line.outcome, line.proposedDate]), [['proposed', '2026-12-02']])
+})
+
+test('a supplier answering inside our quoted chase is read, with the question it answers, and only ever offered to the person', () => {
+  const inline = [
+    'Hi Daniel, answers below.',
+    '',
+    'On Mon, 17 Nov 2026 at 09:12, Daniel <daniel@example.com> wrote:',
+    '> Could you confirm a new date for the brackets (promised 12 Nov)?',
+    '',
+    'Brackets: 28 November.',
+    '',
+    '> And the hinges, promised 14 Nov?',
+    '',
+    'Hinges ship on 3 December, sorry for the delay.',
+    '',
+    '> Thanks, Daniel',
+  ].join('\n')
+  const cleaned = cleanSupplierReply(inline)
+  // Each answer keeps a pointer to its question (60 characters at most), without our digits or date words.
+  assert.equal(cleaned.text, 'Hi Daniel, answers below.\n\n[re: Could you confirm a new date for the brackets (promised)?] Brackets: 28 November.\n[re: And the hinges, promised?] Hinges ship on 3 December, sorry for the delay.')
+  assert.equal(cleaned.inlineFrom, 'Hi Daniel, answers below.'.length + 2)
+  assert.deepEqual([cleaned.inlineAnswers, cleaned.inline.length], [2, 2])
+  assert.doesNotMatch(cleaned.text, /12 Nov|14 Nov/, 'our dates are never read')
+  assert.match(cleaned.quoted, /^On Mon, 17 Nov 2026[\s\S]*promised 12 Nov\)\?[\s\S]*> Thanks, Daniel$/)
+  assert.doesNotMatch(cleaned.quoted, /28 November|3 December/)
+  // A date read from an answer is offered to the person, never proposed.
+  const result = checkReplyReading({ order, text: cleaned.text, receivedOn: '2026-11-18', inlineFrom: cleaned.inlineFrom, reading: reading([
+    { line: 'L1', date: '2026-11-28', quote: 'Brackets: 28 November.', dateKind: 'stated' },
+    { line: 'L2', date: '2026-12-03', quote: 'Hinges ship on 3 December', dateKind: 'stated' },
+  ]) })
+  assert.deepEqual(outcomes(result), [['L1', 'needs_you', 'inline_answer', null], ['L2', 'needs_you', 'inline_answer', null]])
+  assert.equal(result.state, 'needs_you')
+  // Answers that do not name the item reach the reading with their questions, and still only as needs-you.
+  const bare = cleanSupplierReply('See below.\nOn Mon, 17 Nov 2026, Daniel wrote:\n> Brackets?\n\n3 Dec\n\n> Hinges?\n\n1 Dec')
+  assert.equal(bare.text, 'See below.\n\n[re: Brackets?] 3 Dec\n[re: Hinges?] 1 Dec')
+  assert.deepEqual(outcomes(checkReplyReading({ order, text: bare.text, receivedOn: '2026-11-18', inlineFrom: bare.inlineFrom, reading: reading([{ line: 'L1', date: '2026-12-01', quote: '1 Dec', dateKind: 'stated' }]) })), [['L1', 'needs_you', 'inline_answer', null]])
+  // A quote reaching into the answers, across a line break or across from the
+  // text above, is from them: offered to the person, never proposed.
+  const wrappedAnswer = cleanSupplierReply('See below.\nOn Mon, 17 Nov 2026, Daniel wrote:\n> Brackets?\n> Hinges?\n\nHinges we can ship on\n3 December.\n\n> Thanks')
+  assert.equal(wrappedAnswer.text, 'See below.\n\n[re: Hinges?] Hinges we can ship on\n3 December.')
+  const quoted = (cleaned, line, date, quote) => outcomes(checkReplyReading({ order, text: cleaned.text, receivedOn: '2026-11-18', inlineFrom: cleaned.inlineFrom, reading: reading([{ line, date, quote, dateKind: 'stated' }]) }))
+  assert.deepEqual(quoted(wrappedAnswer, 'L2', '2026-12-03', 'ship on 3 December'), [['L2', 'needs_you', 'inline_answer', null]])
+  const join = cleanSupplierReply('We can ship on\nOn Mon, 17 Nov 2026, Daniel wrote:\n> Could you ship the brackets by next Friday?\n> Thanks\n\n28 November.\n\n> Daniel')
+  assert.equal(join.text, 'We can ship on\n\n[re: Thanks] 28 November.')
+  assert.deepEqual(quoted(join, 'L1', '2026-11-28', 'We can ship on [re: Thanks] 28 November'), [['L1', 'needs_you', 'inline_answer', null]])
+  // Our question's date words never reach the reading.
+  const asked = cleanSupplierReply('See below.\nOn Mon, 17 Nov 2026, Daniel wrote:\n> Could you ship by next Friday, 十一月十二日?\n> Or by the end of the month?\n\nYes.\n\n> Daniel')
+  assert.equal(asked.text, 'See below.\n\n[re: Or by the of the?] Yes.')
+  assert.doesNotMatch(asked.text, /friday|next|十一月|十二日|month/i)
+  // Ordinals and number words too.
+  const ordinal = cleanSupplierReply('See below.\nOn Mon, 17 Nov 2026, Daniel wrote:\n> Hinges?\n> Could they come on the twenty-eighth, or by the 28th at the latest?\n\nYes.\n\n> Daniel')
+  assert.equal(ordinal.text, 'See below.\n\n[re: Could they come on the, or by the at the latest?] Yes.')
+  assert.doesNotMatch(ordinal.text, /twenty|eighth|28|\bth\b/i)
+  // The text above the quote is read and proposed as before.
+  assert.deepEqual(outcomes(checkReplyReading({ order, text: 'All of it ships on 28 November.\n\n[re: Brackets?] 3 Dec', receivedOn: '2026-11-18', inlineFrom: 'All of it ships on 28 November.'.length + 2, reading: reading([{ line: 'L1', date: '2026-11-28', quote: 'All of it ships on 28 November', dateKind: 'stated' }]) })), [['L1', 'proposed', null, '2026-11-28']])
+})
+
+test('in an email about several orders, an answer inside our quoted chase goes to the person like every other line: several_orders, no date', () => {
+  const other = 'PO-202611-0013'
+  const email = [
+    'Hi Daniel, answers below.',
+    '',
+    'On Mon, 17 Nov 2026 at 09:12, Daniel <daniel@example.com> wrote:',
+    '> Could you confirm new dates for both orders?',
+    '> The brackets were promised 12 Nov.',
+    '',
+    `${order.number} brackets: 28 November.`,
+    '',
+    '> And the hinges?',
+    '',
+    `${other} hinges ship on 3 December.`,
+    '',
+    '> Thanks, Daniel',
+  ].join('\n')
+  const cleaned = cleanSupplierReply(email)
+  assert.equal(cleaned.inlineAnswers, 2)
+  const at = (emailRead, lines) => checkReplyReading({ order, text: cleaned.text, receivedOn: '2026-11-18', inlineFrom: cleaned.inlineFrom, emailRead, reading: reading(lines) })
+  const brackets = { line: 'L1', date: '2026-11-28', quote: `${order.number} brackets: 28 November.`, dateKind: 'stated' }
+  const hinges = { line: 'L2', date: '2026-12-03', quote: `${other} hinges ship on 3 December.`, dateKind: 'stated' }
+  // Read on both orders (the email's own order's answer included): every line
+  // is held with only its quote, never inline_answer with a day.
+  for (const emailRead of [[order.number, other], []]) {
+    const result = at(emailRead, [brackets, hinges])
+    assert.deepEqual(outcomes(result), [['L1', 'needs_you', 'several_orders', null], ['L2', 'needs_you', 'several_orders', null]], emailRead.join(' '))
+    assert.ok(result.lines.every((line) => line.readAs === null && line.readings === null && line.parts === null), emailRead.join(' '))
+    assert.equal(result.state, 'needs_you')
+  }
+  // The same two answers about this order alone stay inline_answer (one order:
+  // never gated), still with no day.
+  const alone = cleanSupplierReply(email.replace(other, order.number))
+  assert.deepEqual(outcomes(checkReplyReading({ order, text: alone.text, receivedOn: '2026-11-18', inlineFrom: alone.inlineFrom, reading: reading([brackets, { ...hinges, quote: `${order.number} hinges ship on 3 December.` }]) })), [['L1', 'needs_you', 'inline_answer', null], ['L2', 'needs_you', 'inline_answer', null]])
+})
+
+test('our own chase is never read as the supplier\'s answer: text right below a quoted line, re-wrapped quotes, a one-line ">" paste, and lines of our sent chase', () => {
+  const head = 'Answers below.\nOn Mon, 17 Nov 2026, Daniel wrote:\n'
+  // A quoted line broken out by the client: our question right below it is ours, and so is what continues it.
+  const split = cleanSupplierReply(`${head}> Brackets are promised 28 Nov, please confirm.\nConfirmed.\nCould you ship the hinges by 5 December instead?\n> Thanks`)
+  assert.equal(split.text, 'Answers below.')
+  assert.deepEqual(outcomes(checkReplyReading({ order, text: split.text, receivedOn: '2026-11-18', inlineFrom: split.inlineFrom, reading: reading([{ line: 'L2', date: '2026-12-05', quote: 'Could you ship the hinges by 5 December instead', dateKind: 'stated' }]) })), [['L2', 'dropped', 'quote_not_found', null]])
+  // Our request split off with blank lines and wrapped over two lines, with a
+  // chase not sent through FlowChain: read, but only offered to the person.
+  const splitOff = cleanSupplierReply(`${head}> Brackets are promised 28 Nov, please confirm.\n> Thanks\n\nCould you ship the hinges\nby 5 December instead?\n\n> Daniel`)
+  assert.deepEqual(outcomes(checkReplyReading({ order, text: splitOff.text, receivedOn: '2026-11-18', inlineFrom: splitOff.inlineFrom, reading: reading([{ line: 'L2', date: '2026-12-05', quote: 'ship the hinges by 5 December', dateKind: 'stated' }]) })), [['L2', 'needs_you', 'inline_answer', null]])
+  // A re-wrapped quote: its tail on the next line is ours.
+  const wrapped = cleanSupplierReply(`${head}> Are the brackets still on track for the promised\n28 November delivery?\n> Thanks`)
+  assert.equal(wrapped.text, 'Answers below.')
+  // After a blank line, a lower-case line under an unfinished quoted line is its wrap too.
+  assert.equal(cleanSupplierReply(`${head}> Are the brackets still on track for the promised\n\n28 November delivery?\n> Thanks\n> Daniel`).text, 'Answers below.\n\n[re: Are the brackets still on track for the promised] 28 November delivery?')
+  assert.equal(cleanSupplierReply(`${head}> Are the brackets still on track for the\n\npromised 28 November delivery?\n> Thanks\n> Daniel`).text, 'Answers below.')
+  // A pasted HTML email with one ">" line is not an inline reply: the earlier message is cut as before.
+  assert.equal(cleanSupplierReply(`${head}> Hi Kim,\nCould you confirm the brackets for 28 Nov?\n\nThanks, Daniel\nPO-202611-0012`).text, 'Answers below.')
+  // A paragraph of our sent chase after a blank line is ours.
+  const sent = ['Hi, could you confirm a date for the brackets?\n\nWe need them on site by 12 November.\n\nThanks, Daniel']
+  const chased = cleanSupplierReply(`${head}> Hi, could you confirm a date for the brackets?\n> Thanks\n\nWe need them on site by 12 November.\n\n> Daniel`, { sent })
+  assert.equal(chased.text, 'Answers below.')
+  assert.equal(cleanSupplierReply(`${head}> Hi, could you confirm a date for the brackets?\n> Thanks\n\nThey ship on 28 November.\n\n> Daniel`, { sent }).inlineAnswers, 1)
+})
+
+test('inline answers stop at a signature, an older message, a forwarded message, a disclaimer or a footer, and quotes may use ＞ or |', () => {
+  const head = 'Answers below.\nOn Mon, 17 Nov 2026, Daniel wrote:\n> Brackets?\n> Thanks\n\n28 November.\n\n'
+  const read = (tail) => cleanSupplierReply(head + tail).text
+  const answer = 'Answers below.\n\n[re: Thanks] 28 November.'
+  assert.equal(read('-- \nWang Li | Sales\n\n30 November'), answer)
+  assert.equal(read('-----Original Message-----\n\nPlease ship by 12 November.'), answer)
+  // A wrapped "On … / wrote:", and an Outlook header whose Date is far below its From.
+  assert.equal(read('On Tue, 10 Nov 2026 at 09:00, Daniel <daniel@example.com>\nwrote:\n\nPlease ship by 12 November.'), answer)
+  assert.equal(read('From: Daniel <daniel@example.com>\nTo: Sales\nCc: Stores\nSubject: PO-202611-0012\nImportance: High\nDate: 10 November 2026\n\nPlease ship by 12 November.'), answer)
+  assert.equal(read('Begin forwarded message:\n\nPlease ship by 12 November.'), answer)
+  assert.equal(read('This email and any attachments are confidential.\n\nDelivery by 12 November.'), answer)
+  assert.equal(read('Sent from my iPhone\n\n12 November'), answer)
+  assert.equal(read('免责声明：本邮件仅供收件人使用。\n\n11月12日'), answer)
+  // Full-width and bar quoting are quoted lines too.
+  assert.equal(cleanSupplierReply('回复如下。\n在 2026年11月17日 09:12，Daniel 写道：\n＞ 支架什么时候发？原定11月12日。\n＞ 谢谢\n\n支架11月28日发货。').text, '回复如下。\n\n[re: 谢谢] 支架11月28日发货。')
+  assert.equal(cleanSupplierReply('See below.\nOn Mon, 17 Nov 2026, Daniel wrote:\n| Brackets? Promised 12 Nov.\n| Thanks\n\n28 November.').text, 'See below.\n\n[re: Thanks] 28 November.')
+  // A quote that is all quoted lines, or an earlier message not quoted line by line, is cut as before.
+  assert.equal(cleanSupplierReply('Balance on 30 Nov.\nOn Mon, 17 Nov 2026, Daniel wrote:\n> Brackets?\n> Hinges?').text, 'Balance on 30 Nov.')
+  assert.equal(cleanSupplierReply('Balance on 30 Nov.\n\nFrom: Daniel <daniel@example.com>\nSent: 17 November 2026 10:00\nPlease confirm by 12 November.\n\n28 November is fine?').text, 'Balance on 30 Nov.')
+  assert.equal(cleanSupplierReply('Balance on 30 Nov.\n-----Original Message-----\n> Brackets?\n> Hinges?\n\n28 November.').text, 'Balance on 30 Nov.')
 })
 
 test('a date the reply gives by another line\'s code or name goes to the person, not to the line the model chose', () => {

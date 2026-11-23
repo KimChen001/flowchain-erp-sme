@@ -12,11 +12,13 @@
 // The steps run without a database given an order snapshot
 // (supplierReplyOrderSchema), for the eval's scorer, from
 // server/domain/supplier-reply-reading.mjs:
-//   cleanSupplierReply(text)
-//     -> { text, quoted, quotedTextHidden, invisibleRemoved }
+//   cleanSupplierReply(text, { sent? })
+//     -> { text, quoted, quotedTextHidden, invisibleRemoved, inlineAnswers, inline, inlineFrom }
+//        (sent: our sent chase; inline: the answers read from inside the
+//        quoted email, as they stand in text; inlineFrom: where they start)
 //   readSupplierReply({ order, text, receivedOn, today, callModel, reserve? })
 //     -> { readingStatus, reading, calls, usage }   (callModel is injected)
-//   checkReplyReading({ order, text, receivedOn, reading })
+//   checkReplyReading({ order, text, receivedOn, reading, inlineFrom? })
 //     -> supplierReplyCheckSchema
 import { z } from 'zod'
 
@@ -81,7 +83,9 @@ export const SUPPLIER_REPLY_DISMISS_REASONS = Object.freeze(['wrong_reading', 's
 //   refused              the reply refuses this date ("cannot ship on 28 Nov",
 //                        "28 Nov is no longer possible", 发不了) and names no other
 //   addressed_to_system  quoted from text addressed to the system (dropped)
-//   line_mismatch        the quote names another line by its code (ours or the
+//   inline_answer        the date was read from an answer inside the quoted
+//                        email: offered to the person, never proposed
+//   line_mismatch       the quote names another line by its code (ours or the
 //                        supplier's) or item name, or its code and name point
 //                        to different lines
 //   ambiguous_weekday    "next Friday" early in a week: that week's Friday or
@@ -101,7 +105,7 @@ export const SUPPLIER_REPLY_DISMISS_REASONS = Object.freeze(['wrong_reading', 's
 //                        or read on more than one order): nothing is
 //                        proposed, every line goes to the person with only
 //                        its quote (the final gate)
-export const SUPPLIER_REPLY_LINE_ISSUES = Object.freeze(['quote_not_found', 'date_mismatch', 'ambiguous_numeric', 'vague', 'relative_unreadable', 'before_reply', 'too_far', 'unknown_line', 'not_open', 'unchanged', 'split_incomplete', 'several_dates', 'refused', 'addressed_to_system', 'line_mismatch', 'ambiguous_weekday', 'other_order_text', 'no_order_part', 'correction_across_orders', 'several_orders'])
+export const SUPPLIER_REPLY_LINE_ISSUES = Object.freeze(['quote_not_found', 'date_mismatch', 'ambiguous_numeric', 'vague', 'relative_unreadable', 'before_reply', 'too_far', 'unknown_line', 'not_open', 'unchanged', 'split_incomplete', 'several_dates', 'refused', 'addressed_to_system', 'inline_answer', 'line_mismatch', 'ambiguous_weekday', 'other_order_text', 'no_order_part', 'correction_across_orders', 'several_orders'])
 // An email that names several orders (supplier-reply-orders.mjs) is read on
 // at most this many of them, the one it was pasted on first.
 export const SUPPLIER_REPLY_EMAIL_ORDER_LIMIT = 5

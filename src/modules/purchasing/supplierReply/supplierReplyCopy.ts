@@ -93,6 +93,7 @@ export const SUPPLIER_REPLY_COPY = {
   issue_before_reply: ["the date is before the reply date", "日期早于回复日期"],
   issue_too_far: ["the date is more than a year after the reply", "日期晚于回复日期一年以上"],
   issue_unknown_line: ["not a line of this order", "不是本订单的行"],
+  issue_inline_answer: ["read from inside the quoted email: check the date and the line", "读自引用邮件内部：请核对日期和对应的行"],
   issue_ambiguous_weekday: ["\"next\" with a weekday can mean this week or next: pick the day", "英文 “next + 星期几” 可能指本周或下周：请选择日期"],
   issue_line_mismatch: ["the reply names another line's item code or name here", "回复此处写的是另一行的物料编码或名称"],
   issue_other_order_text: ["this text is about another order in the same email: nothing is recorded from it here", "这段文字说的是同一封邮件里的另一张订单：这里不记录"],

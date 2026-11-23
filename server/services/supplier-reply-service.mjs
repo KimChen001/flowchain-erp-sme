@@ -25,6 +25,7 @@ import { anthropicMessagesUsage } from '../domain/ai-runtime-provider-specific-a
 import { aiCallCostMicros, aiUsagePrices, recordAiProviderCall } from '../domain/ai-usage-meter.mjs'
 import { withAiWorkspaceAccess } from '../domain/ai-workspace-access.mjs'
 import { addWorkdays } from '../domain/decision-items.mjs'
+import { SUPPLIER_EMAIL_AUDIT_ACTION } from '../domain/supplier-follow-up-email.mjs'
 import { localDevelopmentEnabled } from '../domain/local-development-contract.mjs'
 import { ITEM_SUPPLIER_NAMESPACE, mapItemSupplierRecord } from '../domain/master-data-commands.mjs'
 import { resolveProvisionedActor } from '../domain/pilot-identity.mjs'
@@ -262,7 +263,9 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
     if (receivedOn > today) fail('SUPPLIER_REPLY_RECEIVED_IN_FUTURE', 'The reply cannot be received after today.', 422, [{ field: 'receivedOn' }])
     // An old reply would anchor relative dates in the past (#394 review).
     if (daysBetween(receivedOn, today) > SUPPLIER_REPLY_RECEIVED_WITHIN_DAYS) fail('SUPPLIER_REPLY_RECEIVED_TOO_EARLY', `The reply must be received within the last ${SUPPLIER_REPLY_RECEIVED_WITHIN_DAYS} days.`, 422, [{ field: 'receivedOn' }])
-    const cleaned = cleanSupplierReply(input.text)
+    // Our sent chase on this order: its lines are never read as the supplier's answers.
+    const chases = await client.auditLog.findMany({ where: { tenantId: actor.tenantId, action: SUPPLIER_EMAIL_AUDIT_ACTION, entityId: order.id }, orderBy: { createdAt: 'desc' }, take: 5, select: { metadata: true } })
+    const cleaned = cleanSupplierReply(input.text, { sent: chases.map((row) => text(row.metadata?.body)).filter(Boolean) })
     if (!cleaned.text) fail('SUPPLIER_REPLY_EMPTY', 'Nothing is left of the reply once the quoted earlier message is removed.', 422, [{ field: 'text' }])
     const skus = await supplierSkusOf(client, actor.tenantId, order)
     const snapshot = supplierReplyOrderSnapshot(order, skus)
@@ -280,7 +283,7 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
     const startedAt = Date.now()
     const read = await readWithModel({ client, context, tenantId: actor.tenantId, snapshot, cleaned, receivedOn, today, signal })
     // The check tells the email's numbers from the same supplier orders.
-    const check = read.readingStatus === 'read' ? checkReplyReading({ order: snapshot, text: cleaned.text, receivedOn, reading: read.reading, orderNumbers: known }) : null
+    const check = read.readingStatus === 'read' ? checkReplyReading({ order: snapshot, text: cleaned.text, receivedOn, reading: read.reading, orderNumbers: known, inlineFrom: cleaned.inlineFrom }) : null
     const state = check ? check.state : 'needs_you'
     const id = idFactory()
     const open = SUPPLIER_REPLY_OPEN_STATES.includes(state)
@@ -302,7 +305,7 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
             id, tenantId: actor.tenantId, purchaseOrderId: order.id, supplierId: text(order.supplierId) || null, activeKey: active ? order.id : null,
             source: 'paste', receivedOn, text: cleaned.text, quotedTextHidden: cleaned.quotedTextHidden, quotedText: cleaned.quoted, state, readingStatus: read.readingStatus,
             provider: read.provider || null, model: read.model || null, promptVersion: read.promptVersion || null, reading: read.reading || null, check: check || null,
-            usage: { calls: read.calls, inputTokens: read.usage?.inputTokens || 0, outputTokens: read.usage?.outputTokens || 0, ms: Date.now() - startedAt, invisibleRemoved: cleaned.invisibleRemoved, issues: read.issues || null },
+            usage: { calls: read.calls, inputTokens: read.usage?.inputTokens || 0, outputTokens: read.usage?.outputTokens || 0, ms: Date.now() - startedAt, invisibleRemoved: cleaned.invisibleRemoved, inlineAnswers: cleaned.inlineAnswers || 0, issues: read.issues || null },
             instructionsIgnored: supplierReplyInstructionsIgnored(input.text), createdById: actor.user.id,
           },
         })
@@ -360,7 +363,7 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
     const startedAt = Date.now()
     const readings = await Promise.all(toRead.map(async (target) => {
       const read = await readWithModel({ client, context, tenantId: actor.tenantId, snapshot: target.snapshot, cleaned, receivedOn, today, signal })
-      const check = read.readingStatus === 'read' ? checkReplyReading({ order: target.snapshot, text: cleaned.text, receivedOn, reading: read.reading, emailRead, orderNumbers: known }) : null
+      const check = read.readingStatus === 'read' ? checkReplyReading({ order: target.snapshot, text: cleaned.text, receivedOn, reading: read.reading, emailRead, orderNumbers: known, inlineFrom: cleaned.inlineFrom }) : null
       return { ...target, read, check, ms: Date.now() - startedAt, id: idFactory() }
     }))
     const email = {
