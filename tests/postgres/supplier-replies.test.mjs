@@ -371,6 +371,15 @@ test('an email naming several orders: read on each open order of its supplier by
     assert.deepEqual(again.emailOrders.find((item) => item.number === 'PO-202611-0021'), { number: 'PO-202611-0021', status: 'open_card_kept' })
     const keptOnE2 = (await service.listReplies('PO-E2', buyer)).replies
     assert.deepEqual(keptOnE2.filter((one) => ['proposed', 'needs_you'].includes(one.state)).map((one) => [one.id, one.state]), [[single.id, 'proposed']])
+    // An order named by its sequence alone is looked up among the supplier's
+    // orders: on PO-E2, "Order 13" is the open PO-E (PO-202611-0013), so
+    // every line goes to the person; "Order 22" is the closed PO-E3, so the
+    // date is proposed as before.
+    answers['PO-202611-0021'] = { replyKind: 'dates', lines: [{ line: 'L1', date: second, quote: `the springs ship on ${second}`, dateKind: 'stated' }], flags: [], reason: null }
+    const bySequence = (await service.pasteReply('PO-E2', { text: `Order 13:\nthe springs ship on ${second}.` }, buyer)).reply
+    assert.deepEqual([bySequence.state, bySequence.lines.map((line) => [line.outcome, line.issue, line.proposedDate])], ['needs_you', [['needs_you', 'other_order_number', null]]])
+    const closedOne = (await service.pasteReply('PO-E2', { text: `Order 22:\nthe springs ship on ${second}.` }, buyer)).reply
+    assert.deepEqual([closedOne.state, closedOne.lines.map((line) => [line.outcome, line.proposedDate])], ['proposed', [['proposed', second]]])
   } finally {
     await prisma.$disconnect()
   }

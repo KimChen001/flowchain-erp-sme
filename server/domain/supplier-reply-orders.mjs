@@ -394,3 +394,89 @@ export function otherOrderNumberWritten(text, number) {
   }
   return null
 }
+
+// Another of the supplier's orders named by its sequence alone, which only
+// the supplier's own orders can tell from a count or a label (the misses
+// left after #461's review; coordinator, 11/23): "Order 14", "order #14",
+// "Order No. 0014", "Purchase order 14", 订单14, 订单号 14, 采购单14, 第14号单,
+// 14号单; a bare "#14" or "No. 14" standing as a label ("#14:", "(#14)", a
+// line of its own); or the whole number with no separator and no prefix
+// (2026110014). Not the supplier's own order or another kind of order (our
+// order 14, 我方订单 14, sales order 14, change order #12, work order 14), a
+// count, a share, an amount or a date (order 14 pcs, 订单 14 件, order 1 of
+// 2, order 14 Nov), a year or a month (order 2026 pricing), a bare "#1" or
+// "No. 3" inside a sentence (#1 priority, item #3, Item No. 14), nor a
+// number on the next line ("order:" then "1"). A one-digit sequence counts
+// only written with zeros (Order 0003, #003): "Order #1", "No. 1" are far
+// more often a list's numbering (Enron pilot: an order summary's "Order #1:").
+//
+// orderSequenceMentions returns each such mention ({ text, seq } or, for the
+// whole number, { text, month, seq }); the service looks the supplier's
+// orders up only when there is one. knownOrderSequenceWritten counts a
+// mention only when an open order of the supplier other than this one has
+// that sequence (in any month: two months with one sequence is a question
+// for the person too), or is that whole number. Returns the mention as
+// written, or null.
+const OWN_SIDE_BEFORE = /(?:^|[^\p{L}])(?:our|my|sales|supplier'?s?|change|work|back|standing|money|sell|buy|limit|market|stop|court|executive|restraining|gag|mail|postal|pecking)\s*$|(?:我方|我司|我们的?|销售)\s*$/iu
+// Tested on the line before the mention only, with one flat character class
+// (a nested repeat backtracked without end on long "-----" or ">>>>" lines).
+const BARE_LABEL_BEFORE = /^[-*•·>|–—_`[【(（<\t ]*(?:(?:re|for|about|关于)[\t ]*:?[\t ]*)?$/iu
+const BARE_LABEL_AFTER = /^[\t ]*(?:[:：]|[)\]】）>*_`|]|[.。]?[\t ]*(?:\n|$))/u
+const YEAR_OR_MONTH = (digits) => (digits.length === 4 && /^(?:19|20)\d{2}$/.test(digits)) || (digits.length === 6 && /^(?:19|20)\d{2}(?:0[1-9]|1[0-2])$/.test(digits))
+export function orderSequenceMentions(text) {
+  const source = String(text ?? '').replace(NBSP, ' ').normalize('NFKC').replace(OTHER_DASHES, '-')
+  const out = []
+  const end = '(?!\\p{N}|\\s*[-_./]\\s*\\d|\\.[\\p{L}\\p{N}]|@|-\\p{L})'
+  const take = (written, digits, at, before) => {
+    if (YEAR_OR_MONTH(digits) || digits.length === 1) return
+    if (COUNT_OR_DATE_AFTER.test(source.slice(at))) return
+    if (OWN_SIDE_BEFORE.test(before.slice(-30))) return
+    out.push({ text: written, seq: Number(digits) })
+  }
+  // An order word, a label, a sequence.
+  const worded = new RegExp(`(?<![\\p{L}\\p{N}])(?:purchase[\\t ]+)?orders?(?:[\\t ]*(?:no|nr|num|number)\\.?)?[\\t ]*[-#:.]*[\\t ]*(\\d{1,6})${end}`, 'giu')
+  for (const match of source.matchAll(worded)) take(match[0], match[1], match.index + match[0].length, source.slice(0, match.index))
+  const chinese = new RegExp(`(?:订单|采购单|(?<![送发运提价流递产工货箱售])单号)号?[\\t ]*[-#:：.]*[\\t ]*(\\d{1,6})${end}`, 'gu')
+  for (const match of source.matchAll(chinese)) take(match[0], match[1], match.index + match[0].length, source.slice(0, match.index))
+  for (const match of source.matchAll(/(?<![\p{N}])第?[\t ]*(\d{1,6})[\t ]*号单(?![据独价位元次])/gu)) take(match[0], match[1], match.index + match[0].length, source.slice(0, match.index))
+  // A bare "#14" or "No. 14" only as a label.
+  for (const match of source.matchAll(new RegExp(`(?<![\\p{L}\\p{N}#])(?:#|no\\.?|nr\\.?)[\\t ]*(\\d{1,6})${end}`, 'giu'))) {
+    const before = source.slice(0, match.index)
+    const at = match.index + match[0].length
+    const lineBefore = before.slice(before.lastIndexOf('\n') + 1).replace(/<b>/gi, ' ')
+    if (!BARE_LABEL_BEFORE.test(lineBefore) || !BARE_LABEL_AFTER.test(source.slice(at))) continue
+    take(match[0], match[1], at, before)
+  }
+  // A list that abbreviates the next number to its sequence, after a number
+  // in the numbering: "PO-202611-0021/0014", "PO-202611-0021 and -0014".
+  for (const match of source.matchAll(/(?<![\p{L}\p{N}])[A-Za-z][A-Za-z0-9]{0,9}-\d{6}-\d{4,6}((?:[\t ]*(?:[/&,、]|and|also|和|及|与)[\t ]*[-/#]?[\t ]*\d{3,6}(?!\p{N}|\s*[-./]\s*\d))+)/giu)) {
+    const at = match.index + match[0].length
+    if (COUNT_OR_DATE_AFTER.test(source.slice(at))) continue
+    for (const one of match[1].matchAll(/(\d{3,6})/g)) if (!YEAR_OR_MONTH(one[1])) out.push({ text: one[0], seq: Number(one[1]) })
+  }
+  // The whole number, no separator, no prefix: YYYYMM and a 4–6 digit sequence.
+  for (const match of source.matchAll(/(?<![\p{L}\p{N}+])((?:19|20)\d{2}(?:0[1-9]|1[0-2]))(\d{4,6})(?![\p{N}])/gu)) {
+    const words = source.slice(0, match.index).split(/[\d\n,;!?。，；！？(（]/u).pop()
+    const other = lastEnd(OTHER_DOCUMENT_WORD, words)
+    if (other >= 0 && other >= lastEnd(ORDER_WORD, words)) continue
+    // A phone or fax number.
+    if (/(?:^|[^\p{L}])(?:tel|phone|mobile|mob|cell|fax|whatsapp)(?![\p{L}])|电话|手机|传真|微信/iu.test(words)) continue
+    out.push({ text: match[0], month: match[1], seq: Number(match[2]) })
+  }
+  return out
+}
+export function knownOrderSequenceWritten(text, number, supplierOrders, openStates) {
+  const own = parsed(number)
+  if (!own || !Array.isArray(supplierOrders) || !supplierOrders.length) return null
+  const open = new Set(Array.isArray(openStates) ? openStates : [])
+  const others = supplierOrders
+    .map((row) => ({ order: parsed(row?.number), status: String(row?.status ?? '') }))
+    .filter(({ order, status }) => order && order.prefix === own.prefix && order.number !== own.number && open.has(status))
+    .map(({ order }) => order)
+  if (!others.length) return null
+  for (const mention of orderSequenceMentions(text)) {
+    const hit = mention.month ? others.some((order) => order.month === mention.month && order.seq === mention.seq) : others.some((order) => order.seq === mention.seq)
+    if (hit) return mention.text
+  }
+  return null
+}

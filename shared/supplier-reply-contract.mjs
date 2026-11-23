@@ -103,7 +103,9 @@ export const SUPPLIER_REPLY_DISMISS_REASONS = Object.freeze(['wrong_reading', 's
 //                        its quote (the final gate)
 //   other_order_number   an email read as about this order alone also writes
 //                        another order's number in a form the numbering
-//                        does not see ("PO No. 202611-0014:", PO号：0014):
+//                        does not see ("PO No. 202611-0014:", PO号：0014),
+//                        or names another open order of the supplier by its
+//                        sequence alone ("Order 14", 订单14, "#14:"):
 //                        nothing is proposed, every line goes to the person
 //                        with only its quote (the one-order path's gate)
 export const SUPPLIER_REPLY_LINE_ISSUES = Object.freeze(['quote_not_found', 'date_mismatch', 'ambiguous_numeric', 'vague', 'relative_unreadable', 'before_reply', 'too_far', 'unknown_line', 'not_open', 'unchanged', 'split_incomplete', 'several_dates', 'refused', 'addressed_to_system', 'line_mismatch', 'ambiguous_weekday', 'other_order_text', 'no_order_part', 'correction_across_orders', 'several_orders', 'other_order_number'])

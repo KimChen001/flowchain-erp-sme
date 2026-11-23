@@ -29,7 +29,7 @@ import { localDevelopmentEnabled } from '../domain/local-development-contract.mj
 import { ITEM_SUPPLIER_NAMESPACE, mapItemSupplierRecord } from '../domain/master-data-commands.mjs'
 import { resolveProvisionedActor } from '../domain/pilot-identity.mjs'
 import { procurementReadAccessFor } from '../domain/procurement-read-access.mjs'
-import { emailOrdersToRead, orderNumberVariants, orderNumbersNamed } from '../domain/supplier-reply-orders.mjs'
+import { emailOrdersToRead, orderNumberVariants, orderNumbersNamed, orderSequenceMentions } from '../domain/supplier-reply-orders.mjs'
 import { SUPPLIER_REPLY_ORDER_STATES, checkReplyReading, cleanSupplierReply, daysBetween, readSupplierReply, supplierReplyInstructionsIgnored, supplierReplyPromptTokens } from '../domain/supplier-reply-reading.mjs'
 import { tenantCalendarDay } from '../domain/tenant-calendar-day.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
@@ -270,17 +270,24 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
     // order named, the paste is read as before. An order number written
     // another way (PO 202611-0013, 0013) counts when it matches exactly one
     // of the supplier's orders.
-    const known = orderNumberVariants(cleaned.text, snapshot.number) && text(order.supplierId)
+    // An order named by its sequence alone ("Order 14", 订单14) is checked
+    // against the supplier's open orders (knownOrderSequenceWritten), from the
+    // same lookup with each order's status.
+    const variants = orderNumberVariants(cleaned.text, snapshot.number)
+    const bySequence = orderSequenceMentions(cleaned.text).length > 0
+    const supplierRows = (variants || bySequence) && text(order.supplierId)
       // Closed orders stay in: they are other orders too. Newest first, in a
       // stable order, so the same 500 are matched on every paste.
-      ? (await client.purchaseOrder.findMany({ where: { tenantId: actor.tenantId, supplierId: text(order.supplierId) }, select: { number: true }, orderBy: [{ number: 'desc' }, { id: 'asc' }], take: 500 })).map((row) => text(row.number)).filter(Boolean)
+      ? (await client.purchaseOrder.findMany({ where: { tenantId: actor.tenantId, supplierId: text(order.supplierId) }, select: { number: true, status: true }, orderBy: [{ number: 'desc' }, { id: 'asc' }], take: 500 })).filter((row) => text(row.number))
       : []
+    const known = variants ? supplierRows.map((row) => text(row.number)) : []
+    const supplierOrders = bySequence ? supplierRows.map((row) => ({ number: text(row.number), status: text(row.status) })) : null
     const named = orderNumbersNamed(cleaned.text, snapshot.number, known)
     if (named.length >= 2) return pasteSeveral({ client, actor, access, context, order, snapshot, skus, cleaned, input, receivedOn, today, named, known, signal })
     const startedAt = Date.now()
     const read = await readWithModel({ client, context, tenantId: actor.tenantId, snapshot, cleaned, receivedOn, today, signal })
     // The check tells the email's numbers from the same supplier orders.
-    const check = read.readingStatus === 'read' ? checkReplyReading({ order: snapshot, text: cleaned.text, receivedOn, reading: read.reading, orderNumbers: known }) : null
+    const check = read.readingStatus === 'read' ? checkReplyReading({ order: snapshot, text: cleaned.text, receivedOn, reading: read.reading, orderNumbers: known, supplierOrders }) : null
     const state = check ? check.state : 'needs_you'
     const id = idFactory()
     const open = SUPPLIER_REPLY_OPEN_STATES.includes(state)

@@ -2,7 +2,7 @@
 // the text each order owns, and which named orders are read.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { emailOrdersToRead, emailParts, orderNumberPrefix, orderNumbersNamed, otherOrderNumberWritten } from './supplier-reply-orders.mjs'
+import { emailOrdersToRead, emailParts, knownOrderSequenceWritten, orderNumberPrefix, orderNumbersNamed, orderSequenceMentions, otherOrderNumberWritten } from './supplier-reply-orders.mjs'
 
 const A = 'PO-202611-0012'
 const B = 'PO-202611-0013'
@@ -228,4 +228,44 @@ test('another order\'s number in a form the numbering does not see is found; thi
   ]) assert.equal(otherOrderNumberWritten(text, on), null, text)
   // Only for a number in the numbering format.
   assert.equal(otherOrderNumberWritten('PO No. 202611-0014', 'ACME-17'), null)
+})
+
+test('an order named by its sequence alone counts only when the supplier has another open order with that sequence (after #461\'s review)', () => {
+  const on = 'PO-202611-0021'
+  const OPEN = ['issued', 'partially_received']
+  const open = (...numbers) => numbers.map((number) => ({ number, status: 'issued' }))
+  const supplier = [...open(on, 'PO-202611-0001', 'PO-202611-0003', 'PO-202611-0014', 'PO-202611-0030', 'PO-202611-0200', 'PO-202611-1200'), { number: 'PO-202610-0014', status: 'received' }]
+  // The review's misses that name the other order by its sequence.
+  for (const text of ['Order 14:', 'order #14:', 'Order No. 14:', 'Order 0014:', 'your order 0014:', 'Purchase order 14:', 'Purchase Order No. 0014:', '订单14：', '订单号14：', '订单 0014：', '第14号单：', '14号单：', '采购单14：',
+    '#14:', '#0014:', 'No. 14:', 'No. 0014:', '(#14)', '2026110014:', `${on}/0014:`, `${on} and -0014:`, `${on} also /0014:`, 'Order 0003:', '#003:']) {
+    assert.ok(orderSequenceMentions(text).length, `mention: ${text}`)
+    assert.ok(knownOrderSequenceWritten(text, on, supplier, OPEN), text)
+  }
+  // Not an order of ours by its sequence: the coordinator's counter-examples
+  // (the supplier has open orders 1, 3, 14, 30, 200 and 1200), more counts,
+  // ranks, item and document numbers, other kinds of order, the supplier's
+  // own order, a number on the next line, and the Enron pilot's shapes.
+  for (const text of ['PO 30% deposit received.', '#1 priority for us.', 'Item #3 is the same as last time.', '订单 14 件已备好。', 'Your PO: 1,200 pcs.',
+    'Order 1 of 2 shipped.', 'Order 14 pcs packed.', 'An order of 14 units.', 'Please order 30 days ahead.', 'Order 14 Nov received.', 'order 14/11', 'Order 2026 pricing holds.', '订单14天内发出。', '订单3款产品均已备好。', '订单 30% 定金已收。',
+    'Our order 14 refers.', 'Sales order 14 refers.', '我方订单14。', 'Change Order #14, Rev 6', 'Work order 14 closed.', 'Back order 14.',
+    'Item No. 14:', 'Line #3: same as before.', 'Ticket #14 closed.', 'We are your #1 supplier.', '#30 bolts in stock.', 'Size #14 in stock.', '12月14号单独发货。', '1号楼3号门。',
+    'Order #1: (Order #105-4008195-1643924)', 'Order #3', 'No. 1:', 'order:\n\n14', 'orders.\n\n30', 'Tel 2026110014.', 'Invoice 2026110014 attached.', `${on}, 1,200 pcs`]) {
+    assert.equal(knownOrderSequenceWritten(text, on, supplier, OPEN), null, text)
+  }
+  // Only an open order of the supplier's other than this one counts; this
+  // order's own sequence counts when another month's open order has it too.
+  assert.equal(knownOrderSequenceWritten('Order 14:', on, [{ number: 'PO-202611-0014', status: 'received' }], OPEN), null)
+  assert.equal(knownOrderSequenceWritten('Order 14:', on, open('PO-202611-0015'), OPEN), null)
+  assert.equal(knownOrderSequenceWritten('Order 14:', on, open('INV-202611-0014'), OPEN), null)
+  assert.equal(knownOrderSequenceWritten('Order 14:', on, [], OPEN), null)
+  assert.equal(knownOrderSequenceWritten('Order 14:', on, null, OPEN), null)
+  assert.equal(knownOrderSequenceWritten('Order 21:', on, open(on), OPEN), null)
+  assert.equal(knownOrderSequenceWritten('Order 21:', on, open(on, 'PO-202610-0021'), OPEN), 'Order 21')
+  assert.ok(knownOrderSequenceWritten('Order 14:', on, open('PO-202609-0014'), OPEN))
+  // The whole number counts only as that exact order.
+  assert.equal(knownOrderSequenceWritten('2026110014:', on, open('PO-202610-0014'), OPEN), null)
+  // A long run of list marks or quote marks before a number is quick.
+  const started = Date.now()
+  orderSequenceMentions(`${'-'.repeat(20000)}x #14\n${'>'.repeat(20000)} No. 14`)
+  assert.ok(Date.now() - started < 500)
 })

@@ -27,7 +27,7 @@ export async function runSupplierReplyCase(kase, callModel) {
   const cleaned = cleanSupplierReply(kase.replyText)
   const read = await readSupplierReply({ order: kase.order, text: cleaned.text, receivedOn: kase.replyDate, today: kase.today, callModel })
   const check = read.readingStatus === 'read'
-    ? checkReplyReading({ order: kase.order, text: cleaned.text, receivedOn: kase.replyDate, reading: read.reading, emailRead: kase.emailRead })
+    ? checkReplyReading({ order: kase.order, text: cleaned.text, receivedOn: kase.replyDate, reading: read.reading, emailRead: kase.emailRead, supplierOrders: kase.supplierOrders ?? null })
     : null
   // The card's "not followed" notice, set from the raw paste as the server sets it.
   return { cleaned, read, check, instructionsIgnored: supplierReplyInstructionsIgnored(kase.replyText) }
