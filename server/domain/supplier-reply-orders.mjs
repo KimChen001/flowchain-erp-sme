@@ -85,8 +85,10 @@ function tokensIn(source, prefix, known) {
   // A short form: PO 13, PO-0013, PO#13.
   for (const match of source.matchAll(new RegExp(`\\b${prefix}\\s*[-#.:]?\\s*(\\d{1,6}?)${stop}`, 'gi'))) add(match, null, match[1], true)
   // A label and a number: order no. 13, order #13, 订单号 0013, 订单 0013.
-  // Not a date written after it (订单12月5日发货).
-  for (const match of source.matchAll(/(?:\border\s*(?:no\.?|number|#)|采购单号?|订单号?|单号)\s*[:#]?\s*(\d{1,6})(?![\d月日号年/.-])/gi)) add(match, null, match[1], match[1].length === length && match[1].startsWith('0'))
+  // Not a date written after it (订单12月5日发货). Nor a count: a unit after
+  // the number (订单 7 天内, 订单3个品项, order no. 3 items) is no order (third
+  // #449 review: S07 dropped a correct date as closed order 0007's).
+  for (const match of source.matchAll(/(?:\border\s*(?:no\.?|number|#)|采购单号?|订单号?|单号)\s*[:#]?\s*(\d{1,6})(?![\d月日号年/.-])(?!\s*(?:天|个|件|箱|日内|周|days?\b|items?\b|pcs\b|pieces\b|units?\b|weeks?\b))/gi)) add(match, null, match[1], match[1].length === length && match[1].startsWith('0'))
   // A bare sequence with leading zeros: 0013.
   for (const match of source.matchAll(/(?<![\w-])0\d{3,5}(?![\w-])/g)) add(match, null, match[0], false)
   return out.sort((a, b) => a.index - b.index)

@@ -158,3 +158,12 @@ test('an order number written straight before a date stops at the numbering\'s l
   assert.deepEqual(orderNumbersNamed(`PO-202611-00125 and ${B}`, A, [A, B, 'PO-202611-00125']), ['PO-202611-00125', B])
   assert.deepEqual(runsOf(`${A}12月4日发货。\n${B}12月9日发货。`).map(([owners]) => owners), [A, B])
 })
+
+test('a count after an order label is no order number: 订单 7 天内, 订单3个品项, order no. 3 items (third review S07, W17, W19)', () => {
+  const known = ['PO-202611-0021', 'PO-202610-0007', 'PO-202611-0003', 'PO-202611-0010']
+  for (const text of ['订单 7 天内发货。', '订单3个品项都在12月9日发货。', '订单10天内全部发出：', 'Order no. 3 items ship on 9 December.', 'order #10 pcs follow']) {
+    assert.deepEqual(orderNumbersNamed(`PO-202611-0021：\n${text}`, 'PO-202611-0021', known), ['PO-202611-0021'], text)
+  }
+  // A number that is an order's still is.
+  assert.deepEqual(orderNumbersNamed('PO-202611-0021：\n订单 0003：12月9日发货。', 'PO-202611-0021', known), ['PO-202611-0021', 'PO-202611-0003'])
+})
