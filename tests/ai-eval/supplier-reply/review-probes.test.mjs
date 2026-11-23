@@ -137,6 +137,35 @@ test('on the one-order path the other-order-number gate only adds holds, and an 
       run(`${kase.id} [${way}]`, { order: kase.order, text, receivedOn: kase.replyDate, reading: { replyKind: 'dates', lines, flags: [], reason: null } })
     }
   }
+  // The second #461 review's forms, on round 3's order A (PO-202611-0021):
+  // another order's number after A's own block holds every line; a number
+  // that is not another order's leaves A's date proposed.
+  const { A: onA, H074, H110, H437, L: line } = ROUND_3
+  const three = [line('L1', '2026-12-03', `${H074} ships on 3 December.`), line('L2', '2026-12-09', `${H110} ships on 9 December.`), line('L3', '2026-12-10', `${H437} ships on 10 December.`)]
+  const orderA = { ...ROUND_3.ORDERS[onA], status: 'issued' }
+  let notOrders = 0
+  for (const form of ['PO-2026-11-0014', 'PO 2026/11/0014', 'PO 2026 11 0014', 'PO2026110014', 'PO 202611-14', 'P.O. 14', 'P/O 14', 'POs 21 & 14', '<b>PO&nbsp;14</b>', '_PO 14_', 'PO No. 202611-0014', '订单号：202611-0014', 'PO号：0014']) {
+    const text = cleanSupplierReply(`Hi Kim,\n${onA}:\n${H074} ships on 3 December.\n${form}:\n${H110} ships on 9 December.\n${H437} ships on 10 December.`).text
+    for (const [way, orderNumbers] of [['list', ROUND_3.LIST], ['nothing', []]]) {
+      if (emailParts(text, onA, orderNumbers) !== null) continue
+      const at = `review form ${JSON.stringify(form)} [${way}]`
+      assert.ok(otherOrderNumberWritten(text, onA), at)
+      run(at, { order: orderA, text, receivedOn: ROUND_3.RECEIVED, reading: { replyKind: 'dates', lines: three, flags: [], reason: null }, emailRead: [], orderNumbers })
+    }
+  }
+  for (const extra of ['送货单号：202611-0102。', '物流单号 202611-0102。', 'Sales order 202611-0033 refers.', 'Our order no. 202611-0033 refers.', 'Packing list 202611-0102 attached.', 'PO 30% deposit received.', 'PO 1,200 pcs packed.', 'PO 2nd shipment.', 'PO 18 Nov received.', 'PO 3款产品均已备好。', 'PO 2026 pricing holds.', 'P.O. 834, Lombard, IL 60148-0834', 'Shanghai 201203 021-5080 1234']) {
+    const text = cleanSupplierReply(`Hi Kim,\n${onA}: ${H074} ships on 3 December.\n${extra}`).text
+    const at = `not another order ${JSON.stringify(extra)}`
+    assert.equal(otherOrderNumberWritten(text, onA), null, at)
+    // Some take the several-order path as on main (PO 30% reads as order
+    // 0030 there); that path is not this gate's.
+    if (emailParts(text, onA, ROUND_3.LIST) !== null) continue
+    notOrders += 1
+    const args = { order: orderA, text, receivedOn: ROUND_3.RECEIVED, reading: { replyKind: 'dates', lines: [three[0]], flags: [], reason: null }, emailRead: [], orderNumbers: ROUND_3.LIST }
+    run(at, args)
+    assert.deepEqual(checkReplyReading(args).lines.map((row) => [row.outcome, row.proposedDate]), [['proposed', '2026-12-03']], at)
+  }
+  assert.ok(notOrders >= 7, `${notOrders} number words that are not another order's, on the one-order path`)
   // Not vacuous: the W02-type emails are gated, and the rest still proposes.
   assert.ok(gated >= 21, `${gated} checks gated`)
   assert.ok(checks >= 130 && proposedUngated >= 60, `${checks} one-order checks, ${proposedUngated} ungated with a proposal`)

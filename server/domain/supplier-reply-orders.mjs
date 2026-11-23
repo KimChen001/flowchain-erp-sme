@@ -305,50 +305,92 @@ export function emailOrdersToRead({ named, pastedOn = null, orders, supplier = n
 // Returns the number as written, or null.
 //
 // It counts when it looks like an order number of this workspace:
-//   - a month and a sequence (YYYYMM, a dash, slash, dot or space, then
-//     3–6 digits), unless the number is glued to another document's code
+//   - a month and a sequence: YYYYMM, or YYYY and MM apart (2026-11,
+//     2026/11, 2026 11), then a dash, slash or space and 3–6 digits;
+//     unless the number is glued to another document's code
 //     (INV-202611-0014, SO202611-0014) or labelled as another document
-//     (Invoice No. 202611-0014, 发票号 202611-0014) with no order word in
-//     that label;
-//   - this order's prefix (or P0 for PO) and a short sequence, not a count
-//     or a date (PO号：0014, PO 14; not PO 3 items, PO 12月5日).
-// The order the reply is read on, in any of these forms, does not count.
+//     (Invoice No. 202611-0014, 送货单号 202611-0102, Sales order …, 我方订单号
+//     …), the nearer label word deciding (Invoice for PO No. 202611-0014 is
+//     an order);
+//   - after this order's prefix (PO, P.O., P/O, POs, P0): a month and a
+//     sequence of 1–6 digits (PO 202611-14), or with no separator at all
+//     (PO2026110014);
+//   - this order's prefix and a short sequence, not a count, a share, an
+//     amount or a date (PO号：0014, PO 14, POs 21 & 14; not PO 3 items, PO 30%
+//     deposit, PO 1,200 pcs, PO 2nd shipment, PO 18 Nov, PO 3款, PO 2026
+//     pricing), nor an address (P.O. 834, Lombard, IL 60148).
+// The order the reply is read on, in any of these forms, does not count;
+// neither does a number inside a web or mail address (p04.com).
 const OTHER_DASHES = /[‐-―−﹘﹣]/g
-const ORDER_WORD = /(?:^|[^\p{L}])(?:p\.?\s*[o0]\.?|orders?|purchase\s+orders?)(?![\p{L}])|订单|采购单|单号|po号/iu
-const OTHER_DOCUMENT_WORD = /(?:^|[^\p{L}])(?:invoices?|inv|bills?|receipts?|delivery\s+notes?|dn|dispatch|shipments?|tracking|awb|waybills?|b\/l|bol|quotes?|quotations?|contracts?)(?![\p{L}])|发票|收据|送货单|发货单|运单|提单|报价|合同/iu
-const COUNT_OR_DATE_AFTER = /^\s*(?:[月日号年天个件箱周]|(?:days?|items?|pcs|pieces?|units?|weeks?|lines?|boxes|cartons?|pallets?)(?![\p{L}]))/iu
+const NBSP = /&nbsp;|&#160;|&#xa0;/gi
+// Label words before a number. 单号 alone is an order's, not inside another
+// document's number word (送货单号, 运单号, 物流单号; second #461 review).
+const ORDER_WORD = /(?:^|[^\p{L}])(?:p\s*[./]?\s*[o0]\.?s?|orders?|purchase\s+orders?)(?![\p{L}])|订单|采购单|(?<![送发运提价流递产工货箱售])单号|po号/giu
+// The supplier's own order, and other documents.
+const OTHER_DOCUMENT_WORD = /(?:^|[^\p{L}])(?:sales\s+orders?|our\s+orders?|s\/o|so|invoices?|inv|bills?|receipts?|delivery(?:\s+notes?)?|dn|dispatch|shipments?|tracking|awb|waybills?|b\/l|bol|quotes?|quotations?|contracts?|packing\s+lists?|pl|pi|proforma|lots?|batch(?:es)?|credit\s+notes?|cn|coa|certificates?|drawings?|p\/n|parts?|rma|asn|containers?|jobs?)(?![\p{L}])|我方订单号?|我司订单号?|销售订单号?|销售单号?|发票|收据|送货单|发货单|运单|提单|报价|合同|批号|批次|装箱单|出货单|生产单|工单|物流单|快递单/giu
+// After a short number: a count, a share, an amount, an ordinal or a date.
+const COUNT_OR_DATE_AFTER = /^\s*(?:[月日号年天个件箱周款套批卷包只台米吨张条双对份次种托柜]|%|,\d{3}|(?:st|nd|rd|th)(?![\p{L}])|(?:days?|items?|pcs|pieces?|units?|weeks?|lines?|boxes|cartons?|pallets?|sets?|pairs?|rolls?|sheets?|kgs?|tons?|meters?|metres?|shipments?|containers?|batch(?:es)?|lots?|sizes?|colou?rs?|skus?|of|usd|eur|rmb|cny|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec|january|february|march|april|june|july|august|september|october|november|december)(?![\p{L}]))/iu
+const US_ADDRESS = /\b[A-Z]{2}\s+\d{5}(?:-\d{4})?\b/
 const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const lastEnd = (pattern, value) => {
+  let end = -1
+  for (const match of value.matchAll(pattern)) end = Math.max(end, match.index + match[0].length)
+  return end
+}
 export function otherOrderNumberWritten(text, number) {
   const own = parsed(number)
   if (!own) return null
-  const source = String(text ?? '').normalize('NFKC').replace(OTHER_DASHES, '-')
-  // PO → P.O., P O, P0.
-  const prefix = own.prefix.split('').map((char) => (char === 'O' ? '[O0]' : escapeRegExp(char))).join('\\.?\\s*') + '\\.?'
-  const ownPrefix = new RegExp(`^${prefix}$`, 'i')
-  // A month and a sequence.
-  for (const match of source.matchAll(/(?<!\p{N})((?:19|20)\d{2})(0[1-9]|1[0-2])(?:\s*[-_./]\s*|\s+)(\d{3,6})(?!\p{N})/gu)) {
-    if (match[1] + match[2] === own.month && Number(match[3]) === own.seq) continue
+  const source = String(text ?? '').replace(NBSP, ' ').normalize('NFKC').replace(OTHER_DASHES, '-')
+  const isOwn = (month, seq) => month === own.month && Number(seq) === own.seq
+  // PO → PO, P.O., P/O, P O, P0; and the plural (POs).
+  const prefix = own.prefix === 'PO' ? 'P\\s*[./]?\\s*[O0]\\.?' : own.prefix.split('').map(escapeRegExp).join('\\.?\\s*') + '\\.?'
+  const ownPrefix = new RegExp(`^(?:${prefix})s?$`, 'i')
+  const label = '(?:\\s*(?:no|nr|num|number)\\.?)?\\s*[-_#:.号]*\\s*'
+  const lead = '(?<![\\p{L}\\p{N}./:@-])'
+  // After this order's prefix: a month and a sequence, any separators; a
+  // sequence of 1–2 digits only right after YYYYMM (PO 2026-11-14 is a date).
+  const prefixed = new RegExp(`${lead}(?:${prefix})s?${label}((?:19|20)\\d{2})(?:(?:\\s*[-_./]\\s*|\\s+)?(0[1-9]|1[0-2])(?:\\s*[-_./]\\s*|\\s+)(\\d{3,6})|(0[1-9]|1[0-2])(?:\\s*[-_./]\\s*|\\s+)(\\d{1,2})|(0[1-9]|1[0-2])(\\d{4}))(?!\\p{N}|[-./]\\d)`, 'giu')
+  for (const match of source.matchAll(prefixed)) {
+    const month = match[1] + (match[2] || match[4] || match[6])
+    if (!isOwn(month, match[3] || match[5] || match[7])) return match[0]
+  }
+  // A month and a sequence under any label (not a price: no dot before the
+  // sequence; not a phone number: no further digits after it).
+  for (const match of source.matchAll(/(?<!\p{N})((?:19|20)\d{2})(?:\s*[-_./]\s*|\s+)?(0[1-9]|1[0-2])(?:\s*[-_/]\s*|\s+)(\d{3,6})(?!\p{N}|[-./]\d)/gu)) {
+    if (isOwn(match[1] + match[2], match[3])) continue
     const before = source.slice(0, match.index)
     // A code glued to it (Latin letters, then at most a dash) that is not
     // ours or a label word (No.202611-0014): another document's.
-    const glued = /([A-Za-z][A-Za-z0-9.]*)[-_]?$/.exec(before)
+    const glued = /([A-Za-z][A-Za-z0-9./]*)[-_]?$/.exec(before)
     if (glued && !ownPrefix.test(glued[1]) && !/^(?:no|nr|num|number|order)\.?$/i.test(glued[1])) continue
-    // The label before it, back to a digit or a break in the sentence.
-    const label = before.split(/[\d\n,;!?。，；！？(（]/u).pop()
-    if (!ORDER_WORD.test(label) && OTHER_DOCUMENT_WORD.test(label)) continue
+    // The label before it, back to a digit or a break in the sentence: the
+    // nearer of an order word and another document's word decides.
+    const words = before.split(/[\d\n,;!?。，；！？(（]/u).pop()
+    const other = lastEnd(OTHER_DOCUMENT_WORD, words)
+    if (other >= 0 && other >= lastEnd(ORDER_WORD, words)) continue
     return match[0]
   }
-  // This order's prefix as written plainly (PO, po, P0; not P.O., a box
-  // number) and a short sequence, not inside a web or mail address
-  // (p04.com, Enron pilot).
-  const plain = own.prefix === 'PO' ? '(?:[Pp][Oo]|P0)' : `(?:${escapeRegExp(own.prefix)})`
-  const short = new RegExp(`(?<![\\p{L}\\p{N}./:@_-])${plain}(?:\\s*(?:[Nn][Oo]|[Nn][Rr]|[Nn]umber|NUMBER|[Nn]um)\\.?)?\\s*[-_#:.号]*\\s*(\\d{1,6})(?!\\p{N}|\\s*[-_./]\\s*\\d|\\.[\\p{L}\\p{N}]|@)`, 'gu')
+  // This order's prefix and a short sequence; after POs, each number of the
+  // list (POs 21 & 14). Not a part code (PO14-B bracket).
+  const short = new RegExp(`${lead}(?:${prefix})(s?)${label}(\\d{1,6})(?!\\p{N}|\\s*[-_./]\\s*\\d|\\.[\\p{L}\\p{N}]|@|-\\p{L})`, 'giu')
   for (const match of source.matchAll(short)) {
-    const seq = match[1]
-    if (Number(seq) === own.seq) continue
-    if (seq.length === 6 && /^(?:19|20)\d{2}(?:0[1-9]|1[0-2])$/.test(seq)) continue
-    if (COUNT_OR_DATE_AFTER.test(source.slice(match.index + match[0].length))) continue
-    return match[0]
+    const at = match.index + match[0].length
+    const lineRest = source.slice(at).split('\n')[0]
+    const numbers = [[match[2], at]]
+    if (match[1]) {
+      const list = /^(?:\s*(?:,|&|and|和|与|及|、|\/)\s*#?(\d{1,6})(?!\p{N}))+/iu.exec(source.slice(at))
+      if (list) for (const one of list[0].matchAll(/(\d{1,6})/g)) numbers.push([one[1], at + one.index + one[0].length])
+    }
+    for (const [seq, end] of numbers) {
+      if (Number(seq) === own.seq) continue
+      // A month (PO 202611) or a year (PO 2026 pricing).
+      if (seq.length === 6 && /^(?:19|20)\d{2}(?:0[1-9]|1[0-2])$/.test(seq)) continue
+      if (seq.length === 4 && /^(?:19|20)\d{2}$/.test(seq)) continue
+      if (COUNT_OR_DATE_AFTER.test(source.slice(end))) continue
+      // An address (P.O. 834, Lombard, IL 60148).
+      if (US_ADDRESS.test(lineRest)) continue
+      return match[0]
+    }
   }
   return null
 }
