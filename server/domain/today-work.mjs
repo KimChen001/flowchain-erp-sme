@@ -492,7 +492,9 @@ export function buildTodayWork(sources = {}, { now = new Date(), timeZone = DEFA
   const { asOf, rows } = purchaseOrderSignalRows(reportOrders, now, timeZone)
   // The assistant's signals over the same facts it reads: open purchase
   // orders and stock availability.
-  const signals = buildAiSkillSignals({ asOf, purchaseOrders: { rows }, inventory: { rows: array(sources.allocationRows) } })
+  // The reorder list decides "below the reorder point" for the stock
+  // signals too, as the reorder rows below (product review 2026-11-20, item 8).
+  const signals = buildAiSkillSignals({ asOf, purchaseOrders: { rows }, inventory: { rows: array(sources.allocationRows) }, reorder: sources.reorder ? { rows: array(sources.reorder.rows), notJudged: array(sources.reorder.notJudged) } : null })
   const items = [
     ...purchaseOrderWork(signals, new Map(rows.map((entry) => [entry.id, entry]))),
     ...reorderWork(sources.reorder, stockSignalBySku(signals)),
