@@ -276,6 +276,11 @@ export function aiGroundingSources(results = [], { dayFirst = false } = {}) {
   const months = new Set()
   const names = new Set()
   const nameOrigins = new Map()
+  // The last days of the reorder list's 7- and 30-day windows: not recorded
+  // dates, so they ground only a date the answer says items fall due or must
+  // be ordered by (#404 review: as recorded dates they grounded "PO-…
+  // arrives 27 Nov" too).
+  const windowEnds = new Set()
   const addDates = (value) => {
     for (const match of value.matchAll(/(?<!\d)(\d{4})-(\d{2})(?:-(\d{2}))?(?!\d)/g)) {
       months.add(`${match[1]}-${match[2]}`)
@@ -333,7 +338,12 @@ export function aiGroundingSources(results = [], { dayFirst = false } = {}) {
     }
     if (typeof value === 'boolean') return
     if (Array.isArray(value)) { addCounts(value, parent); for (const item of value) walk(item, key, parent); return }
-    if (typeof value === 'object') for (const [name, entry] of Object.entries(value)) walk(entry, name, value)
+    if (typeof value === 'object') {
+      for (const [name, entry] of Object.entries(value)) {
+        if (name === 'dueWindowEnds' && entry && typeof entry === 'object') { for (const day of Object.values(entry)) if (/^\d{4}-\d{2}-\d{2}$/.test(text(day))) windowEnds.add(text(day)); continue }
+        walk(entry, name, value)
+      }
+    }
   }
   // The counts a list of rows holds without writing them: how many rows share
   // a value (3 of the late orders are Northstar's) or have a flag set (10 of
@@ -389,7 +399,7 @@ export function aiGroundingSources(results = [], { dayFirst = false } = {}) {
     }
   }
   for (const result of array(results)) walk(result)
-  return { haystack: `\n${strings.join('\n')}\n`, numbers, days, months, names: [...names], nameOrigins, onlyArrive: onlyArriveFigures(results) }
+  return { haystack: `\n${strings.join('\n')}\n`, numbers, days, months, windowEnds, names: [...names], nameOrigins, onlyArrive: onlyArriveFigures(results) }
 }
 
 // The fields a list's totals are taken from: quantities and amounts, not
@@ -614,15 +624,136 @@ export function aiGroundingItemNamePairs(body, facts, results) {
 // answer's "about £259" was taken as checked, since the calculation's result
 // was a source). A calculation with an input from nowhere is no source.
 const INPUT_NUMBER = /-?\d[\d,]*(?:\.\d+)?/g
-export function aiCalculationGrounded(input = {}, { results = [], question = '', conversation = '' } = {}) {
-  const values = [...array(input?.values), ...array(input?.calculations).flatMap((entry) => array(entry?.values))].map(Number).filter(Number.isFinite)
-  if (!values.length) return true
+
+// What the user's own words give a calculation, never the model's (only the
+// question the user typed, not the conversation, which holds earlier
+// answers), and only where the words mean it (2026-11-20 question set and
+// its review):
+//   a shift by weeks, as an add_days delta with its direction: "push it back
+//   a week", "if Acme delays another week" (+7), "delay it 3 weeks" (+21),
+//   推迟一周 (+7), 提前一周 (−7). A delay or advance word must come before
+//   the span, so "sell a week", 统一周期, 下周一, 第47周, 十二周 and "1.5
+//   weeks" give nothing, and "this week" names no shift;
+//   a multiple, as a product's factor: "three times the minimum order" (3),
+//   twice, double, triple, 两倍, 三倍, 翻倍. Not "double-check", not a bare
+//   number word ("three suppliers", "top ten").
+// Neither joins the user's figures, and neither gets the ×100 tolerance.
+// What makes a date a reorder window's end: due, order by, reorder.
+const WINDOW_CLAIM = /\bdue\b|\border(?:ed|ing)?(?:-by\b|\b[^.。\n]{0,20}\bby\b)|\breorder|下单|到期|补货|订货|截止/i
+// The sentence around a position in a text.
+function sentenceAt(value, at) {
+  const source = String(value ?? '')
+  const position = Number.isInteger(at) ? at : 0
+  const start = Math.max(...['.', '。', '!', '?', '！', '？', '\n'].map((mark) => source.lastIndexOf(mark, position - 1))) + 1
+  const ends = ['. ', '。', '!', '?', '！', '？', '\n'].map((mark) => source.indexOf(mark, position)).filter((index) => index >= 0)
+  return source.slice(start, ends.length ? Math.min(...ends) : source.length)
+}
+const WEEK_COUNT = Object.freeze({ a: 1, one: 1, another: 1, two: 2, three: 3, four: 4 })
+const WEEK_ZH_COUNT = Object.freeze({ 一: 1, 两: 2, 二: 2, 三: 3, 四: 4 })
+const EARLIER = /^(?:bring|earlier|sooner|ahead|forward|advance)/i
+function weekShiftsIn(question) {
+  const value = text(question)
+  const shifts = []
+  const english = /\b(delay(?:s|ed)?|push(?:es|ed)?|postpone[sd]?|move[sd]?|slip(?:s|ped)?|later|extend(?:s|ed)?|bring|earlier|sooner|ahead|forward|advance[sd]?)\b[^.?!\n]{0,30}?(?<![\d.])\b(a|one|another|two|three|four|\d{1,2})\s+weeks?\b|\b(delay(?:s|ed)?|push(?:es|ed)?|postpone[sd]?|move[sd]?|slip(?:s|ped)?|bring|earlier|sooner|ahead|forward)\b[^.?!\n]{0,30}?\ba\s+fortnight\b/gi
+  for (const match of value.matchAll(english)) {
+    const verb = match[1] || match[3]
+    const weeks = match[2] ? (WEEK_COUNT[match[2].toLowerCase()] ?? Number(match[2])) : 2
+    if (!Number.isFinite(weeks) || weeks <= 0) continue
+    // "bring it forward a week", "a week earlier", "move it up a week"
+    const after = value.slice(match.index + match[0].length, match.index + match[0].length + 12)
+    const between = match[0].slice(verb.length, match[0].length - (match[2] ? match[0].match(/\S+\s+weeks?$/i)?.[0].length || 0 : 0))
+    const sign = EARLIER.test(verb) || /^\s*(?:earlier|sooner)\b/i.test(after) || (/^(?:move|push)/i.test(verb) && /\b(?:up|forward|earlier|sooner|ahead)\b/i.test(between)) ? -1 : 1
+    shifts.push(sign * weeks * 7)
+  }
+  for (const match of value.matchAll(/(推迟|延后|延迟|延期|推后|往后推|晚到|晚|提前|早)\s*了?\s*(一|两|二|三|四|\d{1,2})\s*个?\s*(?:周|星期|礼拜)(?![一二三四五六日天末])/g)) {
+    const weeks = WEEK_ZH_COUNT[match[2]] ?? Number(match[2])
+    if (!Number.isFinite(weeks) || weeks <= 0) continue
+    shifts.push((/^(?:提前|早)$/.test(match[1]) ? -1 : 1) * weeks * 7)
+  }
+  // "another week late", "two weeks late" (not "later", which names no delay).
+  for (const match of value.matchAll(/(?<![\d.])\b(a|one|another|two|three|four|\d{1,2})\s+weeks?\s+late\b/gi)) {
+    const weeks = WEEK_COUNT[match[1].toLowerCase()] ?? Number(match[1])
+    if (Number.isFinite(weeks) && weeks > 0) shifts.push(weeks * 7)
+  }
+  return shifts
+}
+const MULTIPLE_WORDS = Object.freeze({ twice: 2, double: 2, triple: 3, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 })
+// What a multiple is of: "twice the minimum", "three times as much", "double
+// it" (#404 review: "double check" and "I asked twice" gave ×2).
+const MULTIPLE_OF = String.raw`\s+(?:the|a|an|as|that|this|these|those|it|them|our|my|its|their|what|how|last|each|every)\b`
+const MULTIPLE_EN = new RegExp(String.raw`\b(two|three|four|five|six|seven|eight|nine|ten)\s+times${MULTIPLE_OF}|\b(twice|triple)${MULTIPLE_OF}|\b(double)(?!-)${MULTIPLE_OF}`, 'gi')
+// A Chinese whole number below 1000 (十 10, 十五 15, 二十 20, 二十五 25, 一百 100,
+// 两百五十 250), or null.
+function zhWhole(value) {
+  let total = 0
+  let digit = null
+  for (const char of value) {
+    if (ZH_DIGITS[char] !== undefined) { if (digit !== null) return null; digit = ZH_DIGITS[char] }
+    else if (char === '十') { total += (digit ?? 1) * 10; digit = null }
+    else if (char === '百') { if (digit === null) return null; total += digit * 100; digit = null }
+    else return null
+  }
+  total += digit ?? 0
+  return total > 0 ? total : null
+}
+function multiplesIn(question) {
+  const value = text(question)
+  const factors = []
+  for (const match of value.matchAll(MULTIPLE_EN)) factors.push(MULTIPLE_WORDS[(match[1] || match[2] || match[3]).toLowerCase()])
+  for (const match of value.matchAll(/(?<![第\d一二两三四五六七八九十百])([一二两三四五六七八九十百]+)\s*倍/g)) {
+    const factor = zhWhole(match[1])
+    if (factor !== null && factor >= 2) factors.push(factor)
+  }
+  if (/翻倍|翻一番/.test(value)) factors.push(2)
+  return factors
+}
+
+// A calculation is a source when every input is grounded:
+//   numbers: a figure of the results read so far or one the user typed (as
+//   before), a week shift the user asked for as an add_days delta, or a
+//   multiple the user asked for as a product's factor;
+//   the date add_days starts from: a day the results hold, today, or one
+//   the user typed.
+// output: the calculation's own result, when it ran. In a call of several
+// calculations a later one may use an earlier one's result ("three times
+// the minimum order at £6.38": 50 × 3 = 150, then 150 × 6.38; 2026-11-20,
+// minimum-multiple-en), never a later one's.
+export function aiCalculationGrounded(input = {}, { results = [], question = '', conversation = '', output = null, today = null } = {}) {
+  const top = input?.operation || array(input?.values).length || array(input?.dates).length ? [input] : []
+  const entries = [...top, ...array(input?.calculations)]
+  const sources = aiGroundingSources(results)
   const known = [
-    ...aiGroundingSources(results).numbers.map((row) => row.value),
+    ...sources.numbers.map((row) => row.value),
     ...[text(question), text(conversation)].flatMap((value) => [...value.matchAll(INPUT_NUMBER)].map((match) => Number(match[0].replace(/,/g, '')))),
   ].filter(Number.isFinite)
-  const near = (value) => known.some((candidate) => Math.abs(candidate - value) <= Math.max(0.005, Math.abs(candidate) * 0.0005) || Math.abs(candidate * 100 - value) <= 0.005 || Math.abs(candidate / 100 - value) <= 0.00005)
-  return values.every((value) => value === 0 || value === 1 || near(value))
+  // A result worked out from a shift or a multiple the user asked for is
+  // known exactly, without the ×100 tolerance figures get (#404 review: 150
+  // let 15000 through).
+  const exact = []
+  const close = (candidate, value) => Math.abs(candidate - value) <= Math.max(0.005, Math.abs(candidate) * 0.0005)
+  const near = (value) => known.some((candidate) => close(candidate, value) || Math.abs(candidate * 100 - value) <= 0.005 || Math.abs(candidate / 100 - value) <= 0.00005)
+  const shifts = weekShiftsIn(question)
+  const multiples = multiplesIn(question)
+  const typedDays = aiGroundingSources([text(question)]).days
+  const dayKnown = (day) => sources.days.has(day) || typedDays.has(day) || (Boolean(today) && day === today)
+  const outputs = array(output?.results)
+  for (const [index, entry] of entries.entries()) {
+    const operation = text(entry?.operation)
+    let fromWords = false
+    const valueGrounded = (value) => {
+      if (value === 0 || value === 1 || near(value)) return true
+      const word = (operation === 'add_days' && shifts.includes(value)) || (operation === 'product' && multiples.includes(value)) || exact.some((candidate) => close(candidate, value))
+      if (word) fromWords = true
+      return word
+    }
+    if (!array(entry?.values).map(Number).filter(Number.isFinite).every(valueGrounded)) return false
+    if (operation === 'add_days' && !array(entry?.dates).every((day) => dayKnown(text(day)))) return false
+    // Once grounded, a calculation's result is known to the ones after it:
+    // exactly, when it rests on the user's words.
+    const result = entry === input ? Number(output?.result) : Number(outputs[index - top.length]?.result)
+    if (Number.isFinite(result)) (fromWords ? exact : known).push(result)
+  }
+  return true
 }
 
 // locale: the workspace's, for the order of a slash date (the facts' when
@@ -702,6 +833,13 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
     const end = rest.indexOf('\n', at) === -1 ? rest.length : rest.indexOf('\n', at)
     return new Set(listed.filter((row) => row.at >= start && row.at < end).map((row) => row.key)).size
   }
+  // A reorder window's last day, in a sentence about what falls due or must
+  // be ordered by then.
+  const windowEndClaim = ({ year, month, day }, sentence) => {
+    if (!day || !sources.windowEnds.size || !WINDOW_CLAIM.test(sentence)) return false
+    const tail = `-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    return [...sources.windowEnds].some((end) => (year ? end === `${year}${tail}` : end.endsWith(tail)))
+  }
   // Dates: the same day (and year, when written) as a date in the results.
   const dayKnown = ({ year, month, day }) => {
     const pad = (value) => String(value).padStart(2, '0')
@@ -715,7 +853,9 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
       if (!date.month || date.month > 12 || (date.day !== null && (date.day < 1 || date.day > 31))) return match[0]
       if (date.endDay !== undefined && (date.endDay <= date.day || date.endDay > 31)) return match[0]
       checked.date += 1
-      if (!dayKnown(date) || (date.endDay && !dayKnown({ ...date, day: date.endDay }))) fail('date', match[0])
+      const sentence = sentenceAt(match.at(-1), match.at(-2))
+      const known = (day) => dayKnown(day) || windowEndClaim(day, sentence)
+      if (!known(date) || (date.endDay && !known({ ...date, day: date.endDay }))) fail('date', match[0])
       return blank(match[0])
     })
   }

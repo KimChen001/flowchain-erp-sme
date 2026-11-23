@@ -1502,7 +1502,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         // A calculation whose inputs come from no result or the user's words
         // is shown to the model but is no source for the answer's figures
         // (design audit 2026-11-15, L5-03).
-        const source = outcome.ok && (call.name !== 'calculate' || aiCalculationGrounded(call.input, { results: [...results, ...earlierResults], question: userText, conversation }))
+        const source = outcome.ok && (call.name !== 'calculate' || aiCalculationGrounded(call.input, { results: [...results, ...earlierResults], question: userText, conversation, output: outcome.result, today: context.today }))
         if (outcome.ok && !source) stats.replaces.push('ungrounded_calculation')
         if (outcome.ok) answerResults.set(call.id, { tool: call.name, output: outcome.result })
         if (source) {
