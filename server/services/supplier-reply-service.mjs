@@ -149,7 +149,7 @@ async function streamedCall(client, { system, messages, maxTokens }, signal, est
   return { text: answer, usage: metered }
 }
 
-export function createSupplierReplyService({ prisma = null, env = process.env, procurement, now = () => new Date(), idFactory = randomUUID, ledger = ASSISTANT_V2_COST_LEDGER, modelClient, readingDeadlineMs = READING_DEADLINE_MS } = {}) {
+export function createSupplierReplyService({ prisma = null, env = process.env, procurement, now = () => new Date(), idFactory = randomUUID, ledger = ASSISTANT_V2_COST_LEDGER, modelClient, readingDeadlineMs = READING_DEADLINE_MS, logger = console } = {}) {
   if (!procurement?.readPurchaseOrder || !procurement?.revisePromisedDates) throw new Error('The supplier reply service needs the procurement command service.')
   const db = async () => prisma || getPrismaClient(env)
   const actorOf = async (client, context) => resolveProvisionedActor(client, context?.identity || context)
@@ -275,13 +275,23 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
     // same lookup with each order's status.
     const variants = orderNumberVariants(cleaned.text, snapshot.number)
     const bySequence = orderSequenceMentions(cleaned.text).length > 0
-    const supplierRows = (variants || bySequence) && text(order.supplierId)
-      // Closed orders stay in: they are other orders too. Newest first, in a
-      // stable order, so the same 500 are matched on every paste.
-      ? (await client.purchaseOrder.findMany({ where: { tenantId: actor.tenantId, supplierId: text(order.supplierId) }, select: { number: true, status: true }, orderBy: [{ number: 'desc' }, { id: 'asc' }], take: 500 })).filter((row) => text(row.number))
-      : []
+    // Closed orders stay in: they are other orders too. Newest first, in a
+    // stable order, so the same 500 are matched on every paste.
+    const supplierOrdersOf = async () => (await client.purchaseOrder.findMany({ where: { tenantId: actor.tenantId, supplierId: text(order.supplierId) }, select: { number: true, status: true }, orderBy: [{ number: 'desc' }, { id: 'asc' }], take: 500 })).filter((row) => text(row.number))
+    let supplierRows = []
+    if (text(order.supplierId) && variants) supplierRows = await supplierOrdersOf()
+    else if (text(order.supplierId) && bySequence) {
+      // Looked up for the sequence check alone: if the lookup fails, the
+      // paste goes on without it, as before that check (the #461 gate only).
+      try {
+        supplierRows = await supplierOrdersOf()
+      } catch (error) {
+        supplierRows = null
+        logger.warn?.(JSON.stringify({ event: 'supplier_reply_order_lookup_failed', purchaseOrderId: order.id, code: error?.code || error?.name || null }))
+      }
+    }
     const known = variants ? supplierRows.map((row) => text(row.number)) : []
-    const supplierOrders = bySequence ? supplierRows.map((row) => ({ number: text(row.number), status: text(row.status) })) : null
+    const supplierOrders = bySequence && supplierRows ? supplierRows.map((row) => ({ number: text(row.number), status: text(row.status) })) : null
     const named = orderNumbersNamed(cleaned.text, snapshot.number, known)
     if (named.length >= 2) return pasteSeveral({ client, actor, access, context, order, snapshot, skus, cleaned, input, receivedOn, today, named, known, signal })
     const startedAt = Date.now()

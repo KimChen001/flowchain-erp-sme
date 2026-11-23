@@ -380,6 +380,29 @@ test('an email naming several orders: read on each open order of its supplier by
     assert.deepEqual([bySequence.state, bySequence.lines.map((line) => [line.outcome, line.issue, line.proposedDate])], ['needs_you', [['needs_you', 'other_order_number', null]]])
     const closedOne = (await service.pasteReply('PO-E2', { text: `Order 22:\nthe springs ship on ${second}.` }, buyer)).reply
     assert.deepEqual([closedOne.state, closedOne.lines.map((line) => [line.outcome, line.proposedDate])], ['proposed', [['proposed', second]]])
+    // The lookup fails when it runs for the sequence check alone: the paste
+    // goes on as before that check (#461's gate only, so the date is
+    // proposed) and the failure is logged (#463 review).
+    const bound = (owner, key) => (typeof owner[key] === 'function' ? owner[key].bind(owner) : owner[key])
+    const failing = new Proxy(prisma, {
+      get(target, key) {
+        if (key !== 'purchaseOrder') return bound(target, key)
+        return new Proxy(target.purchaseOrder, {
+          get(model, name) {
+            if (name !== 'findMany') return bound(model, name)
+            return async (args) => {
+              if (args?.select?.status && args?.take === 500) throw Object.assign(new Error('lookup down'), { code: 'P1001' })
+              return model.findMany(args)
+            }
+          },
+        })
+      },
+    })
+    const warnings = []
+    const withoutLookup = createSupplierReplyService({ prisma: failing, env, procurement, modelClient, logger: { warn: (line) => warnings.push(JSON.parse(line)) } })
+    const fallback = (await withoutLookup.pasteReply('PO-E2', { text: `Order 13:\nthe springs ship on ${second}.` }, buyer)).reply
+    assert.deepEqual([fallback.state, fallback.lines.map((line) => [line.outcome, line.proposedDate])], ['proposed', [['proposed', second]]])
+    assert.deepEqual(warnings.map((one) => [one.event, one.purchaseOrderId, one.code]), [['supplier_reply_order_lookup_failed', 'PO-E2', 'P1001']])
   } finally {
     await prisma.$disconnect()
   }

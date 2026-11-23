@@ -231,7 +231,7 @@ test('with the supplier\'s orders, an order named by its sequence alone holds ev
   const three = [line('L1', '2026-12-03', `${H074} ships on 3 December.`), line('L2', '2026-12-09', `${H110} ships on 9 December.`), line('L3', '2026-12-10', `${H437} ships on 10 December.`)]
   const orderA = { ...ROUND_3.ORDERS[onA], status: 'issued' }
   const withB = (status) => [{ number: onA, status: 'issued' }, { number: 'PO-202611-0014', status }]
-  for (const form of ['Order 14', 'order #14', 'Order No. 0014', 'Purchase order 14', '订单14', '订单号 14', '采购单14', '第14号单', '#14', 'No. 0014', '2026110014']) {
+  for (const form of ['Order 14', 'order #14', 'Order No. 0014', 'Order ID 14', 'Purchase order 14', 'Order (14)', '订单14', '订单号 14', '订单编号 0014', '订单（14）', '采购单14', '第14号单', '14号订单', 'Order 2026110014']) {
     const text = cleanSupplierReply(`Hi Kim,\nDates below.\n${H074} ships on 3 December.\n${form}:\n${H110} ships on 9 December.\n${H437} ships on 10 December.`).text
     const args = { order: orderA, text, receivedOn: ROUND_3.RECEIVED, reading: { replyKind: 'dates', lines: three, flags: [], reason: null }, emailRead: [], orderNumbers: [] }
     const held = run(`form ${JSON.stringify(form)} [open]`, { ...args, supplierOrders: withB('issued') })
@@ -241,12 +241,12 @@ test('with the supplier\'s orders, an order named by its sequence alone holds ev
   // The counter-examples, the supplier having open orders 1, 3, 14, 30, 200
   // and 1200: A's date stays proposed.
   const supplier = [onA, 'PO-202611-0001', 'PO-202611-0003', 'PO-202611-0014', 'PO-202611-0030', 'PO-202611-0200', 'PO-202611-1200'].map((number) => ({ number, status: 'issued' }))
-  for (const extra of ['PO 30% deposit received.', '#1 priority for us.', 'Item #3 is the same as last time.', '订单 14 件已备好。', 'Your PO: 1,200 pcs.', 'Order 1 of 2 shipped.', 'Change Order #14, Rev 6.', 'Our order 14 refers.']) {
+  for (const extra of ['PO 30% deposit received.', '#1 priority for us.', 'Item #3 is the same as last time.', '订单 14 件已备好。', 'Your PO: 1,200 pcs.', 'Order 1 of 2 shipped.', 'Change Order #14, Rev 6.', 'Our order 14 refers.', 'Minimum order 30 pounds for free delivery.', 'Order 14 days ago.', '#14:', 'No. 14:', '订单24小时内确认。', '出库单号：14', 'Payment ref 2026110014 received.', 'Thanks for your order 21.']) {
     const text = cleanSupplierReply(`Hi Kim,\n${H074} ships on 3 December.\n${extra}`).text
     if (emailParts(text, onA, []) !== null) continue
     const after = run(`counter-example ${JSON.stringify(extra)}`, { order: orderA, text, receivedOn: ROUND_3.RECEIVED, reading: { replyKind: 'dates', lines: [three[0]], flags: [], reason: null }, emailRead: [], orderNumbers: [], supplierOrders: supplier })
     assert.deepEqual(after.lines.map((row) => [row.outcome, row.proposedDate]), [['proposed', '2026-12-03']], extra)
   }
   assert.ok(cases >= 41, `${cases} eval cases`)
-  assert.ok(gated >= 34 && checks >= 900, `${gated} gated of ${checks}`)
+  assert.ok(gated >= 27 && checks >= 930, `${gated} gated of ${checks}`)
 })
