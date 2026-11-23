@@ -54,6 +54,8 @@ const RECORD = /(?<![\w-])[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*-\d+[A-Za-z0-9]*
 // last-30 and the like (2026-11-10 on Flash: "that top-10 share" was marked
 // as an unknown record).
 const NOT_RECORD = /^(?:tier|top|bottom|first|last|next|past|best|worst)-\d+$/i
+// One whole record number (RECORD finds them in a text).
+const RECORD_NUMBER = /^[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*-\d+[A-Za-z0-9]*$/
 
 // The record numbers in a text as this check reads them, NFKC-normalised.
 export function aiGroundingRecordNumbers(value) {
@@ -210,7 +212,10 @@ function currencyCodes(word) {
 // number or a date written in them counts as given, whatever it measures.
 // A supplier tier's reason is a person's words too (2026-11-10 on Flash: its
 // "No. 2 of 200 products… 7% of purchase spend", quoted, was flagged).
-const PROSE_KEYS = new Set(['excerpt', 'section', 'document', 'tierReason'])
+// So is the sentence a tool writes for what a figure rests on, its basis
+// (2026-11-21 question set: "5 of the 6 past 21-day stretches" from the
+// suggested reorder point's basis had its 6 flagged).
+const PROSE_KEYS = new Set(['excerpt', 'section', 'document', 'tierReason', 'basis'])
 const PROSE_NUMBER = /(?<![\w.])\d{1,3}(?:,\d{3})+(?:\.\d+)?|(?<![\w.])\d+(?:\.\d+)?/g
 // A count a passage writes as a word ("within three business days",
 // 三个工作日), which an answer writes as 3. From two to twenty only: "one" and
@@ -312,6 +317,10 @@ export function aiGroundingSources(results = [], { dayFirst = false } = {}) {
       // So is the part before a bracket, which a Chinese answer may follow
       // with its own words (Customer 16684（英国）).
       if (NAME_KEYS.has(key) && /\p{L}/u.test(value) && /\d/.test(value) && value.trim().length >= 3) {
+        // Its number alone too, of four digits or more, as a list of names
+        // writes it (2026-11-21 question set: "customers 14448, 14216 and
+        // 15932" for Customer 14448 (United Kingdom) and the others).
+        for (const digits of value.match(/\d{4,}/g) || []) numbers.push({ value: Number(digits), key: 'name', currency: null, unit: null })
         const head = value.split(/\s*[(（]/)[0].trim()
         for (const name of new Set([value.trim(), head])) {
           if (!/\p{L}/u.test(name) || !/\d/.test(name) || name.length < 3) continue
@@ -342,6 +351,10 @@ export function aiGroundingSources(results = [], { dayFirst = false } = {}) {
   // whole list: rows cut at the limit (more > 0) would count short. The list's
   // own size is its total field.
   const addCounts = (rows, parent) => {
+    // A list of record numbers holds how many records it names (2026-11-21
+    // question set: "2 张未结采购订单" from stock_position's purchaseOrders,
+    // two order numbers).
+    if (rows.length >= 2 && !(Number(parent?.more) > 0) && new Set(rows).size === rows.length && rows.every((row) => typeof row === 'string' && RECORD_NUMBER.test(row.trim()) && !NOT_RECORD.test(row.trim()))) numbers.push({ value: rows.length, key: 'count', currency: null, unit: null })
     const objects = rows.filter((row) => row && typeof row === 'object' && !Array.isArray(row))
     if (objects.length < 2 || Number(parent?.more) > 0) return
     const groups = new Map()
@@ -388,8 +401,35 @@ export function aiGroundingSources(results = [], { dayFirst = false } = {}) {
       }
     }
   }
+  for (const span of periodLengths(results)) numbers.push(span)
   for (const result of array(results)) walk(result)
   return { haystack: `\n${strings.join('\n')}\n`, numbers, days, months, names: [...names], nameOrigins, onlyArrive: onlyArriveFigures(results) }
+}
+
+// The length of each period a result gives by its first and last day ({ from,
+// to }): its days, and its months when it runs whole months (2026-11-21
+// question set: "over the last 12 months" for gross_profit's 2025-11-22 to
+// 2026-11-21 was flagged).
+function periodLengths(results) {
+  const out = []
+  const isDay = (value) => /^\d{4}-\d{2}-\d{2}$/.test(text(value))
+  const utc = (value) => Date.UTC(+value.slice(0, 4), +value.slice(5, 7) - 1, +value.slice(8, 10))
+  const walk = (value) => {
+    if (Array.isArray(value)) { value.forEach(walk); return }
+    if (!value || typeof value !== 'object') return
+    if (isDay(value.from) && isDay(value.to) && value.from <= value.to) {
+      const [from, to] = [text(value.from), text(value.to)]
+      out.push({ value: Math.round((utc(to) - utc(from)) / 86400000) + 1, key: 'period', currency: null, unit: 'days' })
+      for (let months = 1; months <= 60; months += 1) {
+        const end = new Date(Date.UTC(+from.slice(0, 4), +from.slice(5, 7) - 1 + months, +from.slice(8, 10)) - 86400000).toISOString().slice(0, 10)
+        if (end > to) break
+        if (end === to) out.push({ value: months, key: 'period', currency: null, unit: 'months' })
+      }
+    }
+    for (const entry of Object.values(value)) walk(entry)
+  }
+  walk(array(results))
+  return out
 }
 
 // The fields a list's totals are taken from: quantities and amounts, not
