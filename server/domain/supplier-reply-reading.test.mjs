@@ -5,7 +5,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { supplierReplyCheckSchema } from '../../shared/supplier-reply-contract.mjs'
-import { ambiguousWeekdayInQuote, checkReplyReading, lineNamedElsewhere, cleanSupplierReply, datesInQuote, quoteFound, readSupplierReply, relativeDateInQuote, supplierReplyInstructionsIgnored, supplierReplyPrompt, supplierReplyPromptTokens } from './supplier-reply-reading.mjs'
+import { ambiguousWeekdayInQuote, checkReplyReading, checkReplyReadingBeforeGate, lineNamedElsewhere, cleanSupplierReply, datesInQuote, quoteFound, readSupplierReply, relativeDateInQuote, supplierReplyInstructionsIgnored, supplierReplyPrompt, supplierReplyPromptTokens } from './supplier-reply-reading.mjs'
 
 // PO-202611-0012 from Acme Ltd, promised 12 Nov; the reply came on Tue 17 Nov 2026.
 const RECEIVED = '2026-11-17'
@@ -19,6 +19,10 @@ const order = {
 }
 const reading = (lines, extra = {}) => ({ replyKind: 'dates', lines, flags: [], reason: null, ...extra })
 const check = (reply, value, overrides = {}) => checkReplyReading({ order: overrides.order || order, text: reply, receivedOn: overrides.receivedOn || RECEIVED, reading: value })
+// The part rules of the several-order path, before the final gate (which may
+// only hand proposals to the person; its own tests are in
+// supplier-reply-orders-probes*.test.mjs).
+const checkBeforeGate = (reply, value, overrides = {}) => checkReplyReadingBeforeGate({ order: overrides.order || order, text: reply, receivedOn: overrides.receivedOn || RECEIVED, reading: value })
 const outcomes = (result) => result.lines.map((line) => [line.ref, line.outcome, line.issue, line.proposedDate])
 
 test('cleaning drops our quoted chase, a signature and invisible characters, and keeps them apart', () => {
@@ -1042,7 +1046,7 @@ test('an email naming several orders: a value counts for this order only from it
     'Regards, Pat',
   ].join('\n')
   const line = (ref, date, quote, dateKind = 'stated') => ({ line: ref, date, quote, dateKind })
-  const result = check(reply, reading([
+  const result = checkBeforeGate(reply, reading([
     line('L1', '2026-12-04', 'the brackets ship on 4 December.'),
     line('L2', '2026-12-08', 'The hinges follow on 8 December.'),
   ], { flags: [{ kind: 'price_change', quote: 'the price goes up 4%' }, { kind: 'other_order', quote: `${B}: the brackets ship on 10 December` }] }))
@@ -1050,36 +1054,36 @@ test('an email naming several orders: a value counts for this order only from it
   // Another order's change is that order's; the flag naming it stays.
   assert.deepEqual(result.flags.map((flag) => [flag.kind, flag.orderNumber]), [['other_order', B]])
   // Another order's date, on this order's line: dropped, never proposed.
-  const wrong = check(reply, reading([line('L1', '2026-12-10', 'the brackets ship on 10 December')]))
+  const wrong = checkBeforeGate(reply, reading([line('L1', '2026-12-10', 'the brackets ship on 10 December')]))
   assert.deepEqual(outcomes(wrong), [['L1', 'dropped', 'other_order_text', null]])
   // A quote across into another order's part is dropped too; one across this
   // order's part and text of no order goes to the person.
-  const across = check(reply, reading([line('L1', '2026-12-04', 'The hinges follow on 8 December.\n\nPO-202611-0013: the brackets')]))
+  const across = checkBeforeGate(reply, reading([line('L1', '2026-12-04', 'The hinges follow on 8 December.\n\nPO-202611-0013: the brackets')]))
   assert.equal(across.lines[0].issue, 'other_order_text')
-  const intoGreeting = check(reply, reading([line('L1', '2026-12-04', 'brackets can go on 2 December.\n\nPO-202611-0012: the brackets ship on 4 December.')])).lines[0]
+  const intoGreeting = checkBeforeGate(reply, reading([line('L1', '2026-12-04', 'brackets can go on 2 December.\n\nPO-202611-0012: the brackets ship on 4 December.')])).lines[0]
   assert.deepEqual([intoGreeting.outcome, intoGreeting.issue], ['needs_you', 'no_order_part'])
   // Text of no single order (the greeting, a sentence naming two orders):
   // the person decides, the day offered.
-  const greeting = check(reply, reading([line('L1', '2026-12-02', 'the brackets can go on 2 December')])).lines[0]
+  const greeting = checkBeforeGate(reply, reading([line('L1', '2026-12-02', 'the brackets can go on 2 December')])).lines[0]
   assert.deepEqual([greeting.outcome, greeting.issue, greeting.readings], ['needs_you', 'no_order_part', ['2026-12-02']])
   for (const [quote, date] of [['keeps its brackets until 11 December', '2026-12-11'], ['can take the samples on 15 December', '2026-12-15']]) {
-    const shared = check(reply, reading([line('L1', date, quote)])).lines[0]
+    const shared = checkBeforeGate(reply, reading([line('L1', date, quote)])).lines[0]
     assert.deepEqual([shared.outcome, shared.issue, shared.readings], ['needs_you', 'no_order_part', [date]], quote)
   }
   // A sentence naming two orders, however it names them, is for the person:
   // a list ("PO-a and PO-b will both ship complete") gives no order its day
   // (the joint-list rule of 9f453b81 was dropped: it gave a day said of one
   // order to another).
-  const both = (on) => checkReplyReading({ order: on, text: reply, receivedOn: RECEIVED, reading: reading([line('L2', '2026-12-09', 'will both ship complete on 9 December')]), emailRead: [order.number, B, C] }).lines[0]
+  const both = (on) => checkReplyReadingBeforeGate({ order: on, text: reply, receivedOn: RECEIVED, reading: reading([line('L2', '2026-12-09', 'will both ship complete on 9 December')]), emailRead: [order.number, B, C] }).lines[0]
   for (const on of [order, { ...order, number: C }]) assert.deepEqual([both(on).outcome, both(on).issue, both(on).readings], ['needs_you', 'no_order_part', ['2026-12-09']], on.number)
   // An order the sentence does not name: dropped.
   assert.equal(both({ ...order, number: B }).issue, 'other_order_text')
   // A hedged day of no single order is held with no day offered.
-  const hedged = check(reply, reading([line('L1', '2026-12-24', 'Our factory closes from 24 December')])).lines[0]
+  const hedged = checkBeforeGate(reply, reading([line('L1', '2026-12-24', 'Our factory closes from 24 December')])).lines[0]
   assert.deepEqual([hedged.outcome, hedged.issue], ['needs_you', 'no_order_part'])
   assert.notDeepEqual(hedged.readings, ['2026-12-24'])
   // Read on the other order, its own part counts there and this one's does not.
-  const onB = check(reply, reading([line('L1', '2026-12-10', 'the brackets ship on 10 December'), line('L2', '2026-12-04', 'the brackets ship on 4 December.')]), { order: { ...order, number: B } })
+  const onB = checkBeforeGate(reply, reading([line('L1', '2026-12-10', 'the brackets ship on 10 December'), line('L2', '2026-12-04', 'the brackets ship on 4 December.')]), { order: { ...order, number: B } })
   assert.deepEqual(outcomes(onB), [['L2', 'dropped', 'other_order_text', null], ['L1', 'proposed', null, '2026-12-10']])
 })
 
@@ -1127,18 +1131,18 @@ test('several orders: a date said of one listed order, or of part of them, is ne
   ]
   for (const emailRead of [[A, B, C], []]) {
     for (const [label, email, on, entries] of cases) {
-      const result = checkReplyReading({ order: { ...order, number: on }, text: email, receivedOn: RECEIVED, reading: reading(entries), emailRead })
+      const result = checkReplyReadingBeforeGate({ order: { ...order, number: on }, text: email, receivedOn: RECEIVED, reading: reading(entries), emailRead })
       assert.deepEqual(result.lines.filter((row) => row.outcome === 'proposed').map((row) => row.proposedDate), [], `${label} ${JSON.stringify(emailRead)}`)
     }
   }
   // A sentence that starts with the order's number carries on: "It" is B's.
-  const pronoun = checkReplyReading({ order: { ...order, number: B }, text: `${A} ships on 1 December. ${B} is delayed. It will ship on 9 December.`, receivedOn: RECEIVED, reading: reading([L('L1', '2026-12-09', 'It will ship on 9 December.')]), emailRead: [A, B] })
+  const pronoun = checkReplyReadingBeforeGate({ order: { ...order, number: B }, text: `${A} ships on 1 December. ${B} is delayed. It will ship on 9 December.`, receivedOn: RECEIVED, reading: reading([L('L1', '2026-12-09', 'It will ship on 9 December.')]), emailRead: [A, B] })
   assert.deepEqual(outcomes(pronoun), [['L1', 'proposed', null, '2026-12-09']])
   // A number written another way, known on this email: its line is that order's.
-  const variant = checkReplyReading({ order: { ...order, number: B }, text: `${A}: brackets ship on 4 December.\nPO 202611-0013: hinges ship on 9 December.`, receivedOn: RECEIVED, reading: reading([L('L2', '2026-12-09', 'hinges ship on 9 December')]), emailRead: [A, B] })
+  const variant = checkReplyReadingBeforeGate({ order: { ...order, number: B }, text: `${A}: brackets ship on 4 December.\nPO 202611-0013: hinges ship on 9 December.`, receivedOn: RECEIVED, reading: reading([L('L2', '2026-12-09', 'hinges ship on 9 December')]), emailRead: [A, B] })
   assert.deepEqual(outcomes(variant), [['L2', 'proposed', null, '2026-12-09']])
   // Words that stand more than once are offered no day.
-  const twice = checkReplyReading({ order, text: cases.find(([label]) => label === 'P1')[1], receivedOn: RECEIVED, reading: reading([L('L1', '2026-12-04', 'ship on 4 December')]), emailRead: [A, B] }).lines[0]
+  const twice = checkReplyReadingBeforeGate({ order, text: cases.find(([label]) => label === 'P1')[1], receivedOn: RECEIVED, reading: reading([L('L1', '2026-12-04', 'ship on 4 December')]), emailRead: [A, B] }).lines[0]
   assert.deepEqual([twice.outcome, twice.issue, twice.readings], ['needs_you', 'no_order_part', null])
 })
 
@@ -1146,17 +1150,17 @@ test('an email naming one order, or orders outside the numbering, is read exactl
   const quote = 'the brackets ship on 4 December.'
   const lines = reading([{ line: 'L1', date: '2026-12-04', quote, dateKind: 'stated' }])
   for (const reply of [`Hi, PO-202611-0012: ${quote} Thanks`, `Hi, PO-202611-0013: ${quote} Thanks`, `Hi, ${quote}`, `Hi, PO-202611-0012: ${quote} Our order no. 4471.`]) {
-    assert.deepEqual(outcomes(check(reply, lines)), [['L1', 'proposed', null, '2026-12-04']], reply)
+    assert.deepEqual(outcomes(checkBeforeGate(reply, lines)), [['L1', 'proposed', null, '2026-12-04']], reply)
   }
   // A number in the order's own numbering that matches no known order (PO-0013
   // here) is another order the email cannot tell: the email is split, never
   // read as one, and a date said with it goes to the person (#449 review of
   // d0691a5a, rule 5). The supplier's own number above (order no. 4471)
   // leaves the email as it was.
-  assert.deepEqual(outcomes(check(`Hi, PO-0012 and PO-0013: ${quote}`, lines)), [['L1', 'needs_you', 'no_order_part', null]])
+  assert.deepEqual(outcomes(checkBeforeGate(`Hi, PO-0012 and PO-0013: ${quote}`, lines)), [['L1', 'needs_you', 'no_order_part', null]])
   // An order outside the numbering is never split, whatever the email names.
   const legacy = { ...order, number: 'PO-12' }
-  assert.deepEqual(outcomes(check(`PO-202611-0013: ${quote}\nPO-202611-0014: the hinges ship on 8 December.`, lines, { order: legacy })), [['L1', 'proposed', null, '2026-12-04']])
+  assert.deepEqual(outcomes(checkBeforeGate(`PO-202611-0013: ${quote}\nPO-202611-0014: the hinges ship on 8 December.`, lines, { order: legacy })), [['L1', 'proposed', null, '2026-12-04']])
 })
 
 test('several orders: a day said of one listed order is held however the sentence puts the other (#449 review probes d and e)', () => {
@@ -1205,7 +1209,7 @@ test('several orders: a day said of one listed order is held however the sentenc
   for (const emailRead of [[A, B, C], []]) {
     for (const email of emails) {
       for (const [date, dateKind] of [['2026-12-04', 'stated'], ['2026-11-18', 'relative']]) {
-        const result = checkReplyReading({ order: { ...order, number: B }, text: email, receivedOn: RECEIVED, reading: reading([{ line: 'L1', date, quote: email, dateKind }]), emailRead })
+        const result = checkReplyReadingBeforeGate({ order: { ...order, number: B }, text: email, receivedOn: RECEIVED, reading: reading([{ line: 'L1', date, quote: email, dateKind }]), emailRead })
         assert.deepEqual(result.lines.filter((row) => row.outcome === 'proposed').map((row) => row.proposedDate), [], `${email} ${dateKind} ${JSON.stringify(emailRead)}`)
       }
     }
@@ -1215,7 +1219,7 @@ test('several orders: a day said of one listed order is held however the sentenc
     [`${A} and ${C} ship on 4 December.\n${B}: brackets on hold.`, `${A} and ${C} ship on 4 December.`],
     [`${A} and ${C}: ship on 4 December.\n\n${B}: hinges ship on 4 December, brackets on hold.`, 'ship on 4 December'],
   ]) {
-    const row = checkReplyReading({ order: { ...order, number: B }, text: email, receivedOn: RECEIVED, reading: reading([{ line: 'L1', date: '2026-12-04', quote, dateKind: 'stated' }]), emailRead: [A, B, C] }).lines[0]
+    const row = checkReplyReadingBeforeGate({ order: { ...order, number: B }, text: email, receivedOn: RECEIVED, reading: reading([{ line: 'L1', date: '2026-12-04', quote, dateKind: 'stated' }]), emailRead: [A, B, C] }).lines[0]
     assert.notEqual(row.outcome, 'proposed', email)
   }
 })
@@ -1228,7 +1232,7 @@ test('several orders: another order named in passing inside an order\'s part lea
   const orderA = { number: A, supplierName: 'Household 2', status: 'issued', lines: [item('L1', 'HOUSEHOLD_2_074'), item('L2', 'HOUSEHOLD_2_110'), item('L3', 'HOUSEHOLD_2_437')] }
   const orderB = { number: B, supplierName: 'Household 2', status: 'issued', lines: [item('L1', 'HOUSEHOLD_2_044'), item('L2', 'HOUSEHOLD_2_110'), item('L3', 'HOUSEHOLD_2_437')] }
   const L = (ref, date, quote) => ({ line: ref, date, quote, dateKind: 'stated' })
-  const run = (on, email, entries, emailRead) => checkReplyReading({ order: on, text: email, receivedOn: RECEIVED, reading: reading(entries), emailRead }).lines
+  const run = (on, email, entries, emailRead) => checkReplyReadingBeforeGate({ order: on, text: email, receivedOn: RECEIVED, reading: reading(entries), emailRead }).lines
   const row = (lines, ref) => lines.find((one) => one.ref === ref)
   // [label, email, the own-line quote on A (3 Dec), the passing sentence's quote (8 Dec)]
   const passing = [
@@ -1280,7 +1284,7 @@ test('several orders: a sentence correcting which order earlier lines are for ho
   const item = (ref, sku) => ({ ref, purchaseOrderLineId: `${ref}-${sku}`, sku, supplierSku: null, itemName: `Item ${sku.slice(-3)}`, remaining: 10, unit: 'pcs', promisedDate: '2026-11-25' })
   const orderA = { number: A, supplierName: 'Household 2', status: 'issued', lines: [item('L1', 'HOUSEHOLD_2_074'), item('L2', 'HOUSEHOLD_2_110')] }
   const orderB = { number: B, supplierName: 'Household 2', status: 'issued', lines: [item('L1', 'HOUSEHOLD_2_044'), item('L2', 'HOUSEHOLD_2_110')] }
-  const run = (on, email, quote, date, ref = 'L2') => checkReplyReading({ order: on, text: email, receivedOn: RECEIVED, reading: reading([{ line: ref, date, quote, dateKind: 'stated' }]), emailRead: [A, B] }).lines.map((line) => [line.ref, line.outcome, line.issue, line.proposedDate])
+  const run = (on, email, quote, date, ref = 'L2') => checkReplyReadingBeforeGate({ order: on, text: email, receivedOn: RECEIVED, reading: reading([{ line: ref, date, quote, dateKind: 'stated' }]), emailRead: [A, B] }).lines.map((line) => [line.ref, line.outcome, line.issue, line.proposedDate])
   // Corrections: every line, on both orders, goes to the person; none dropped.
   for (const [email, quote] of [
     [`${A}: HOUSEHOLD_2_110 ships on 3 December.\nSorry, that line is for ${B}, not ${A}.`, `${A}: HOUSEHOLD_2_110 ships on 3 December.`],

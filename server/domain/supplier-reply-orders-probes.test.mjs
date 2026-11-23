@@ -7,7 +7,7 @@
 //   X  how parts behave around a passing mention
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { checkReplyReading } from './supplier-reply-reading.mjs'
+import { checkReplyReading, checkReplyReadingBeforeGate } from './supplier-reply-reading.mjs'
 import { emailParts, orderNumbersNamed } from './supplier-reply-orders.mjs'
 
 const A = 'PO-202611-0021'
@@ -115,7 +115,23 @@ PO-202611-14: ${H110} ships on 8 December.`, on: B, lines: [L('L2', '2026-12-03'
   { id: 'X05 same as W06 but reading on A (2nd passing line)', email: `${A}:\n${H074} ships on 3 December.\n${H110} goes with the ${B} goods on 8 December.\n${H437} goes with the ${B} goods on 10 December.`, on: A, lines: [L('L3', '2026-12-10', `${H437} goes with the ${B} goods on 10 December.`)], bad: [] },
 ]
 
-const check = (kase) => checkReplyReading({ order: kase.order || ORDERS[kase.on], text: kase.email, receivedOn: RECEIVED, reading: { replyKind: 'dates', lines: kase.lines, flags: kase.flags || [], reason: null }, emailRead: kase.read ?? [A, B] })
+const argsOf = (kase) => ({ order: kase.order || ORDERS[kase.on], text: kase.email, receivedOn: RECEIVED, reading: { replyKind: 'dates', lines: kase.lines, flags: kase.flags || [], reason: null }, emailRead: kase.read ?? [A, B] })
+const check = (kase) => checkReplyReading(argsOf(kase))
+
+// The final gate only adds holds: every line is as it was before the gate,
+// or a proposal (or a line dropped as another order's text) is now held as
+// several_orders_unclear. Nothing proposed, dropped or moved by it.
+function onlyAddsHolds(before, after) {
+  if (before.lines.length !== after.lines.length || JSON.stringify(before.flags) !== JSON.stringify(after.flags)) return false
+  return before.lines.every((row, at) => {
+    const next = after.lines[at]
+    if (JSON.stringify(row) === JSON.stringify(next)) return true
+    return next.ref === row.ref && next.outcome === 'needs_you' && next.issue === 'several_orders_unclear' && next.proposedDate === null && (row.outcome === 'proposed' || (row.outcome === 'dropped' && row.issue === 'other_order_text'))
+  }) && (after.state === before.state || after.state === 'needs_you')
+}
+test('review probes: the final gate only adds holds (64 emails)', () => {
+  for (const kase of cases) assert.ok(onlyAddsHolds(checkReplyReadingBeforeGate(argsOf(kase)), check(kase)), kase.id)
+})
 
 test('review probes: no date is ever proposed on an order it is not for (64 emails)', () => {
   assert.equal(cases.length, 64)
@@ -126,18 +142,21 @@ test('review probes: no date is ever proposed on an order it is not for (64 emai
 })
 
 // What a correct date comes out as. Held for the person is the accepted cost
-// of the safer parts (coordinator, 11/22): R03–R10, R16, R17, R22 name B in
-// passing, inside A's part or outside any part; R19 and X02 come after a
-// passing mention, which ends the part (held on 6fa2d753 too). Dropped would
-// lose the date, and never happens.
-const HELD = ['R03', 'R04', 'R05', 'R06', 'R07', 'R08', 'R09', 'R10', 'R16', 'R17', 'R19', 'R22', 'X02']
-test(`review probes: every correct date is proposed or held for the person, never dropped (${HELD.filter((id) => id.startsWith('R')).length} of 22 correct replies held)`, () => {
+// (coordinator, 11/22). By the part rules (no_order_part): R03–R10, R16, R17,
+// R22 name B in passing, inside A's part or outside any part; R19 and X02 come
+// after a passing mention, which ends the part (held on 6fa2d753 too). By the
+// final gate (several_orders_unclear), as every email here is about several
+// orders and names one in passing: R01, R02, R14, R18, R20, W20, W21, X04.
+// Dropped would lose the date, and never happens.
+const HELD_BY_PARTS = ['R03', 'R04', 'R05', 'R06', 'R07', 'R08', 'R09', 'R10', 'R16', 'R17', 'R19', 'R22', 'X02']
+const HELD_BY_GATE = ['R01', 'R02', 'R14', 'R18', 'R20', 'W20', 'W21', 'X04']
+test(`review probes: every correct date is proposed or held for the person, never dropped (${[...HELD_BY_PARTS, ...HELD_BY_GATE].filter((id) => id.startsWith('R')).length} of 22 correct replies held)`, () => {
   for (const kase of cases.filter((one) => one.good)) {
     const lines = check(kase).lines
     for (const [ref, date] of kase.good) {
       const row = lines.find((line) => line.ref === ref)
       const id = kase.id.split(' ')[0]
-      const want = HELD.includes(id) ? ['needs_you', 'no_order_part', null] : ['proposed', null, date]
+      const want = HELD_BY_PARTS.includes(id) ? ['needs_you', 'no_order_part', null] : HELD_BY_GATE.includes(id) ? ['needs_you', 'several_orders_unclear', null] : ['proposed', null, date]
       assert.deepEqual([row?.outcome, row?.issue ?? null, row?.proposedDate ?? null], want, kase.id)
     }
   }

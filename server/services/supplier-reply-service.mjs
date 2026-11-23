@@ -271,7 +271,9 @@ export function createSupplierReplyService({ prisma = null, env = process.env, p
     // another way (PO 202611-0013, 0013) counts when it matches exactly one
     // of the supplier's orders.
     const known = orderNumberVariants(cleaned.text, snapshot.number) && text(order.supplierId)
-      ? (await client.purchaseOrder.findMany({ where: { tenantId: actor.tenantId, supplierId: text(order.supplierId) }, select: { number: true }, take: 500 })).map((row) => text(row.number)).filter(Boolean)
+      // Closed orders stay in: they are other orders too. Newest first, in a
+      // stable order, so the same 500 are matched on every paste.
+      ? (await client.purchaseOrder.findMany({ where: { tenantId: actor.tenantId, supplierId: text(order.supplierId) }, select: { number: true }, orderBy: [{ number: 'desc' }, { id: 'asc' }], take: 500 })).map((row) => text(row.number)).filter(Boolean)
       : []
     const named = orderNumbersNamed(cleaned.text, snapshot.number, known)
     if (named.length >= 2) return pasteSeveral({ client, actor, access, context, order, snapshot, skus, cleaned, input, receivedOn, today, named, known, signal })

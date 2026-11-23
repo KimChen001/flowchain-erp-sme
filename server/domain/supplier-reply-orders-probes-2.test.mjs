@@ -6,7 +6,7 @@
 // one-order paste), then checkReplyReading with a hand-made reading. No model.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { checkReplyReading, cleanSupplierReply } from './supplier-reply-reading.mjs'
+import { checkReplyReading, checkReplyReadingBeforeGate, cleanSupplierReply } from './supplier-reply-reading.mjs'
 import { orderNumberVariants, orderNumbersNamed } from './supplier-reply-orders.mjs'
 
 const A = 'PO-202611-0021'
@@ -122,13 +122,36 @@ const R = [
 // (pasteSeveral), else empty. `empty` runs every email as the one-order
 // paste does, emailRead empty.
 const supplierOrders = (kase) => kase.supplierOrders || [A, B, C]
-function check(kase, on, lines, mode) {
+function argsFor(kase, on, lines, mode) {
   const text = cleanSupplierReply(kase.email).text
   const orderNumbers = orderNumberVariants(text, on) ? supplierOrders(kase) : []
   const named = orderNumbersNamed(text, on, orderNumbers)
   const emailRead = mode === 'empty' || named.length < 2 ? [] : [on, ...named.filter((number) => number !== on && ORDERS[number])]
-  return checkReplyReading({ order: ORDERS[on], text, receivedOn: RECEIVED, reading: { replyKind: 'dates', lines, flags: kase.flags || [], reason: null }, emailRead, orderNumbers })
+  return { order: ORDERS[on], text, receivedOn: RECEIVED, reading: { replyKind: 'dates', lines, flags: kase.flags || [], reason: null }, emailRead, orderNumbers }
 }
+const check = (kase, on, lines, mode) => checkReplyReading(argsFor(kase, on, lines, mode))
+// The final gate only adds holds: every line is as it was before the gate,
+// or a proposal (or a line dropped as another order's text) is now held as
+// several_orders_unclear. Nothing proposed, dropped or moved by it.
+function onlyAddsHolds(before, after) {
+  if (before.lines.length !== after.lines.length || JSON.stringify(before.flags) !== JSON.stringify(after.flags)) return false
+  return before.lines.every((row, at) => {
+    const next = after.lines[at]
+    if (JSON.stringify(row) === JSON.stringify(next)) return true
+    return next.ref === row.ref && next.outcome === 'needs_you' && next.issue === 'several_orders_unclear' && next.proposedDate === null && (row.outcome === 'proposed' || (row.outcome === 'dropped' && row.issue === 'other_order_text'))
+  }) && (after.state === before.state || after.state === 'needs_you')
+}
+test('second review probes: the final gate only adds holds (40 + 30 emails, both ways of reading)', () => {
+  for (const mode of ['paste', 'empty']) {
+    for (const kase of W) assert.ok(onlyAddsHolds(checkReplyReadingBeforeGate(argsFor(kase, kase.on, kase.lines, mode)), check(kase, kase.on, kase.lines, mode)), `${kase.id} [${mode}]`)
+    for (const kase of R) {
+      for (const [on, rows] of Object.entries(kase.per)) {
+        const lines = rows.map(([ref, date, quote, extra]) => L(ref, date, quote, extra))
+        assert.ok(onlyAddsHolds(checkReplyReadingBeforeGate(argsFor(kase, on, lines, mode)), check(kase, on, lines, mode)), `${kase.id} on ${short(on)} [${mode}]`)
+      }
+    }
+  }
+})
 const wrongIn = (result, kase) => result.lines.filter((line) => line.outcome === 'proposed' && (kase.bad || []).some(([ref, date]) => ref === line.ref && date === line.proposedDate)).map((line) => `${line.ref}@${line.proposedDate}`)
 
 test('second review probes: no date is ever proposed on an order it is not for (40 emails, both ways of reading)', () => {
