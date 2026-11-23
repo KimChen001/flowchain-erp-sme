@@ -229,3 +229,24 @@ test('another order\'s number in a form the numbering does not see is found; thi
   // Only for a number in the numbering format.
   assert.equal(otherOrderNumberWritten('PO No. 202611-0014', 'ACME-17'), null)
 })
+
+test('the order-number patterns stay quick on long runs of wide spaces and long words (#463 review: up to 2 s before)', async () => {
+  const { checkReplyReading, cleanSupplierReply } = await import('./supplier-reply-reading.mjs')
+  const on = 'PO-202611-0021'
+  const known = ['PO-202611-0014', 'PO-202610-0014', 'PO-202611-0030']
+  const em = '\u2003'
+  const order = { number: on, status: 'issued', lines: [{ ref: 'L1', purchaseOrderLineId: 'L1', sku: 'HOUSEHOLD_2_074', supplierSku: null, itemName: 'Item 074', remaining: 10, unit: 'pcs', promisedDate: '2026-11-25' }] }
+  const reading = { replyKind: 'dates', lines: [{ line: 'L1', date: '2026-12-03', quote: 'HOUSEHOLD_2_074 ships on 3 December.', dateKind: 'stated' }], flags: [], reason: null }
+  for (const raw of [`P${em.repeat(7900)}x`, `PO${em.repeat(7900)}x`, `订单${em.repeat(7900)}x`, `PO${'\u3000'.repeat(7900)}x`, `PO${'\u00a0'.repeat(7900)}x`, `${'a'.repeat(3000)} ${'invoice 202611-0014 '.repeat(240)}`, `PO${'\t'.repeat(7900)}x`]) {
+    const text = cleanSupplierReply(raw).text
+    const started = Date.now()
+    otherOrderNumberWritten(text, on)
+    orderNumbersNamed(text, on, known)
+    emailParts(text, on, known)
+    checkReplyReading({ order, text, receivedOn: '2026-11-18', reading, orderNumbers: known })
+    assert.ok(Date.now() - started < 100, `${raw.slice(0, 12)}…: ${Date.now() - started} ms`)
+  }
+  // Wide spaces are spaces: the number is found across them as across one.
+  assert.ok(otherOrderNumberWritten(`PO${em}No.${'\u3000'}202611-0014:`, on))
+  assert.deepEqual(orderNumbersNamed(`${on} and PO-202611-0014`, on).length, 2)
+})

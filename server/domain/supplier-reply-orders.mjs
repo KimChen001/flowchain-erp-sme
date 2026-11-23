@@ -45,6 +45,14 @@
 
 const NUMBERED = /^([A-Z][A-Z0-9]{0,9})-(\d{6})-(\d{4,6})$/i
 
+// Spaces of every width (no-break, en to hair, zero-width, ideographic) as a
+// plain space, and a run of spaces or tabs as one, before the number
+// patterns run: a long run made them slow (#463 review: 订单 then 7,900 em
+// spaces took 170 ms, PO then 7,900 took 260 ms in the check). Lines are
+// kept, and the parts are compared in quote form, which joins spaces too.
+const WIDE_SPACE = /[  -​  　]/g
+const plainText = (text) => String(text ?? '').replace(WIDE_SPACE, ' ').normalize('NFKC').replace(/[ \t]{2,}/g, ' ')
+
 // The prefix of a number in the numbering format (PO-202611-0012 → PO),
 // null for any other number.
 export function orderNumberPrefix(number) {
@@ -104,7 +112,7 @@ function tokensIn(source, prefix, known) {
 export function orderNumbersNamed(text, number, known = []) {
   const prefix = orderNumberPrefix(number)
   if (!prefix) return []
-  const tokens = tokensIn(String(text ?? '').normalize('NFKC'), prefix, [number, ...known])
+  const tokens = tokensIn(plainText(text), prefix, [number, ...known])
   return [...new Set(tokens.map((row) => row.number).filter(Boolean))]
 }
 
@@ -113,7 +121,7 @@ export function orderNumbersNamed(text, number, known = []) {
 export function orderNumberVariants(text, number) {
   const prefix = orderNumberPrefix(number)
   if (!prefix) return false
-  const source = String(text ?? '').normalize('NFKC')
+  const source = plainText(text)
   const exact = new RegExp(`^${prefix}-\\d{6}-\\d{4,6}$`, 'i')
   return tokensIn(source, prefix, [number]).some((row) => !exact.test(row.text))
 }
@@ -174,7 +182,7 @@ const BY_PLACE = /\b(?:the\s+)?(?:first|second|third|fourth|fifth|other|former|l
 export function emailParts(text, number, known = []) {
   const prefix = orderNumberPrefix(number)
   if (!prefix) return null
-  const source = String(text ?? '').normalize('NFKC')
+  const source = plainText(text)
   const all = [number, ...known]
   const named = orderNumbersNamed(source, number, known)
   // One order named, and a number in this workspace's numbering that is not
@@ -340,7 +348,7 @@ const lastEnd = (pattern, value) => {
 export function otherOrderNumberWritten(text, number) {
   const own = parsed(number)
   if (!own) return null
-  const source = String(text ?? '').replace(NBSP, ' ').normalize('NFKC').replace(OTHER_DASHES, '-')
+  const source = plainText(String(text ?? '').replace(NBSP, ' ')).replace(OTHER_DASHES, '-')
   const isOwn = (month, seq) => month === own.month && Number(seq) === own.seq
   // PO → PO, P.O., P/O, P O, P0; and the plural (POs).
   const prefix = own.prefix === 'PO' ? 'P\\s*[./]?\\s*[O0]\\.?' : own.prefix.split('').map(escapeRegExp).join('\\.?\\s*') + '\\.?'
@@ -358,10 +366,12 @@ export function otherOrderNumberWritten(text, number) {
   // sequence; not a phone number: no further digits after it).
   for (const match of source.matchAll(/(?<!\p{N})((?:19|20)\d{2})(?:\s*[-_./]\s*|\s+)?(0[1-9]|1[0-2])(?:\s*[-_/]\s*|\s+)(\d{3,6})(?!\p{N}|[-./]\d)/gu)) {
     if (isOwn(match[1] + match[2], match[3])) continue
-    const before = source.slice(0, match.index)
+    // Only the last stretch before it is looked at: the whole text before it,
+    // once per number, took 2 s after a 3,000-letter word (#463 review).
+    const before = source.slice(Math.max(0, match.index - 200), match.index)
     // A code glued to it (Latin letters, then at most a dash) that is not
     // ours or a label word (No.202611-0014): another document's.
-    const glued = /([A-Za-z][A-Za-z0-9./]*)[-_]?$/.exec(before)
+    const glued = /([A-Za-z][A-Za-z0-9./]*)[-_]?$/.exec(before.slice(-41))
     if (glued && !ownPrefix.test(glued[1]) && !/^(?:no|nr|num|number|order)\.?$/i.test(glued[1])) continue
     // The label before it, back to a digit or a break in the sentence: the
     // nearer of an order word and another document's word decides.
