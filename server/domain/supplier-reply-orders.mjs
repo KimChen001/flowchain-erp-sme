@@ -11,16 +11,28 @@
 // none, or more than one, is unresolved.
 //
 // An email that names fewer than two orders is read as before: one order,
-// other orders flagged.
+// other orders flagged. Unless it also writes a number in this workspace's
+// numbering that is not told (PO-0013, 订单 0021 that matches no known order,
+// or more than one): it is about another order too, and is split. The
+// supplier's own numbers (我方订单 4471, Order #4471) do not split it.
 //
 // The parts, sentence by sentence (a line break, 。！？；; or . ! ? before a
 // space ends a sentence):
-//   - a sentence that starts with one order's number (after at most two
-//     words: "For PO-…", "关于订单 PO-…", "PO-…:") starts that order's part,
-//     and the sentences after it continue the part;
-//   - a sentence that names one order further in ("… (re PO-…)", "your other
-//     order, PO-…, follows on 4 Dec") is that order's, but the part ends
-//     with it;
+//   - a sentence that starts with one order's number (after a list mark and
+//     at most two words: "For PO-…", "As for PO-…:", "关于订单 PO-…", "【PO-…】",
+//     "2、PO-…：", "PO-…:"; three words when a colon follows the number)
+//     starts that order's part, and the sentences after it continue the
+//     part. Words that say it is not that order's own ("With the PO-…
+//     goods", "跟 PO-… 的货", "Except PO-…") start none;
+//   - a sentence that only points to another order ("Same as PO-….", "re
+//     PO-…") ends the part and starts none;
+//   - a sentence that names one order further in ("… (re PO-…) 8 Dec",
+//     "your other order, PO-…, follows on 4 Dec") is named in passing.
+//     Inside an order's part the part's heading counts as a number: the
+//     sentence belongs to both orders together (shared). Outside any part
+//     it belongs to no order. Either way the part ends with it;
+//   - a line that introduces quoted text of ours ("Kim wrote:") ends every
+//     part: nothing after it belongs to any order;
 //   - a sentence that names two or more orders belongs to all of them
 //     together (shared), and the part ends with it;
 //   - a sentence with an unresolved order number, or one that points to an
