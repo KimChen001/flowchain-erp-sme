@@ -72,16 +72,12 @@ function tokensIn(source, prefix, known) {
   const length = NUMBERED.exec(String(known[0] ?? '').trim())?.[3].length || 4
   const stop = '(?=\\d{1,2}\\s*[月日号]|\\D|$)'
   const out = []
-  // A number the supplier calls its own ("our order no. 0457", 我司订单号
-  // 0457, 我方订单 PO 4471) is not in this workspace's numbering, whatever its
-  // shape (third #449 review, S01, S02, S10: such a reply was split and held).
-  const suppliersOwn = (start) => /(?:\bour\b|\bmy\b|我方|我司|本司|我们)[^\n,，。;；:：]{0,14}$/iu.test(source.slice(Math.max(0, start - 24), start))
   const add = (match, month, seq, ours, exact = null) => {
     const start = match.index
     const end = start + match[0].length
     if (out.some((row) => start < row.end && end > row.index)) return
     const candidates = exact ? [] : orders.filter((row) => row.seq === Number(seq) && (!month || row.month === month))
-    out.push({ index: start, end, text: match[0], ours: ours && !(exact === null && suppliersOwn(start)), number: exact || (candidates.length === 1 ? candidates[0].number : null) })
+    out.push({ index: start, end, text: match[0], ours, number: exact || (candidates.length === 1 ? candidates[0].number : null) })
   }
   for (const match of source.matchAll(new RegExp(`\\b${prefix}-(\\d{6})-(\\d{${length}})${stop}`, 'gi'))) add(match, match[1], match[2], true, match[0].toUpperCase())
   // Written another way: spaces or other dashes, another sequence length.
@@ -89,10 +85,13 @@ function tokensIn(source, prefix, known) {
   // A short form: PO 13, PO-0013, PO#13.
   for (const match of source.matchAll(new RegExp(`\\b${prefix}\\s*[-#.:]?\\s*(\\d{1,6}?)${stop}`, 'gi'))) add(match, null, match[1], true)
   // A label and a number: order no. 13, order #13, 订单号 0013, 订单 0013.
-  // Not a date written after it (订单12月5日发货). Nor a count: a unit after
-  // the number (订单 7 天内, 订单3个品项, order no. 3 items) is no order (third
-  // #449 review: S07 dropped a correct date as closed order 0007's).
-  for (const match of source.matchAll(/(?:\border\s*(?:no\.?|number|#)|采购单号?|订单号?|单号)\s*[:#]?\s*(\d{1,6})(?![\d月日号年/.-])(?!\s*(?:天|个|件|箱|日内|周|days?\b|items?\b|pcs\b|pieces\b|units?\b|weeks?\b))/gi)) add(match, null, match[1], match[1].length === length && match[1].startsWith('0'))
+  // Not a date written after it (订单12月5日发货). Nor a count: a unit word
+  // after the number (订单 7 天内, 订单3个品项, order no. 3 items) is no order
+  // (third #449 review: S07 dropped a correct date as closed order 0007's).
+  // Whole words only: 天津 (Tianjin), 个别 (some), 件数 (quantities) and 周四
+  // (Thursday) are not units, so 订单 0014 before them is still an order
+  // (fourth review U01–U04).
+  for (const match of source.matchAll(/(?:\border\s*(?:no\.?|number|#)|采购单号?|订单号?|单号)\s*[:#]?\s*(\d{1,6})(?![\d月日号年/.-])(?!\s*(?:天(?!津)|个(?!别)|件(?!数)|箱|日内|(?:days|items|pcs|pieces|units|weeks)\b))/gi)) add(match, null, match[1], match[1].length === length && match[1].startsWith('0'))
   // A bare sequence with leading zeros: 0013.
   for (const match of source.matchAll(/(?<![\w-])0\d{3,5}(?![\w-])/g)) add(match, null, match[0], false)
   return out.sort((a, b) => a.index - b.index)
@@ -262,163 +261,6 @@ export function emailParts(text, number, known = []) {
     for (const owner of runs[runs.length - 1]?.owners || []) given.add(owner)
   }
   return { named, runs, correction }
-}
-
-// --- The final gate (third #449 review; coordinator, 11/22) -------------------
-//
-// Parts are found by rules, and three reviews each found dozens of ways to
-// write an email that the rules read wrong. So after every rule, one gate
-// that can only hand a proposal to the person, never add or drop one (the
-// strict pass of #455 is the same idea). It runs on the several-order path
-// only (the email split into parts, or read on more than one order); the
-// one-order paste is read as on main. Scan the whole cleaned reply for
-// anything that may be about another order:
-//   - another order's number: this workspace's numbering (other dashes
-//     too, PO‐202611‐0014), or a label (PO, P.O., PO No., PO#, Purchase
-//     Order, Order No., 订单号, 订单编号, 订单) with YYYYMM-NNNN or with the
-//     sequence of one of the supplier's orders. Not a count (订单 7 天内,
-//     3 items) and not the supplier's own (our order, 我方订单, 我司订单号);
-//   - another order by its place (other, another, 2nd, remaining, both, all
-//     orders; 另一张, 其余订单, 两张单, 所有订单);
-//   - a word pointing at another order's number (Same as, Unlike, Similar
-//     to, excl., except, 同, 参照, 不同于);
-//   - quoted mail the cleaning left (From:, Sent:, Subject:, also starred;
-//     寄件者:, 寄件日期:, Von:, Gesendet:; "wrote:" or 写道 anywhere).
-// If any is found, the email must be in the one clean shape: every number
-// in it is a known order's (exact, or the only open order it can mean)
-// that opens its part (a header or the start of a sentence), no part holds
-// another number or any of the marks above, and no text outside the parts
-// gives a date (a greeting and a sign-off may stand there). Otherwise every
-// line proposed on any order goes to the person (several_orders_unclear).
-const DASH = '[-‐‑‒–—―−﹣－]'
-const ORDER_LABEL = '(?:P\\.?\\s?O\\.?(?:\\s*(?:No\\.?|Number|#))?|Purchase\\s+Order(?:\\s*(?:No\\.?|Number|#))?|Order\\s*(?:No\\.?|Number|#)|订单编号|订单号|订单|采购单号?)'
-const NOT_A_COUNT = '(?!\\s*(?:天|个|件|箱|日内|周|days?\\b|items?\\b|pcs\\b|pieces\\b|units?\\b|weeks?\\b))'
-const SUPPLIERS_OWN = /(?:\b(?:our|my)\s+(?:(?:sales|own)\s+)?|我方|我司|本司|我们的?)\s*$/iu
-const BY_PLACE_WIDE = /\b(?:other|another|second|2nd|remaining|both|all)\s+(?:of\s+the\s+)?(?:orders?|pos?|purchase\s+orders?)\b|另一张|另外(?:那|一)?张|其余(?:的)?(?:订单|单)|其他(?:的)?订单|两张(?:订)?单|所有(?:的)?订单|两个订单/iu
-const POINTS_AT = /(?:same\s+as|similar\s+to|unlike|as\s+with|excl\.?|except(?:\s+for)?|excluding|besides|apart\s+from|other\s+than|without|not\s+(?:for|including)|同|参照|参见|不同于|除了|除|不含|不包括)[\s,，:：(（]*$/iu
-const QUOTED_HEADER = /^[\s>*_]*(?:From|Sent|Subject|寄件者|寄件日期|发件人|发送时间|Von|Gesendet)[\s*_]*[:：]/imu
-const WROTE = /\bwrote\s*[:：]|写道/iu
-
-// The order numbers a text writes in any form the gate knows, each with
-// whether it is this order (own).
-function numbersInText(source, prefix, number, known) {
-  const self = parsed(number)
-  const orders = [...new Map([number, ...known].map(parsed).filter((row) => row && row.prefix === prefix).map((row) => [row.number, row])).values()]
-  const out = []
-  const add = (match, own) => {
-    const start = match.index
-    const end = start + match[0].length
-    if (out.some((row) => start < row.end && end > row.index)) return
-    out.push({ index: start, end, own })
-  }
-  const isSelf = (month, seq) => Boolean(self) && self.month === month && self.seq === Number(seq)
-  const ownBefore = (match) => SUPPLIERS_OWN.test(source.slice(Math.max(0, match.index - 16), match.index))
-  for (const match of source.matchAll(new RegExp(`(?<![A-Za-z0-9])${prefix}\\s*${DASH}\\s*(\\d{6})\\s*${DASH}\\s*(\\d{1,6})(?!\\d)`, 'giu'))) add(match, isSelf(match[1], match[2]))
-  for (const match of source.matchAll(new RegExp(`(?<![A-Za-z0-9])${ORDER_LABEL}\\s*[:：#.]?\\s*(\\d{6})\\s*${DASH}\\s*(\\d{1,6})(?!\\d)`, 'giu'))) if (!ownBefore(match)) add(match, isSelf(match[1], match[2]))
-  for (const match of source.matchAll(new RegExp(`(?<![A-Za-z0-9])${ORDER_LABEL}\\s*[:：#.]?\\s*(\\d{1,6})(?![\\d月日号年/.]|\\s*${DASH}\\s*\\d)${NOT_A_COUNT}`, 'giu'))) {
-    if (ownBefore(match)) continue
-    const same = orders.filter((row) => row.seq === Number(match[1]))
-    if (same.length) add(match, same.length === 1 && same[0].number === self?.number)
-  }
-  return out.sort((a, b) => a.index - b.index)
-}
-
-// orderList: whether `known` is the supplier's order list the paste matched
-// against. Without it a number written another way (PO 14, 订单 0014) cannot
-// be told from another order with the same sequence, so it is a risk and
-// never clean (#449 third review, W36 and W39 with no list).
-export function severalOrdersGate(text, number, { known = [], orderList = false, correction = false, hasDate = () => false } = {}) {
-  const prefix = orderNumberPrefix(number)
-  if (!prefix) return { risks: [], clean: true, hold: false }
-  const source = String(text ?? '').normalize('NFKC')
-  const all = [number, ...known]
-  const numbers = numbersInText(source, prefix, number, known)
-  const others = numbers.filter((row) => !row.own)
-  const exact = new RegExp(`^${prefix}-\\d{6}-\\d{4,6}$`, 'i')
-  const unchecked = !orderList && tokensIn(source, prefix, all).some((token) => !exact.test(token.text))
-  const risks = []
-  if (others.length) risks.push('other_order_number')
-  if (unchecked) risks.push('number_unchecked')
-  // An order by its place, in a sentence that names no number to say which.
-  if (sentencesOf(source).some((sentence) => (BY_PLACE_WIDE.test(sentence) || BY_PLACE.test(sentence)) && !tokensIn(sentence, prefix, all).length && !numbersInText(sentence, prefix, number, known).length)) risks.push('order_by_place')
-  if (numbers.some((row) => !row.own && POINTS_AT.test(source.slice(Math.max(0, row.index - 24), row.index)))) risks.push('points_at_other_order')
-  if (QUOTED_HEADER.test(source) || WROTE.test(source)) risks.push('quoted_mail')
-  if (correction) risks.push('correction')
-  if (!risks.length) return { risks, clean: true, hold: false }
-  const clean = !correction && !unchecked && cleanShape(source, prefix, number, all, numbers, hasDate)
-  return { risks, clean, hold: !clean }
-}
-
-// A greeting before a header on the same line ("Dear Ms. Kim Chen, PO-…:").
-const GREETING = /^\s*(?:hi|hello|dear|good\s+(?:morning|afternoon|evening)|您好|你好)(?![\p{L}])[^\n]{0,40}?[,，]\s*$/iu
-// The number ends its words: a colon, a dash before the text, or the end of
-// the line (a header, "PO-…:", "【PO-…】", "PO-… - text"); or the sentence
-// is a line that ends with a colon ("PO-… 的交期如下：", "And PO-… ships as
-// follows:"). Then the sentences after it are that order's part. A sentence
-// that only starts with the number is that order's alone.
-const HEADER_AFTER = /^[\s*_)\]】）]*(?:[:：]|[-–—]\s|$)/u
-const LINE_ENDS_WITH_COLON = /[:：]\s*$/u
-// "Ref.: PO-…", like "re PO-…", points at an order and says nothing else.
-const REF_ONLY = /^[\s\p{P}]*ref\.?\s*[:：]?\s*$/iu
-
-// The one shape in which proposals stand past the gate (see above). Every
-// number written, in any form, must be a known order's and open a part, at
-// the start of its sentence; this order must be one of them; nothing in a
-// part may point elsewhere; and no date may stand outside the parts.
-function cleanShape(source, prefix, number, all, numbers, hasDate) {
-  let current = null
-  let headerOnly = false
-  let lineStart = true
-  let named = false
-  let at = 0
-  for (const sentence of sentencesOf(source)) {
-    const start = at
-    at += sentence.length
-    if (!sentence.trim()) {
-      if (lineStart && sentence.endsWith('\n') && !headerOnly) current = null
-      lineStart = sentence.endsWith('\n')
-      continue
-    }
-    // A number written across two sentences ("P.O. 202611-0014") is never clean.
-    if (numbers.some((row) => row.index < at && row.end > at)) return false
-    const tokens = tokensIn(sentence, prefix, all)
-    const extra = numbers.filter((row) => row.index >= start && row.end <= at && !tokens.some((token) => row.index - start < token.end && row.end - start > token.index))
-    const quoted = QUOTED_HEADER.test(sentence) || WROTE.test(sentence)
-    if (tokens.length || extra.length) {
-      const [token] = tokens
-      const before = token ? sentence.slice(0, token.index) : ''
-      const after = token ? sentence.slice(token.end) : ''
-      if (tokens.length === 1 && !extra.length && (POINTER_WORDS.test(before) || REF_ONLY.test(before)) && NOTHING_ELSE.test(after)) {
-        // Only points at an order: the part ends, none opens.
-        current = null
-        headerOnly = false
-        lineStart = sentence.endsWith('\n')
-        continue
-      }
-      const pointsAt = POINTS_AT.test(source.slice(Math.max(0, start + (token?.index || 0) - 24), start + (token?.index || 0)))
-      if (!(tokens.length === 1 && !extra.length && token.number && !quoted && !pointsAt && !CORRECTION.test(before))) return false
-      const header = HEADER_AFTER.test(after) || LINE_ENDS_WITH_COLON.test(sentence)
-      const leads = !NOT_ITS_OWN.test(before) && (LEADING.test(before) || ((LEADING_BEFORE_COLON.test(before) || GREETING.test(before)) && /^\s*[:：]/.test(after)))
-      if (leads) {
-        if (token.number === String(number).toUpperCase()) named = true
-        current = header ? token.number : null
-      } else {
-        // A known order named in passing, in a sentence of its own ("Your
-        // other order, PO-…, will follow on 4 Dec"): the part rules give that
-        // sentence to no single order, so the person decides its lines; it
-        // ends the part, and the email may still be clean.
-        current = null
-      }
-      headerOnly = HEADER.test(`${before}\u0000${after}`)
-    } else {
-      // An order by its place counts where no number says which it is.
-      const marked = quoted || BY_PLACE_WIDE.test(sentence) || BY_PLACE.test(sentence)
-      if (marked || (current === null && hasDate(sentence))) return false
-      headerOnly = false
-    }
-    lineStart = sentence.endsWith('\n')
-  }
-  return named
 }
 
 // Which named orders an email is read on, and why the others are not.

@@ -12,7 +12,7 @@
 // when code computes it from its quote and the reply date; our own quoted
 // chase is removed before reading; invisible characters are stripped.
 import { PROMPT_INJECTION, aiInjectionDetected } from './ai-injection-guard.mjs'
-import { emailParts, severalOrdersGate } from './supplier-reply-orders.mjs'
+import { emailParts } from './supplier-reply-orders.mjs'
 import {
   SUPPLIER_REPLY_LIMITS, SUPPLIER_REPLY_PROMPT_VERSION, supplierReplyCheckSchema, supplierReplyReadingSchema,
 } from '../../shared/supplier-reply-contract.mjs'
@@ -1048,17 +1048,15 @@ function quotePlace(parts, { order, quote, whole }) {
 // (#449 review probe W27: "PO 14" meant last month's order 14). Without
 // them, emailRead is the list. With one order named, nothing changes.
 //
-// On the several-order path the final gate runs last (severalOrdersGate in
-// supplier-reply-orders.mjs): an email that may be about another order, and
-// is not in the one clean shape, hands every proposal to the person
-// (several_orders_unclear). The one-order path is never gated.
+// On the several-order path the final gate runs last (severalOrdersFinalGate
+// below): nothing is proposed there, every line goes to the person. The
+// one-order path is never gated.
 export function checkReplyReading(args) {
   return severalOrdersFinalGate(checkLines(args), args)
 }
 
-// The check before the final gate, for the gate's own tests: the gate may
-// only turn a proposal (or a line dropped as another order's text) into a
-// question for the person.
+// The check before the final gate, for the gate's own tests: the gate only
+// turns lines into questions for the person.
 export function checkReplyReadingBeforeGate(args) {
   return checkLines(args)
 }
@@ -1180,39 +1178,33 @@ function checkLines({ order, text: reply, receivedOn, reading, emailRead = [], o
   return supplierReplyCheckSchema.parse({ state, replyKind: reading?.replyKind ?? null, lines: out.slice(0, SUPPLIER_REPLY_LIMITS.lines * 2), flags: flags.slice(0, SUPPLIER_REPLY_LIMITS.flags), reason, dropped })
 }
 
-// The final gate on the several-order path (third #449 review; coordinator,
-// 11/22): the email split into parts, or read on more than one order. When
-// the gate holds, every proposed line, and a line dropped as another
-// order's text (which part is which cannot be trusted there), goes to the
-// person with no day offered. Nothing is ever proposed or dropped by it.
-function severalOrdersFinalGate(result, { order, text: reply, receivedOn, emailRead = [], orderNumbers = null }) {
+// The final gate (fourth #449 review; coordinator, 11/22). On the
+// several-order path (the email split into parts, or read on more than one
+// order) nothing is proposed: four reviews each found new ways to write an
+// email that the part rules read wrong, so a wrong-order date is ruled out
+// by construction instead. Every line of every order goes to the person as
+// several_orders with only its quote: no date the model read, no day to
+// pick, no split dates, nothing confirmed, and nothing dropped as another
+// order's text. Lines dropped for other reasons (a quote not in the reply,
+// a line not on the order, a line with nothing left open) stay dropped.
+function severalOrdersFinalGate(result, { order, text: reply, emailRead = [], orderNumbers = null }) {
   const list = Array.isArray(orderNumbers) && orderNumbers.length > 0
   const candidates = array(list ? orderNumbers : emailRead).map((number) => String(number ?? '').trim().toUpperCase())
-  const split = emailParts(reply, order?.number, candidates)
-  if (!split && array(emailRead).length < 2) return result
-  const gate = severalOrdersGate(reply, order?.number, {
-    known: candidates,
-    orderList: list,
-    correction: Boolean(split?.correction),
-    hasDate: (sentence) => {
-      const found = datesInQuote(sentence, receivedOn)
-      return Boolean(found.exact.length || found.ambiguous.length || found.dayOnly.length || relativePlaces(sentence, receivedOn).length)
-    },
-  })
-  if (!gate.hold) return result
+  if (!emailParts(reply, order?.number, candidates) && array(emailRead).length < 2) return result
   const byRef = new Map(array(order?.lines).map((line) => [line.ref, line]))
   const open = SUPPLIER_REPLY_ORDER_STATES.includes(text(order?.status))
   const lines = result.lines.map((row) => ({ ...row }))
   let dropped = result.dropped
   // One row per line: a dropped quote becomes the line's question only when
   // the line has no other row.
-  const held = new Set(lines.filter((row) => row.outcome !== 'dropped').map((row) => row.ref))
+  const kept = new Set(lines.filter((row) => row.outcome !== 'dropped').map((row) => row.ref))
   for (const [at, row] of lines.entries()) {
     const line = byRef.get(row.ref)
-    const otherText = row.outcome === 'dropped' && row.issue === 'other_order_text' && !held.has(row.ref) && line && open && Number(line.remaining) > 0
-    if (otherText) { dropped -= 1; held.add(row.ref) }
-    if (row.outcome === 'proposed' || otherText) lines[at] = { ...row, purchaseOrderLineId: line?.purchaseOrderLineId ?? row.purchaseOrderLineId, currentDate: line?.promisedDate || row.currentDate || null, outcome: 'needs_you', issue: 'several_orders_unclear', proposedDate: null, readAs: null, readings: null, inferred: false }
+    const otherText = row.outcome === 'dropped' && row.issue === 'other_order_text' && !kept.has(row.ref) && line && open && Number(line.remaining) > 0
+    if (otherText) { dropped -= 1; kept.add(row.ref) }
+    if (row.outcome === 'dropped' && !otherText) continue
+    lines[at] = { ...row, purchaseOrderLineId: line?.purchaseOrderLineId ?? row.purchaseOrderLineId, currentDate: line?.promisedDate || row.currentDate || null, outcome: 'needs_you', issue: 'several_orders', proposedDate: null, readAs: null, readings: null, parts: null, inferred: false }
   }
-  const state = lines.some((row) => row.outcome === 'proposed') ? 'proposed' : lines.some((row) => row.outcome === 'needs_you') ? 'needs_you' : result.state
+  const state = lines.some((row) => row.outcome === 'needs_you') ? 'needs_you' : result.state
   return supplierReplyCheckSchema.parse({ ...result, state, lines, dropped })
 }

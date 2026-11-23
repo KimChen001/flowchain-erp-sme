@@ -40,18 +40,22 @@ const answering = (byNumber) => async ({ messages }) => {
 }
 const reading = (date, quote) => ({ replyKind: 'dates', lines: [{ line: 'L1', date, quote, dateKind: 'stated' }], flags: [], reason: null })
 
-test('right readings: both open Acme orders read, each on its own part; the closed and the other supplier\'s listed', async () => {
+// The several-order path proposes nothing (the final gate, fourth #449
+// review): right readings are read on both orders and both go to the
+// person, so the scorer counts them as dated but not proposed.
+test('right readings: both open Acme orders read and both held for the person; the closed and the other supplier\'s listed', async () => {
   const run = await runSeveralOrdersCase(kase, answering({
     'PO-202610-0030': reading('2026-12-02', 'PO-202610-0030 - all 330 heart T-light holders: ships 2 December'),
     'PO-202610-0028': reading('2026-11-25', 'PO-202610-0028 - the 220 still to come: ships 25 November'),
   }))
   assert.deepEqual(run.choice, { read: ['PO-202610-0030', 'PO-202610-0028'], notRead: [{ number: 'PO-202611-0019', why: 'closed' }, { number: 'PO-202611-0012', why: 'other_supplier' }] })
   const score = scoreSeveralOrdersCase(kase, run)
-  assert.deepEqual([score.verdict, score.dated, score.datedCorrect, score.listed], ['ok', 2, 2, []])
-  assert.equal(summarizeSeveralOrdersRun([score]).gate.pass, true)
+  assert.deepEqual([score.verdict, score.hardFails, score.dated, score.datedCorrect, score.listed], ['miss', [], 2, 0, []])
+  assert.deepEqual(Object.values(run.byOrder).map((one) => one.check.lines.map((line) => [line.outcome, line.issue, line.proposedDate])), [[['needs_you', 'several_orders', null]], [['needs_you', 'several_orders', null]]])
+  assert.equal(summarizeSeveralOrdersRun([score]).gate.pass, false)
 })
 
-test('a reading that swaps the two orders\' dates proposes neither: the check drops a quote from the other order\'s part', async () => {
+test('a reading that swaps the two orders\' dates proposes neither: both go to the person, nothing dropped', async () => {
   const run = await runSeveralOrdersCase(kase, answering({
     'PO-202610-0030': reading('2026-11-25', 'the 220 still to come: ships 25 November'),
     'PO-202610-0028': reading('2026-12-02', 'all 330 heart T-light holders: ships 2 December'),
@@ -59,7 +63,7 @@ test('a reading that swaps the two orders\' dates proposes neither: the check dr
   const score = scoreSeveralOrdersCase(kase, run)
   assert.deepEqual(score.hardFails, [])
   assert.equal(score.verdict, 'miss')
-  assert.deepEqual(Object.values(run.byOrder).map((one) => one.check.lines.map((line) => [line.outcome, line.issue])), [[['dropped', 'other_order_text']], [['dropped', 'other_order_text']]])
+  assert.deepEqual(Object.values(run.byOrder).map((one) => one.check.lines.map((line) => [line.outcome, line.issue])), [[['needs_you', 'several_orders']], [['needs_you', 'several_orders']]])
 })
 
 test('an order read that the case does not read is a hard fail; one not read that it reads is a miss', () => {
