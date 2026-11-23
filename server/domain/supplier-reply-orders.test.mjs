@@ -268,6 +268,8 @@ test('an order named by its sequence alone counts only when the supplier has ano
   const started = Date.now()
   orderSequenceMentions(`${'-'.repeat(20000)}x #14\n${'>'.repeat(20000)} No. 14`)
   assert.ok(Date.now() - started < 500)
+})
+
 test('the order-number patterns stay quick on long runs of wide spaces and long words (#463 review: up to 2 s before)', async () => {
   const { checkReplyReading, cleanSupplierReply } = await import('./supplier-reply-reading.mjs')
   const on = 'PO-202611-0021'
